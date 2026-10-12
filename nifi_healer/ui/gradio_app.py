@@ -218,13 +218,39 @@ def follow_review(incident_id, seen):
     return show_review(incident_id) + (key,)
 
 
+def caller(request: gr.Request | None) -> tuple:
+    """
+    (login, permission) of whoever sent the request: CAI's proxy adds
+    REMOTE-USER and REMOTE-USER-PERM (RO or RW) to every request to an
+    Application. ("", "") when they are absent (run locally).
+    """
+
+    headers = getattr(request, "headers", None) or {}
+
+    return (headers.get("remote-user") or "").strip(), (headers.get("remote-user-perm") or "").strip()
+
+
+@_timed
+def who_is_reviewing(request: gr.Request):
+    return caller(request)[0]
+
+
 def _decide(decision):
     @_timed
-    def handler(incident_id, reviewer, reason, steps_text, progress=gr.Progress()):
+    def handler(incident_id, reviewer, reason, steps_text, request: gr.Request = None,
+                progress=gr.Progress()):
+        login, permission = caller(request)
+
+        if permission.upper() == "RO":
+            message = (f"{login or 'You'} can only view this project, so the decision was not sent; "
+                       "a project collaborator with write access decides.")
+
+            return (message,) + show_review(incident_id) + (refresh_queue(incident_id),)
+
         if decision == "approve":
             progress(0, desc="Applying (dry run)" if not config.ARMED else "Applying to the tenant")
 
-        message = views.decide(incident_id, decision, reviewer, reason, steps_text)
+        message = views.decide(incident_id, decision, (reviewer or "").strip() or login, reason, steps_text)
 
         return (message,) + show_review(incident_id) + (refresh_queue(incident_id),)
 
@@ -331,7 +357,7 @@ def build() -> gr.Blocks:
                             interactive=False)
 
             with gr.Row():
-                reviewer = gr.Textbox(label="Reviewer", scale=1)
+                reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
                 reason = gr.Textbox(label="Reason (required to reject)", scale=3)
 
             with gr.Row():
@@ -395,6 +421,7 @@ def build() -> gr.Blocks:
         # Choices are filled per session; allow_custom_value keeps a pick valid
         # between refreshes (and for API callers). Handlers check the ids.
         demo.load(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick])
+        demo.load(who_is_reviewing, outputs=[reviewer])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
             select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick])

@@ -43,6 +43,8 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import config
+from flows.builder.lib import iter_processors
+from flows.builder.processors import kind_of
 from nifi_healer import fleet
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
 from nifi_healer.kpi import detectors, metrics, outcomes
@@ -76,6 +78,7 @@ class Poller:
         self._last_run = {}
         self._fleet = {}
         self._fleet_at = 0.0
+        self._kinds = {}  # flow version crn -> {processor name: kind}; a version never changes
 
     # -- lifecycle --------------------------------------------------------
 
@@ -212,7 +215,7 @@ class Poller:
             facts = view.get("facts") or {}
             flow = view.get("flow") or {}
 
-        found = detectors.detect(name, entry, read["charts"], alerts, now)
+        found = detectors.detect(name, entry, read["charts"], alerts, now, self.processor_kinds(flow))
         samples = []
 
         for kpi in entry.get("kpis") or []:
@@ -245,6 +248,29 @@ class Poller:
             self.open_incidents(name, entry, found["signals"], flow, now)
 
         return view
+
+    def processor_kinds(self, flow: dict) -> dict:
+        """
+        {processor name: kind} of the deployed flow version, read once per
+        version; {} until a health poll has seen the version, or if the
+        read fails (retried next pass).
+        """
+
+        crn = flow.get("flow_version_crn")
+
+        if not crn:
+            return {}
+
+        if crn not in self._kinds:
+            definition = self.client.flow_definition(crn)
+
+            if "error" in definition:
+                self._error(f"processor kinds of {crn}: {definition['error']}")
+                return {}
+
+            self._kinds[crn] = {p.get("name"): kind_of(p) for _, _, p in iter_processors(definition)}
+
+        return self._kinds[crn]
 
     @staticmethod
     def _busy(facts: dict, flow: dict) -> str:

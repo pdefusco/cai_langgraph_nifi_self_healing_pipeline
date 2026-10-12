@@ -286,6 +286,28 @@ def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypat
         gradio_app.show_review("INC-1")
 
 
+def test_the_reviewer_is_the_cai_login_and_viewers_cannot_decide(agent):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(incident["id"])
+
+    class Request:
+        def __init__(self, **headers):
+            self.headers = headers
+
+    viewer = Request(**{"remote-user": "guest", "remote-user-perm": "RO"})
+    owner = Request(**{"remote-user": "pdefusco", "remote-user-perm": "RW"})
+    reject = gradio_app._decide("reject")
+
+    assert gradio_app.caller(None) == ("", "") and gradio_app.who_is_reviewing(owner) == "pdefusco"
+    assert "can only view" in reject(incident["id"], "", "no", "", request=viewer)[0]
+    assert graph.pending(incident["id"])
+
+    assert reject(incident["id"], "", "not now", "", request=owner)[0].endswith("rejected.")
+    assert [r["reviewer"] for r in store.reviews(incident["id"])] == ["pdefusco"]
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 

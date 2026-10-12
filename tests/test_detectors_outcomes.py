@@ -88,6 +88,29 @@ def test_imbalance_flags_silent_loss():
     assert found["kpis"][down["key"]]["status"] == "imbalance"
 
 
+def test_imbalance_ignored_across_a_processor_that_merges(tenant):
+    up = kpi("S15", "processor", "S15 Batcher", "flowfiles_in", above=None, good="up", primary=False)
+    down = kpi("S15", "processor", "S15 Batcher", "flowfiles_out", above=None, good="up")
+    charts = [chart(up, [60] * 25), chart(down, [5] * 25)]
+    entry = {"kpis": [up, down]}
+
+    assert [s["type"] for s in detectors.detect("p4", entry, charts, [], NOW)["signals"]] == ["flow_imbalance"]
+    assert detectors.detect("p4", entry, charts, [], NOW, {"S15 Batcher": "MergeContent"})["signals"] == []
+
+    # The poller reads the kinds from the deployed flow version, once per version.
+    from nifi_healer import fleet
+    from nifi_healer.runtime.poller import Poller
+
+    _, client, store = tenant("p4-dataloss-latency")
+    entry = fleet.pack("p4-dataloss-latency")
+    poller = Poller(client, store)
+    flow = client.flow_facts(entry["deployment_crn"], entry["deployed_flow_crn"])
+    kinds = poller.processor_kinds(flow)
+
+    assert kinds["S15 Batcher"] == "MergeContent" and poller.processor_kinds(flow) is kinds
+    assert poller.processor_kinds({}) == {}
+
+
 def test_imbalance_ignored_while_a_queue_holds_the_difference():
     up = kpi("S01", "processor", "S01 Source", "flowfiles_out", above=None, good="up")
     down = kpi("S01", "processor", "S01 Consumer", "flowfiles_in", above=None, good="up")

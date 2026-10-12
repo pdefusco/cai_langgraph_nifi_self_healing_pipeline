@@ -118,6 +118,9 @@ Each action family uses one API path:
   exactly the one the reviewer approved. Any other drift is refused: diagnose again.
 - **Cooldown.** An armed approval inside a deployment's cooldown (30 minutes after the last change, so the previous
   fix can be measured) is turned away before the review is answered. The review stays open; approve it again later.
+- **Who decides.** On CAI the Reviewer field defaults to the viewer's login, from the `REMOTE-USER` header CAI adds
+  to every Application request. A viewer whose `REMOTE-USER-PERM` is `RO` can read the queue but cannot approve,
+  edit or reject.
 - **Commands it never uses.** It never uses `STOP_AND_EMPTY_QUEUES`, never sends `--kpis` together with a version
   change, and never restarts a deployment.
 - **Credentials.** They are passed only in the subprocess environment, never on a command line and never in a log.

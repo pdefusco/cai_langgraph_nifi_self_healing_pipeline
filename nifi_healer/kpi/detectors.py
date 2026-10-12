@@ -2,7 +2,7 @@
 Deterministic signal detection: what in one poll of a pack is worth an
 incident. No LLM here; the agent only ever sees what these found.
 
-    found = detect(pack_name, fleet_entry, charts, alerts, now)
+    found = detect(pack_name, fleet_entry, charts, alerts, now, kinds)
     found["signals"]   # [{type, severity, scenario, process_group, ...}]
     found["kpis"]      # {kpi key: summary + status}, for the UI
 
@@ -14,7 +14,10 @@ Signal types:
   flow_imbalance   conservation check: FlowFiles leave a stage slower
                    than they arrive and no queue is growing to hold the
                    difference (S13 expiration, S14 auto-terminated
-                   failures). Neither raises any alert.
+                   failures). Neither raises any alert. Skipped across
+                   a processor that bundles or splits FlowFiles by
+                   design (MergeContent sends one for every thousand it
+                   takes in), given the deployed flow's processor kinds.
   trend_to_breach  a queue below its threshold but rising fast enough to
                    cross it within TREND_HORIZON_SECONDS
 
@@ -38,6 +41,13 @@ _RATE_BUCKETS = 5
 
 # Buckets fitted for trend_to_breach.
 _TREND_BUCKETS = 10
+
+# Processor kinds whose FlowFile count out differs from in by design.
+REGROUPING = frozenset((
+    "MergeContent", "MergeRecord", "JoinEnrichment", "SplitText", "SplitJson", "SplitXml",
+    "SplitRecord", "SplitContent", "SplitAvro", "SplitExcel", "ForkRecord", "PartitionRecord",
+    "DuplicateFlowFile", "UnpackContent",
+))
 
 
 def group_name(scenario_id: str) -> str:
@@ -308,8 +318,12 @@ def alert_signals(alerts: list, kpis: list, now: float) -> tuple:
 # ---------------------------------------------------------------------
 
 
-def detect(pack_name: str, entry: dict, charts: list, alerts: list, now: float) -> dict:
+def detect(pack_name: str, entry: dict, charts: list, alerts: list, now: float,
+           kinds: dict | None = None) -> dict:
+    """kinds: {component name: processor kind} of the deployed flow version, if read."""
+
     kpis = entry.get("kpis") or []
+    kinds = kinds or {}
     series, status = {}, {}
     signals = []
 
@@ -341,6 +355,9 @@ def detect(pack_name: str, entry: dict, charts: list, alerts: list, now: float) 
             queues.setdefault(kpi["scenario"], []).append(kpi)
 
     for upstream, downstream in _pairs(kpis):
+        if {kinds.get(upstream["component"]), kinds.get(downstream["component"])} & REGROUPING:
+            continue
+
         found = imbalance(upstream, downstream, series, queues.get(upstream["scenario"], []), now)
 
         if found:
