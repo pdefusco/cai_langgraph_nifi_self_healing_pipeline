@@ -126,25 +126,45 @@ def text_of(message) -> str:
 
 
 def extract_json(text: str) -> dict:
-    """The first JSON object in a reply, fenced or not. Raises ValueError."""
+    """
+    The proposal object in a reply, fenced or not. Raises ValueError.
 
-    fenced = _FENCE.search(text)
+    A reasoning model (nemotron) thinks out loud first and ends with
+    </think>, and its thinking can sketch the answer's shape with
+    placeholders ("steps": [...]). So only the text after the last
+    </think> counts, and of the objects in it the last that parses wins,
+    fenced ones first.
+    """
 
-    if fenced:
-        text = fenced.group(1)
+    text = text.rsplit("</think>", 1)[-1]
+    error = ""
 
-    start = text.find("{")
+    for block in _FENCE.findall(text) + [text]:
+        objects, error = _objects(block, error)
 
-    if start < 0:
-        raise ValueError("the reply has no JSON object")
+        if objects:
+            return objects[-1]
 
-    try:
-        value, _ = json.JSONDecoder().raw_decode(text[start:])
+    raise ValueError(error or "the reply has no JSON object")
 
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"the JSON does not parse: {exc}") from None
 
-    if not isinstance(value, dict):
-        raise ValueError("the reply's JSON is not an object")
+def _objects(text: str, error: str) -> tuple:
+    """([top-level JSON objects in text], the first parse error seen)."""
 
-    return value
+    found, start = [], text.find("{")
+
+    while start >= 0:
+        try:
+            value, length = json.JSONDecoder().raw_decode(text[start:])
+
+        except json.JSONDecodeError as exc:
+            error = error or f"the JSON does not parse: {exc}"
+            start = text.find("{", start + 1)
+            continue
+
+        if isinstance(value, dict):
+            found.append(value)
+
+        start = text.find("{", start + length)
+
+    return found, error

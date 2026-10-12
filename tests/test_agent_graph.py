@@ -148,6 +148,24 @@ def test_bad_replies_are_repaired_then_fed_back(agent):
     assert graph.pending(incident["id"])["plan"]["ok"]
 
 
+def test_a_reasoning_reply_is_read_after_its_thinking():
+    # nemotron live: its thinking sketches the shape with placeholders, then </think>, then the answer.
+    answer = {"diagnosis": "50 copies per FlowFile", "steps": [{"action": "UPDATE_PARAMETER",
+              "target": "nfh-p5-parameters", "parameter": "s18.copies", "value": "1"}]}
+    reply = ('We need to output JSON.\n{\n  "diagnosis": "...",\n  "steps": [...],\n  "confidence": 0.95\n}\n'
+             "Make sure no trailing commas.\n</think>\n\n" + json.dumps(answer, indent=2))
+
+    assert prompts.extract_json(reply) == answer
+    assert prompts.extract_json(reply.replace("</think>", "")) == answer      # no tag: the last object wins
+    assert prompts.extract_json("```json\n" + json.dumps(answer) + "\n``` and {not json}") == answer
+
+    with pytest.raises(ValueError, match="does not parse"):
+        prompts.extract_json('{"steps": [...]}')
+
+    with pytest.raises(ValueError, match="no JSON object"):
+        prompts.extract_json("I think the consumer is slow.")
+
+
 def test_invalid_after_all_attempts_goes_to_review(agent):
     _, _, store, incidents, install = agent("p1-throughput")
     incident = incidents["S01"]
