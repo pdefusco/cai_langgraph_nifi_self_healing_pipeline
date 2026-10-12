@@ -250,7 +250,8 @@ class MockClient(Client):
 
         return {
             "configurationVersion": deployment["configuration_version"],
-            "kpis": [_public(k) for k in deployment["kpis"]],
+            "kpis": [_public(k) for k in deployment["kpis"]
+                     if k.get("metricComponentType") in worlds.FLOW_SCOPES],
             "kpisDirty": deployment["kpis_dirty"],
             "parametersDirty": deployment["parameters_dirty"],
             "parameterGroups": groups,
@@ -265,6 +266,9 @@ class MockClient(Client):
             "staticNodeCount": deployment["nodes"],
             "autoScalingEnabled": False,
             "cfmNifiVersion": deployment["nifi_version"],
+            "kpis": [_public(k) for k in deployment["kpis"]
+                     if k.get("metricComponentType") in worlds.DEPLOYMENT_SCOPES],
+            "kpisDirty": deployment["kpis_dirty"],
         }
 
     def _chart(self, deployment: dict, key: str, period: str, since: float,
@@ -590,6 +594,18 @@ class MockClient(Client):
             return {"deploymentConfiguration":
                     self._deployment_configuration(self._running(options))}
 
+    def _dfworkload_get_deployment_configuration_metadata(self, options: dict) -> dict:
+        self._required(options, "deployment-crn")
+
+        with self.world.reading():
+            deployment = self._running(options)
+
+            return {"deploymentConfigurationMetadata": {
+                "flowCrn": deployment["flow_crn"],
+                "flowVersionCrn": deployment["flow_version_crn"],
+                "kpiMetaData": self.world.kpi_metadata(deployment, worlds.DEPLOYMENT_SCOPES)["kpiMetaData"],
+            }}
+
     def _dfworkload_update_deployment(self, options: dict) -> dict:
         crn, version = self._required(options, "deployment-crn", "configuration-version")
         size = options.get("cluster-size")
@@ -598,6 +614,7 @@ class MockClient(Client):
             crn, int(version),
             cluster_size=size.get("name") if isinstance(size, dict) else size,
             nodes=int(nodes) if nodes else None,
+            kpis=options.get("kpis"),
         )
 
         return {"deploymentConfiguration": self._deployment_configuration(deployment)}

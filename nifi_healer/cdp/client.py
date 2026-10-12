@@ -451,6 +451,16 @@ class Client:
 
         return result.get("deployedFlowConfigurationMetadata") or {}
 
+    def deployment_configuration_metadata(self, deployment_crn: str) -> dict:
+        """The deployment-level KPI scopes (SYSTEM, NIFI_FLOW) and sizing options."""
+
+        result = self.dfw("get-deployment-configuration-metadata", "--deployment-crn", deployment_crn)
+
+        if "error" in result:
+            return result
+
+        return result.get("deploymentConfigurationMetadata") or {}
+
     def deployment_configuration(self, deployment_crn: str) -> dict:
         result = self.dfw("get-deployment-configuration", "--deployment-crn", deployment_crn)
 

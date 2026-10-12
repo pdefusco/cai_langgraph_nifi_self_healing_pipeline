@@ -53,6 +53,13 @@ TOLERANCE_UNITS = {"SECONDS": 1, "MINUTES": 60, "HOURS": 3600, "DAYS": 86400}
 
 CLUSTER_SIZES = ("EXTRA_SMALL", "SMALL", "MEDIUM", "LARGE")
 
+# KPI scopes by the command that owns them, as on the tenant: the flow's
+# from get-flow-configuration-metadata-in-deployment and written with
+# update-flow-in-deployment, the deployment's from get-deployment-
+# configuration-metadata and written with update-deployment.
+FLOW_SCOPES = ("NIFI_CONNECTION", "NIFI_PROCESSOR")
+DEPLOYMENT_SCOPES = ("NIFI_FLOW", "SYSTEM")
+
 
 class MockError(Exception):
     """An API refusal; `status` and `code` mirror the CDP error fields."""
@@ -530,7 +537,8 @@ class World:
             }
 
             if kpis:
-                deployment["kpis"] = self._checked_kpis(deployment, kpis, definition)
+                deployment["kpis"] = self._checked_kpis(deployment, kpis,
+                                                        FLOW_SCOPES + DEPLOYMENT_SCOPES)
 
             self.data["deployments"][crn] = deployment
 
@@ -581,8 +589,7 @@ class World:
                 )
 
             if kpis is not None:
-                deployment["kpis"] = self._checked_kpis(
-                    deployment, kpis, self._definition(deployment["flow_version_crn"]))
+                deployment["kpis"] = self._checked_kpis(deployment, kpis, FLOW_SCOPES)
                 deployment["kpis_dirty"] = True
 
             if parameter_groups is not None:
@@ -599,7 +606,8 @@ class World:
             return deployment
 
     def update_deployment(self, deployment_crn: str, configuration_version: int,
-                          cluster_size: str | None = None, nodes: int | None = None) -> dict:
+                          cluster_size: str | None = None, nodes: int | None = None,
+                          kpis: list | None = None) -> dict:
         with self.mutating():
             deployment = self._deployment(deployment_crn)
             self._require_settled(deployment)
@@ -620,7 +628,18 @@ class World:
             if not 1 <= count <= 32:
                 raise MockError("staticNodeCount must be between 1 and 32.")
 
+            if kpis is not None:
+                deployment["kpis"] = self._checked_kpis(deployment, kpis, DEPLOYMENT_SCOPES)
+                deployment["kpis_dirty"] = True
+                deployment["pending"].append({"kind": "configuration",
+                                              "apply_at": self.now() + CONFIGURATION_SECONDS})
+
             deployment["deployment_configuration_version"] += 1
+
+            # KPIs alone restart nothing.
+            if cluster_size is None and nodes is None:
+                return deployment
+
             apply_at = self.now() + SIZING_SECONDS
             deployment["pending"].append({"kind": "sizing", "apply_at": apply_at,
                                           "cluster_size": size, "nodes": count})
@@ -645,12 +664,12 @@ class World:
     # KPIs
     # -----------------------------------------------------------------
 
-    def kpi_metadata(self, deployment: dict) -> dict:
+    def kpi_metadata(self, deployment: dict, scope_types: tuple = FLOW_SCOPES) -> dict:
         definition = self._definition(deployment["flow_version_crn"])
         root = definition["flowContents"]
         scopes = []
 
-        for scope in ("NIFI_CONNECTION", "NIFI_PROCESSOR", "SYSTEM"):
+        for scope in scope_types:
             metric_types = [
                 {"id": m.metric_id, "label": m.label, "unitTypeKey": m.unit_id,
                  "defaultUnitId": m.unit_id}
@@ -658,7 +677,7 @@ class World:
             ]
             groups = []
 
-            if scope != "SYSTEM":
+            if scope in FLOW_SCOPES:
                 for ancestry, group in _groups_with_ids(root):
                     items = group.get("connections" if scope == "NIFI_CONNECTION" else "processors") or []
                     components = [{"id": f"{ancestry};{item['identifier']}",
@@ -672,17 +691,22 @@ class World:
 
         return {"kpiMetaData": {"kpiScopes": scopes}}
 
-    def _checked_kpis(self, deployment: dict, kpis: list, definition: dict) -> list:
+    def _checked_kpis(self, deployment: dict, kpis: list, scope_types: tuple) -> list:
+        """
+        The deployment's KPI list with those in `scope_types` replaced by
+        `kpis`; the other command's KPIs are kept, as on the tenant.
+        """
+
         known = {}
 
-        for scope in self.kpi_metadata(deployment)["kpiMetaData"]["kpiScopes"]:
+        for scope in self.kpi_metadata(deployment, scope_types)["kpiMetaData"]["kpiScopes"]:
             known[scope["type"]] = {
                 "metrics": {m["id"] for m in scope["metricTypes"]},
                 "components": {c["id"] for g in scope["contextGroups"] for c in g["scopeComponents"]},
             }
 
         previous = {k.get("id"): k for k in deployment["kpis"]}
-        checked = []
+        checked = [k for k in deployment["kpis"] if k.get("metricComponentType") not in scope_types]
 
         for raw in kpis:
             if not isinstance(raw, dict):
@@ -691,12 +715,13 @@ class World:
             scope = raw.get("metricComponentType")
 
             if scope not in known:
-                raise MockError(f"Unknown metricComponentType {scope!r}.")
+                raise MockError(f"metricComponentType {scope!r} is not allowed here; "
+                                f"this command takes {', '.join(scope_types)}.")
 
             if raw.get("metricId") not in known[scope]["metrics"]:
                 raise MockError(f"Metric {raw.get('metricId')!r} is not available for {scope}.")
 
-            if scope != "SYSTEM" and raw.get("componentId") not in known[scope]["components"]:
+            if scope in FLOW_SCOPES and raw.get("componentId") not in known[scope]["components"]:
                 raise MockError(f"Component {raw.get('componentId')!r} not found for {scope}.")
 
             alert = raw.get("alert")

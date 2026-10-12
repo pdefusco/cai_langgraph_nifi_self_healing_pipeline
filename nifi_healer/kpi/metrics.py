@@ -6,7 +6,7 @@ to the DataFlow metricId, the KPI scope and the alert unit, so an id that
 turns out wrong on a live tenant is corrected in one file,
 provision/out/metric_overrides.json, instead of in 21 scenarios:
 
-    {"flowfiles_out": {"metric_id": "processorFlowFilesSent", "verified": true}}
+    {"flowfiles_out": {"metric_id": "processorAmountFlowFilesSent", "verified": true}}
 
 provision/03_discover_kpi_metadata.py dumps every metric the tenant
 offers (`kpiMetaData.kpiScopes[].metricTypes[]`), which is where the
@@ -45,19 +45,25 @@ class Metric:
 _BUILTIN = {
     m.logical: m
     for m in (
+        # ids, labels and unit ids as kpiMetaData offers them on CDF with
+        # NiFi 2.6.0 (unitTypes: count, byte, percentage, ...). The
+        # flow-level scopes come from get-flow-configuration-metadata-in-
+        # deployment, SYSTEM from get-deployment-configuration-metadata.
         Metric("queued_count", "connectionAmountQueued", "NIFI_CONNECTION", "count",
-               "Queued Count", verified=True),
-        Metric("queued_bytes", "connectionBytesQueued", "NIFI_CONNECTION", "bytes",
-               "Queued Bytes", verified=True),
-        Metric("percent_full", "connectionPercentFull", "NIFI_CONNECTION", "percent",
+               "Flow Files Queued", verified=True),
+        Metric("queued_bytes", "connectionBytesQueued", "NIFI_CONNECTION", "byte",
+               "Bytes Queued", verified=True),
+        Metric("percent_full", "connectionPercentFull", "NIFI_CONNECTION", "percentage",
                "Percent Full", verified=True),
-        Metric("bytes_out", "processorAmountBytesSent", "NIFI_PROCESSOR", "bytes",
+        Metric("bytes_out", "processorAmountBytesSent", "NIFI_PROCESSOR", "byte",
                "Bytes Sent", verified=True),
-        Metric("flowfiles_in", "processorFlowFilesIn", "NIFI_PROCESSOR", "count",
-               "FlowFiles In"),
-        Metric("flowfiles_out", "processorFlowFilesOut", "NIFI_PROCESSOR", "count",
-               "FlowFiles Out"),
-        Metric("cpu", "cpuUtilization", "SYSTEM", "percent", "CPU Utilization"),
+        # "received from a source within the flow"; processorAmountFlowFiles-
+        # Received counts only data from outside the flow.
+        Metric("flowfiles_in", "processorAmountItemsInput", "NIFI_PROCESSOR", "count",
+               "Flow Files Input to processor", verified=True),
+        Metric("flowfiles_out", "processorAmountFlowFilesOut", "NIFI_PROCESSOR", "count",
+               "Flow Files Out from processor", verified=True),
+        Metric("cpu", "cpuUtilization", "SYSTEM", "percentage", "CPU Utilization", verified=True),
     )
 }
 

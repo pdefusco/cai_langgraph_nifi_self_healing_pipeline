@@ -9,9 +9,13 @@ guardrails later compare against:
     import_flow          df import-flow-definition
     create_deployment    df create-deployment, then wait for it
     configure_kpis       dfworkload get-flow-configuration-metadata-in-deployment
+                         dfworkload get-deployment-configuration-metadata
                          dfworkload get-flow-configuration-in-deployment
                          dfworkload update-flow-in-deployment --kpis
-                         then wait for kpisDirty=false and find the charts
+                         dfworkload get-deployment-configuration
+                         dfworkload update-deployment --kpis (SYSTEM)
+                         each followed by a wait for kpisDirty=false,
+                         then find the charts
     reset_pack           back to the faulty baseline: flow version,
                          parameters, sizing (each through the guardrails)
     teardown_pack        dfworkload terminate-deployment, then df delete-flow
@@ -180,6 +184,31 @@ def component_ids(metadata: dict) -> dict:
     return found
 
 
+# The scopes update-deployment --kpis owns. It takes only these, and
+# update-flow-in-deployment --kpis only the others; each replaces its own
+# list. Their metadata comes from different commands too.
+DEPLOYMENT_SCOPES = ("NIFI_FLOW", "SYSTEM")
+
+
+def kpi_metadata(client: Client, deployment: str, flow: str) -> dict:
+    """
+    Every KPI scope the deployment offers, as one kpiMetaData: the flow's
+    (get-flow-configuration-metadata-in-deployment) and the deployment's
+    (get-deployment-configuration-metadata).
+    """
+
+    flow_side = require(client.flow_configuration_metadata(deployment, flow),
+                        "read the flow's KPI metadata")
+    deployment_side = require(client.deployment_configuration_metadata(deployment),
+                              "read the deployment's KPI metadata")
+    scopes = list((flow_side.get("kpiMetaData") or {}).get("kpiScopes") or [])
+    seen = {s.get("type") for s in scopes}
+    scopes += [s for s in (deployment_side.get("kpiMetaData") or {}).get("kpiScopes") or []
+               if s.get("type") not in seen]
+
+    return {"kpiMetaData": {"kpiScopes": scopes}}
+
+
 def offered_metrics(metadata: dict) -> dict:
     """{scope: {metricId, ...}} the tenant offers."""
 
@@ -245,32 +274,42 @@ def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
     if not (deployment and flow):
         raise SystemExit(f"{pack_name}: no deployment recorded; create it first.")
 
-    metadata = client.flow_configuration_metadata(deployment, flow)
-    require(metadata, f"read KPI metadata for {pack_name}")
-    payloads = kpi_payloads(pack_name, metadata)
+    payloads = kpi_payloads(pack_name, kpi_metadata(client, deployment, flow))
+    ours = [p for _, p in payloads]
+    levels = (
+        ("flow", [p for p in ours if p["metricComponentType"] not in DEPLOYMENT_SCOPES],
+         lambda: client.flow_configuration(deployment, flow),
+         ["update-flow-in-deployment", "--deployment-crn", deployment, "--deployed-flow-crn", flow]),
+        ("deployment", [p for p in ours if p["metricComponentType"] in DEPLOYMENT_SCOPES],
+         lambda: client.deployment_configuration(deployment),
+         ["update-deployment", "--deployment-crn", deployment]),
+    )
 
-    for attempt in (1, 2):
-        configuration = require(client.flow_configuration(deployment, flow),
-                                f"read flow configuration for {pack_name}")
-        kpis = merged_kpis(configuration.get("kpis") or [], [p for _, p in payloads])
-        result = client.dfw(
-            "update-flow-in-deployment",
-            "--deployment-crn", deployment,
-            "--deployed-flow-crn", flow,
-            "--configuration-version", configuration.get("configurationVersion"),
-            "--kpis", json.dumps(kpis),
-        )
+    # One write at a time: the second needs the deployment settled again.
+    for level, wanted, read, command in levels:
+        if not wanted:
+            continue
 
-        if "error" not in result:
-            break
+        for attempt in (1, 2):
+            configuration = require(read(), f"read the {level} configuration for {pack_name}")
+            existing = [k for k in configuration.get("kpis") or []
+                        if (k.get("metricComponentType") in DEPLOYMENT_SCOPES) == (level == "deployment")]
+            result = client.dfw(
+                *command,
+                "--configuration-version", configuration.get("configurationVersion"),
+                "--kpis", json.dumps(merged_kpis(existing, wanted)),
+            )
 
-        if attempt == 2 or "CONFLICT" not in (result.get("stderr") or ""):
-            require(result, f"configure KPIs for {pack_name}")
+            if "error" not in result:
+                break
 
-        log("  [kpis] configuration version moved; re-reading once")
+            if attempt == 2 or "CONFLICT" not in (result.get("stderr") or ""):
+                require(result, f"configure {level} KPIs for {pack_name}")
 
-    log(f"  [kpis] {pack_name}: {len(payloads)} KPI(s) written, waiting for kpisDirty=false")
-    (wait or (lambda: _wait_for_clean(client, deployment, flow)))()
+            log("  [kpis] configuration version moved; re-reading once")
+
+        log(f"  [kpis] {pack_name}: {len(wanted)} {level} KPI(s) written, waiting for kpisDirty=false")
+        (wait or (lambda: _wait_for_clean(client, read)))()
 
     charts = client.metric_charts(deployment, flow)["charts"]
     recorded = []
@@ -300,11 +339,13 @@ def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
     return fleet.update_pack(pack_name, kpis=recorded, kpis_configured=not missing)
 
 
-def _wait_for_clean(client: Client, deployment: str, flow: str) -> None:
+def _wait_for_clean(client: Client, read) -> None:
+    """Poll a configuration read until its kpisDirty clears."""
+
     started = client.now()
 
     while client.now() - started < KPI_DEADLINE:
-        configuration = client.flow_configuration(deployment, flow)
+        configuration = read()
 
         if "error" not in configuration and not configuration.get("kpisDirty"):
             return

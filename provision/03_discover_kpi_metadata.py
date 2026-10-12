@@ -6,21 +6,24 @@ against it before 04 writes anything.
     python provision/03_discover_kpi_metadata.py
     python provision/03_discover_kpi_metadata.py --pack p1-throughput
 
-Writes provision/out/kpi_metadata_<pack>.json (the raw
-get-flow-configuration-metadata-in-deployment response) and reports,
-for each KPI the pack declares:
+Writes provision/out/kpi_metadata_<pack>.json and reports, for each KPI
+the pack declares:
 
   - whether its metricId is offered for its scope
   - whether its component, looked up by name, has a componentId
 
-Only five metricIds are verified on a live tenant (queued count and
-bytes, percent full, bytes received and sent). The processor FlowFile
-counts and system CPU are best guesses until this has run once. When one
-is not offered, the report lists the scope's offered ids with names that
-look close; put the right one in provision/out/metric_overrides.json:
+The file holds every scope the deployment offers: the flow's, from
+get-flow-configuration-metadata-in-deployment (connections, processors,
+process groups), and the deployment's, from get-deployment-configuration-
+metadata (SYSTEM, NIFI_FLOW).
 
-    {"flowfiles_out": {"metric_id": "processorFlowFilesSent"},
-     "cpu": {"metric_id": "systemCpuUtilization", "unit_id": "percent"}}
+Every metricId in nifi_healer/kpi/metrics.py was checked against CDF with
+NiFi 2.6.0. When a tenant offers different ones, the report lists the
+scope's offered ids with names that look close; put the right one in
+provision/out/metric_overrides.json:
+
+    {"flowfiles_out": {"metric_id": "processorAmountFlowFilesSent"},
+     "cpu": {"metric_id": "nifiMemoryUtilization", "unit_id": "percentage"}}
 
 The table in nifi_healer/kpi/metrics.py picks the file up without a
 restart, and so do the mock tenant and 04.
@@ -36,7 +39,6 @@ import _common
 from _common import config, packs
 
 from nifi_healer import fleet, provisioning
-from nifi_healer.cdp.client import require
 from nifi_healer.kpi import metrics
 
 
@@ -83,9 +85,7 @@ def main() -> int:
             print(f"[{name}] not deployed; skipped")
             continue
 
-        metadata = require(client.flow_configuration_metadata(entry["deployment_crn"],
-                                                               entry["deployed_flow_crn"]),
-                           f"read KPI metadata for {name}")
+        metadata = provisioning.kpi_metadata(client, entry["deployment_crn"], entry["deployed_flow_crn"])
         path = os.path.join(config.PROVISION_OUT_DIR, f"kpi_metadata_{name}.json")
 
         with open(path, "w") as handle:

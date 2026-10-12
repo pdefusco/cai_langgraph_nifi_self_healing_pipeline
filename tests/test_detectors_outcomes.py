@@ -3,7 +3,7 @@
 import pytest
 
 import config
-from nifi_healer.kpi import detectors, outcomes
+from nifi_healer.kpi import detectors, metrics, outcomes
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.store.db import Store
 
@@ -26,8 +26,7 @@ def series(values, end=NOW, step=STEP):
 
 def chart(k, values, end=NOW, step=STEP):
     scope = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "DEPLOYMENT"}[k["kind"]]
-    label = {"queued_count": "Queued Count", "flowfiles_in": "FlowFiles In",
-             "flowfiles_out": "FlowFiles Out", "percent_full": "Percent Full"}[k["metric"]]
+    label = metrics.metric(k["metric"]).label
 
     return {"componentType": scope, "componentName": k["component"], "name": label,
             "metrics": {"datas": [{"timestamp": t * 1000, "value": v}
@@ -111,7 +110,7 @@ def test_healthy_group_is_quiet():
 def test_alert_matching():
     backlog = kpi()
     other = kpi("S02", component="s02-backlog")
-    event = {"name": "Queued Count on s01-backlog", "message": "Queued Count above 500",
+    event = {"name": "Flow Files Queued on s01-backlog", "message": "Flow Files Queued above 500",
              "severity": "WARNING", "firstOccurrence": NOW * 1000}
 
     assert detectors.match_alert(event, [other, backlog]) is backlog

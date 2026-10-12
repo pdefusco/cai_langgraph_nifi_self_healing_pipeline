@@ -76,3 +76,31 @@ def test_cdpcli_prints_the_decoded_flow_definition():
     source = inspect.getsource(df_extensions)
     assert "operation_name == 'getFlowVersion'" in source
     assert "b64decode(response.get('flowDefinition'))" in source
+
+
+def test_system_kpis_go_through_update_deployment(tenant):
+    # update-deployment --kpis takes only deployment-level KPIs and
+    # update-flow-in-deployment the rest; each replaces only its own list.
+    world, client, _ = tenant("p6-sizing-cpu")
+    entry = provisioning.fleet.pack("p6-sizing-cpu")
+    deployment, flow = entry["deployment_crn"], entry["deployed_flow_crn"]
+
+    assert [k["metricComponentType"] for k in client.deployment_configuration(deployment)["kpis"]] == ["SYSTEM"]
+    assert {k["metricComponentType"] for k in client.flow_configuration(deployment, flow)["kpis"]} == {"NIFI_CONNECTION"}
+    assert all(k["chart"] for k in entry["kpis"])
+
+    scopes = {s["type"] for s in client.flow_configuration_metadata(deployment, flow)["kpiMetaData"]["kpiScopes"]}
+    assert "SYSTEM" not in scopes
+    assert "SYSTEM" in {s["type"] for s in provisioning.kpi_metadata(client, deployment, flow)["kpiMetaData"]["kpiScopes"]}
+
+    # Re-running replaces ours in place: no duplicates on either side.
+    provisioning.configure_kpis(client, "p6-sizing-cpu", wait=lambda: world.settle(deployment))
+    assert len(client.deployment_configuration(deployment)["kpis"]) == 1
+    assert len(client.flow_configuration(deployment, flow)["kpis"]) == 1
+
+    assert accepted(["dfworkload", "update-deployment", "--environment-crn", "crn:e",
+                     "--deployment-crn", "crn:d", "--configuration-version", 1,
+                     "--kpis", json.dumps([{"metricId": "cpuUtilization",
+                                            "metricComponentType": "SYSTEM"}])]) == ""
+    assert accepted(["dfworkload", "get-deployment-configuration-metadata", "--environment-crn", "crn:e",
+                     "--deployment-crn", "crn:d"]) == ""

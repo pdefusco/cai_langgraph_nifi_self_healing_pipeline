@@ -73,11 +73,16 @@ too. Billing starts here.
 
 ```bash
 cdp dfworkload get-flow-configuration-metadata-in-deployment \
-    --deployment-crn $D --deployed-flow-crn $F --environment-crn $ENV \
-    > provision/out/kpi_metadata_p1-throughput.json
+    --deployment-crn $D --deployed-flow-crn $F --environment-crn $ENV
+    # NIFI_CONNECTION, NIFI_PROCESSOR, NIFI_PROCESS_GROUP
+cdp dfworkload get-deployment-configuration-metadata \
+    --deployment-crn $D --environment-crn $ENV
+    # SYSTEM (cpuUtilization, ...) and NIFI_FLOW; no components
 ```
 
-The response has two parts:
+The script merges both into provision/out/kpi_metadata_p1-throughput.json.
+Each response's `.kpiMetaData.unitTypes` lists the valid alert `unitId`s
+(`count`, `byte`, `percentage`, ...). The flow-level response has two parts:
 - `kpiMetaData.kpiScopes[].metricTypes[].id` lists the metric ids each scope
   offers.
 - `kpiScopes[].contextGroups[].scopeComponents[]` lists the components. Each
@@ -86,8 +91,14 @@ The response has two parts:
 
 ## 04 configure KPIs
 
-No command creates a single KPI. `update-flow-in-deployment --kpis` replaces
-the whole list. The steps are:
+No command creates a single KPI, and there are two lists, each replaced as a
+whole by its own command:
+- `update-flow-in-deployment --kpis` holds the connection, processor and
+  process-group KPIs.
+- `update-deployment --kpis` holds the SYSTEM and NIFI_FLOW KPIs. It takes
+  only those, and has its own configuration version.
+
+For each list, the steps are:
 1. Read the current list and its configuration version.
 2. Merge ours into it, keeping everyone else's KPIs and reusing the ids of
    ours.
@@ -104,16 +115,27 @@ cdp dfworkload update-flow-in-deployment \
       {"metricId": "connectionAmountQueued", "metricComponentType": "NIFI_CONNECTION",
        "componentId": "<pg-id>;<connection-id>",
        "alert": {"thresholdMoreThan": {"unitId": "count", "value": 500},
-                 "frequencyTolerance": {"value": 1, "unit": {"id": "MINUTES"}}}},
-      {"metricId": "cpuUtilization", "metricComponentType": "SYSTEM",
-       "alert": {"thresholdMoreThan": {"unitId": "percent", "value": 85},
-                 "frequencyTolerance": {"value": 5, "unit": {"id": "MINUTES"}}}}
+                 "frequencyTolerance": {"value": 1, "unit": {"id": "MINUTES"}}}}
     ]'
     # A stale $V fails with CONFLICT. Re-read and resend.
 ```
 
-Then wait until `get-flow-configuration-in-deployment` reports
-`kpisDirty: false`, and find the charts:
+Wait until `get-flow-configuration-in-deployment` reports `kpisDirty: false`.
+Then, for packs with a SYSTEM KPI (p6, p7):
+
+```bash
+cdp dfworkload get-deployment-configuration --deployment-crn $D --environment-crn $ENV
+    # .deploymentConfiguration.configurationVersion -> $DV, .kpis -> existing
+cdp dfworkload update-deployment --deployment-crn $D --environment-crn $ENV \
+    --configuration-version $DV --kpis '[
+      {"metricId": "cpuUtilization", "metricComponentType": "SYSTEM",
+       "alert": {"thresholdMoreThan": {"unitId": "percentage", "value": 85},
+                 "frequencyTolerance": {"value": 5, "unit": {"id": "MINUTES"}}}}
+    ]'
+```
+
+Wait until `get-deployment-configuration` reports `kpisDirty: false`, then
+find the charts:
 
 ```bash
 cdp df list-deployment-kpis --deployment-crn $D --metrics-time-period LAST_THIRTY_MINUTES
