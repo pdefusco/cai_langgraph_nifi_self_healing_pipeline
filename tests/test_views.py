@@ -94,6 +94,21 @@ def test_diagnose_and_system(agent, monkeypatch):
     assert "**ARMED**" in text and "**unavailable**" in text and "Mock clock" in text
 
 
+def test_review_shows_why_the_last_run_stopped(agent, monkeypatch):
+    _, client, store, incidents, _ = agent("p1-throughput")
+    incident = incidents["S01"]
+
+    assert "Not diagnosed yet" in views.review(store, client, incident["id"])["proposal"]
+
+    with monkeypatch.context() as down:
+        down.setattr(llm, "chat_available", lambda: (False, "the endpoint answered 401: Token has expired"))
+        graph.start(incident["id"])
+
+    shown = views.review(store, client, incident["id"])
+    assert shown["status"] == "NEW" and "last run stopped" in shown["proposal"]
+    assert "Token has expired" in shown["proposal"]
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 

@@ -197,6 +197,17 @@ LLM_ENDPOINT_BASE_URL = os.environ.get("LLM_ENDPOINT_BASE_URL", "")
 LLM_CDP_TOKEN = os.environ.get("LLM_CDP_TOKEN", "")
 LLM_TEMPERATURE = _float("SELFHEAL_LLM_TEMPERATURE", 0.0)
 
+# A workload token lasts an hour, so a pasted LLM_CDP_TOKEN goes stale.
+# With a CDP API key from the endpoint's tenant the app mints its own
+# (`cdp iam generate-workload-auth-token`) and renews it this many seconds
+# before it expires; LLM_CDP_TOKEN is then ignored. The region is the
+# tenant's control plane region, when it is not the CLI default.
+LLM_CDP_ACCESS_KEY_ID = os.environ.get("LLM_CDP_ACCESS_KEY_ID", "")
+LLM_CDP_PRIVATE_KEY = os.environ.get("LLM_CDP_PRIVATE_KEY", "")
+LLM_CDP_REGION = os.environ.get("LLM_CDP_REGION", "")
+LLM_TOKEN_WORKLOAD = os.environ.get("SELFHEAL_LLM_TOKEN_WORKLOAD", "DE")
+LLM_TOKEN_RENEW_SECONDS = _int("SELFHEAL_LLM_TOKEN_RENEW", 300)
+
 EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "")
 EMBEDDING_ENDPOINT_BASE_URL = os.environ.get("EMBEDDING_ENDPOINT_BASE_URL", "")
 EMBEDDING_CDP_TOKEN = os.environ.get("EMBEDDING_CDP_TOKEN", "")

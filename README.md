@@ -134,12 +134,20 @@ python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # The app. Mock is the default client. Without an LLM, incidents open and wait in the queue as NEW.
 export LLM_MODEL_ID=nvidia/nemotron-3-super-120b-a12b
 export LLM_ENDPOINT_BASE_URL=https://ml-64288d82-5dd.go01-dem.ylcu-atmi.cloudera.site/namespaces/serving-default/endpoints/goes---nemotron-3-super-120b/v1
-export LLM_CDP_TOKEN=...                     # a CDP token for that endpoint's tenant; never commit it
+export LLM_CDP_ACCESS_KEY_ID=...             # a CDP API key from that endpoint's tenant; never commit it
+export LLM_CDP_PRIVATE_KEY=...
 .venv/bin/python app.py                      # http://127.0.0.1:8100
 ```
 
 The model and endpoint above are the CAI Inference Service deployment this repo was developed against. Any
-OpenAI-compatible chat endpoint works; set the three variables to your own.
+OpenAI-compatible chat endpoint works; set the variables to your own.
+
+**The endpoint's token.** A CDP workload token lasts an hour. With `LLM_CDP_ACCESS_KEY_ID` and
+`LLM_CDP_PRIVATE_KEY` set, the app mints its own (`cdp iam generate-workload-auth-token --workload-name DE`) and
+renews it five minutes before it expires. The key must come from the **endpoint's** tenant: a token minted in
+another tenant gets 401. Without a key, `LLM_CDP_TOKEN` is used as pasted (`export LLM_CDP_TOKEN=...`), and then
+the CAI session's `/tmp/jwt`, which only works for an endpoint in the workbench's own tenant. The System tab's LLM
+row asks the endpoint whether it accepts the token, and an incident whose run stopped shows why in the Review Queue.
 
 **What to try:**
 
@@ -174,8 +182,9 @@ CDP_ACCESS_KEY_ID=...            # or ~/.cdp/credentials in the project
 CDP_PRIVATE_KEY=...
 LLM_MODEL_ID=nvidia/nemotron-3-super-120b-a12b
 LLM_ENDPOINT_BASE_URL=https://<cai-inference>/namespaces/serving-default/endpoints/<endpoint>/v1
-LLM_CDP_TOKEN=...                # optional when the endpoint is in the same tenant: falls back to /tmp/jwt.
-                                 # Required for an endpoint in another tenant; such tokens expire, so rotate it.
+LLM_CDP_ACCESS_KEY_ID=...        # a CDP API key from the endpoint's tenant: the app mints and renews tokens.
+LLM_CDP_PRIVATE_KEY=...          # Or LLM_CDP_TOKEN=... (expires in an hour), or neither for an endpoint in
+                                 # the workbench's own tenant (/tmp/jwt).
 SELFHEAL_ARMED=false             # leave false until step 6
 ```
 
@@ -261,6 +270,8 @@ Mock and live never share a store, a fleet file or checkpoints: mock files carry
 | `SELFHEAL_AUTO_DIAGNOSE` | `true` | diagnose new incidents automatically (else use the Diagnose button) |
 | `SELFHEAL_MOCK_SPEED` | 20 | simulated seconds per wall second |
 | `LLM_MODEL_ID`, `LLM_ENDPOINT_BASE_URL`, `LLM_CDP_TOKEN` | (none) | CAI Inference Service chat model (OpenAI-compatible) |
+| `LLM_CDP_ACCESS_KEY_ID`, `LLM_CDP_PRIVATE_KEY`, `LLM_CDP_REGION` | (none) | a CDP API key from the endpoint's tenant; the app mints its tokens with it (wins over `LLM_CDP_TOKEN`) |
+| `SELFHEAL_LLM_TOKEN_WORKLOAD`, `SELFHEAL_LLM_TOKEN_RENEW` | `DE`, 300 | workload name for minted tokens; seconds before expiry they are renewed |
 | `EMBEDDING_MODEL_ID`, `EMBEDDING_ENDPOINT_BASE_URL`, `EMBEDDING_CDP_TOKEN` | (none) | CAI Inference embedder; without it a local hash embedder is used |
 | `SELFHEAL_LLM_PROVIDER` / `SELFHEAL_EMBEDDING_PROVIDER` | `cai` / `cai` if an endpoint is set, else `hash` | swap providers in `nifi_healer/llm.py` |
 | `SELFHEAL_RAG_TOP_K` | 5 | playbook sections per diagnosis |

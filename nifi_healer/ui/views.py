@@ -223,9 +223,14 @@ def review(store, client, incident_id: str | None) -> dict:
     if not proposal.get("diagnosis") and not proposal.get("steps"):
         waiting = {"NEW": "Not diagnosed yet. Diagnose runs the agent (needs the LLM endpoint).",
                    "DIAGNOSING": "The agent is diagnosing this incident."}
+        text = waiting.get(incident["status"], "No proposal.")
+        stopped = graph.state(incident_id).get("error") if incident["status"] == "NEW" else ""
 
-        return dict(blank, evidence="\n".join(evidence),
-                    proposal=waiting.get(incident["status"], "No proposal."), status=incident["status"])
+        if stopped:
+            text = (f"**The last run stopped:** {stopped[:400]}\n\n"
+                    "Diagnose runs the agent again; so does an app restart.")
+
+        return dict(blank, evidence="\n".join(evidence), proposal=text, status=incident["status"])
 
     text = ["### Proposal",
             f"**Diagnosis.** {proposal.get('diagnosis') or ''}"]
@@ -329,7 +334,7 @@ def diagnose(incident_id: str | None) -> str:
     if not incident_id:
         return "Select an incident first."
 
-    ok, reason = llm.chat_available()
+    ok, reason = llm.probe()
 
     if not ok:
         return f"The LLM is not available: {reason}"
@@ -423,7 +428,7 @@ def incident_detail(store, incident_id: str | None) -> str:
 
 def system(snapshot: dict, client) -> str:
     beat = snapshot["heartbeat"]
-    ok, reason = llm.chat_available()
+    ok, reason = llm.probe()
     described = llm.describe()
 
     rows = [
@@ -433,7 +438,8 @@ def system(snapshot: dict, client) -> str:
         ("Service CRN", f"`{config.SERVICE_CRN or 'unset'}`"),
         ("Environment CRN", f"`{config.ENVIRONMENT_CRN or 'unset'}`"),
         ("LLM", f"{described['provider']} · `{described['model'] or 'unset'}` · "
-                + ("ready" if ok else f"**unavailable**: {reason}")),
+                + ("ready: the endpoint accepts the token" if ok else f"**unavailable**: {reason}")
+                + (" · tokens minted and renewed by the app" if llm.minting() else "")),
         ("Embeddings", f"`{described['embedder']}`"),
         ("Poller", f"{'running' if beat.get('running') else 'stopped'}, {beat.get('loops', 0)} loop(s); "
                    f"health every {config.POLL_HEALTH_SECONDS}s, KPIs every {config.POLL_KPI_SECONDS}s"),
