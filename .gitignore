@@ -6,6 +6,9 @@ __pycache__/
 
 # Local state (store, checkpoints, Chroma, mock tenant) when not on CAI.
 var/
+# The same state on CAI, where the project root (/home/cdsw) is the clone.
+/data/
+/chroma/
 
 # Read from a live tenant by provision/03; specific to one environment.
 provision/out/kpi_metadata_*.json

@@ -221,8 +221,9 @@ If `03` reports a metric id the tenant does not offer, correct it in `provision/
 | Environment | as in Runbook 2 (`SELFHEAL_DF_CLIENT=mock` for a demo without a tenant) |
 
 **Running scripts as CAI jobs.** PBJ Workbench runs a job script cell by cell in an IPython kernel, where
-`__file__` and the script's own `__doc__` do not exist. So every job uses the launcher `cai_job.py` as its script,
-and the real script plus its flags as the job arguments. The launcher runs them as an ordinary Python process:
+`__file__` and the script's own `__doc__` do not exist, and `sys.argv` belongs to the kernel; the job's Arguments
+field arrives as `$JOB_ARGUMENTS`. So every job uses the launcher `cai_job.py` as its script, and the real script
+plus its flags as the job arguments. The launcher runs them as an ordinary Python process:
 
 | Job | Script | Arguments |
 |---|---|---|
