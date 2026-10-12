@@ -19,10 +19,12 @@ Each KPI is judged in its own good direction:
   good=up (rates)     IMPROVED when the mean rose by a tenth or more, or
                       it crossed back over its `below` threshold.
 
-The incident's verdict comes from its primary KPIs: any WORSENED wins,
-then any IMPROVED, then NO_CHANGE. Too few buckets on either side of
-every primary KPI is INCONCLUSIVE. Secondary KPIs that got worse are
-reported as side effects.
+The incident's verdict comes from its primary KPIs and the KPIs whose
+signals opened it (S17's queue never fills live, the bad endpoint fails
+fast, so only its stub's rate shows the fault): any WORSENED wins, then
+any IMPROVED, then NO_CHANGE. Too few buckets on either side of every
+deciding KPI is INCONCLUSIVE. Other KPIs that got worse are reported as
+side effects.
 """
 
 import config
@@ -154,21 +156,23 @@ def combine(verdicts: list) -> str:
     return NO_CHANGE
 
 
-def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: float) -> dict:
+def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: float,
+             signalled=()) -> dict:
     """
     kpis: the fleet KPI entries of the incident's scenario.
     series_by_key: {kpi key: [(t, value)]} from one chart response.
+    signalled: keys of the KPIs whose signals opened the incident.
     """
 
     judged = []
 
     for kpi in kpis:
         before, after = windows(series_by_key.get(kpi["key"]) or [], started_at, finished_at)
-        judged.append(judge(kpi, before, after))
+        judged.append(dict(judge(kpi, before, after), signalled=kpi.get("key") in signalled))
 
-    primary = [j for j in judged if j["primary"]] or judged
-    verdict = combine([j["verdict"] for j in primary])
-    side_effects = [j["kpi"] for j in judged if not j["primary"] and j["verdict"] == WORSENED]
+    deciding = [j for j in judged if j["primary"] or j["signalled"]] or judged
+    verdict = combine([j["verdict"] for j in deciding])
+    side_effects = [j["kpi"] for j in judged if j not in deciding and j["verdict"] == WORSENED]
 
     return {"verdict": verdict, "kpis": judged, "side_effects": side_effects,
             "started_at": started_at, "finished_at": finished_at,

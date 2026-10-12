@@ -203,6 +203,22 @@ def test_rate_kpi_and_side_effects(windows):
     assert result["side_effects"] == [rate["key"]]
 
 
+def test_the_kpi_that_opened_the_incident_decides_too(windows):
+    # S17 live: the bad endpoint fails fast, so its queue never fills; only the stub's rate shows it.
+    queue = kpi("S17", component="s17-requests", above=50)
+    stub = kpi("S17", "processor", "S17 Partner Stub", "flowfiles_out", above=None, good="up",
+               primary=False)
+    q_data, started, finished = around_change([0] * 8, [0] * 8)
+    s_data, _, _ = around_change([0] * 8, [0.2] * 8)
+    series_by_key = {queue["key"]: q_data, stub["key"]: s_data}
+
+    assert outcomes.evaluate([queue, stub], series_by_key, started, finished)["verdict"] == outcomes.NO_CHANGE
+
+    result = outcomes.evaluate([queue, stub], series_by_key, started, finished, {stub["key"]})
+    assert result["verdict"] == outcomes.IMPROVED
+    assert [j["signalled"] for j in result["kpis"]] == [False, True]
+
+
 def test_too_few_buckets_is_inconclusive(windows):
     data, started, finished = around_change([1000] * 8, [900])
     result = outcomes.evaluate([kpi()], {kpi()["key"]: data}, started, finished)

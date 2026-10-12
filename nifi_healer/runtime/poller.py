@@ -369,7 +369,9 @@ class Poller:
                                            kpi["metric"], kpi.get("chart"))
                 series[kpi["key"]] = metrics.points(chart)
 
-            outcome = outcomes.evaluate(kpis, series, action["started_at"], action["finished_at"])
+            signalled = {s.get("kpi") for s in incident.get("signals") or []}
+            outcome = outcomes.evaluate(kpis, series, action["started_at"], action["finished_at"],
+                                        signalled)
 
         self.store.add_outcome(action["incident_id"], action["id"], outcome["verdict"], period,
                                outcome, now)
