@@ -154,6 +154,30 @@ def test_the_panel_follows_an_approval_being_applied(agent, monkeypatch):
     assert store.incident(incident["id"])["status"] == "VERIFYING"
 
 
+def test_an_approval_that_raises_in_the_background_says_so(agent, monkeypatch):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(incident["id"])
+
+    def broken(*args):
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(graph, "resume", broken)
+        views.decide(incident["id"], "approve")
+        applied(incident["id"])
+
+    panel = views.review(store, client, incident["id"])
+    assert "last approval failed" in panel["proposal"] and "database is locked" in panel["proposal"]
+    assert panel["can_approve"] and store.actions(incident_id=incident["id"]) == []
+
+    views.decide(incident["id"], "approve")
+    applied(incident["id"])
+    assert graph.apply_failure(incident["id"]) == ""
+    assert "last approval failed" not in views.review(store, client, incident["id"])["proposal"]
+
+
 def test_diagnose_and_system(agent, monkeypatch):
     _, client, store, incidents, _ = agent("p1-throughput")
     monkeypatch.setattr(llm, "chat_available", lambda: (False, "no endpoint configured"))

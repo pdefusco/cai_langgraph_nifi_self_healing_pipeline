@@ -327,6 +327,11 @@ def review(store, client, incident_id: str | None) -> dict:
     if payload and payload.get("error"):
         text.append(f"**Last decision not accepted:** {payload['error']}")
 
+    if payload and graph.apply_failure(incident_id):
+        text.append(f"**The last approval failed before it changed anything:** "
+                    f"{graph.apply_failure(incident_id)[:400]}\n\nThe review is still open; approve again "
+                    "once the cause is fixed.")
+
     if orphaned:
         text.append(ORPHANED)
 

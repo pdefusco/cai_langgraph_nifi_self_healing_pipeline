@@ -42,6 +42,7 @@ _apply_pool = None
 _running: dict = {}  # incident id -> Lock: one run of a thread at a time
 _waiting: dict = {}  # incident id -> Future, from submit() until the run ends
 _applying: dict = {}  # incident id -> Future, from resume_in_background() until the decision is applied
+_apply_failed: dict = {}  # incident id -> why its last background approval raised, until the next one
 
 # Approvals applied at once; each one waits minutes for its deployment.
 APPLY_WORKERS = 4
@@ -103,6 +104,7 @@ def reset() -> None:
         _running.clear()
         _waiting.clear()
         _applying.clear()
+        _apply_failed.clear()
 
 
 def _config(incident_id: str) -> dict:
@@ -259,11 +261,20 @@ def _forget(incident_id: str, future, futures: dict) -> None:
 
 
 def _resume(incident_id: str, decision: dict) -> None:
+    _apply_failed.pop(incident_id, None)
+
     try:
         resume(incident_id, decision)
 
-    except Exception as exc:  # recorded by the executor where it can be; logged either way
-        nodes.log(f"{incident_id}: applying the decision failed: {type(exc).__name__}: {exc}")
+    except Exception as exc:  # recorded by the executor where it can be; logged and shown either way
+        _apply_failed[incident_id] = f"{type(exc).__name__}: {exc}"
+        nodes.log(f"{incident_id}: applying the decision failed: {_apply_failed[incident_id]}")
+
+
+def apply_failure(incident_id: str) -> str:
+    """Why the incident's last background approval raised, or "" (kept in memory only)."""
+
+    return _apply_failed.get(incident_id, "")
 
 
 def resume_in_background(incident_id: str, decision: dict):
