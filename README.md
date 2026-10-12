@@ -220,7 +220,17 @@ If `03` reports a metric id the tenant does not offer, correct it in `provision/
 | Resources | 2 vCPU / 8 GiB |
 | Environment | as in Runbook 2 (`SELFHEAL_DF_CLIENT=mock` for a demo without a tenant) |
 
-The app binds `127.0.0.1:$CDSW_APP_PORT`. State lives on the project filesystem, so it survives restarts:
+**Running scripts as CAI jobs.** PBJ Workbench runs a job script cell by cell in an IPython kernel, where
+`__file__` and the script's own `__doc__` do not exist. So every job uses the launcher `cai_job.py` as its script,
+and the real script plus its flags as the job arguments. The launcher runs them as an ordinary Python process:
+
+| Job | Script | Arguments |
+|---|---|---|
+| install + tests | `cai_job.py` | `provision/cai_build.py` |
+| selftest | `cai_job.py` | `provision/00_selftest.py` |
+| any provision step | `cai_job.py` | `provision/02_create_deployments.py --pack p1-throughput` |
+
+`app.py` is kernel-safe, so the Application runs it directly. The app binds `127.0.0.1:$CDSW_APP_PORT`. State lives on the project filesystem, so it survives restarts:
 
 | Path | Contents |
 |---|---|

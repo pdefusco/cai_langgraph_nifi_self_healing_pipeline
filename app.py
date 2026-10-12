@@ -11,7 +11,9 @@ Binds 127.0.0.1:$CDSW_APP_PORT, which is what a CAI Application proxies.
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# A CAI Application runs this in an IPython kernel, where __file__ is
+# undefined and the working directory is the project root.
+sys.path.insert(0, os.path.dirname(os.path.abspath(globals().get("__file__") or "app.py")))
 
 from nifi_healer.ui import gradio_app  # noqa: E402
 

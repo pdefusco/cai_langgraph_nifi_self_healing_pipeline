@@ -5,6 +5,8 @@ CAI job (PBJ jobs run a Python script, so this wraps cdsw-build.sh).
 
     python provision/cai_build.py [--skip-tests]
 
+    CAI job: script cai_job.py, arguments provision/cai_build.py
+
 Packages land in the project's user site (/home/cdsw/.local), so the
 Application and every later job or session reuse them.
 """
