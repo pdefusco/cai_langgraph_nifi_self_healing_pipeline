@@ -332,6 +332,31 @@ def test_the_reviewer_is_the_cai_login_and_viewers_cannot_decide(agent):
     assert [r["reviewer"] for r in store.reviews(incident["id"])] == ["pdefusco"]
 
 
+def test_a_stale_queue_tick_leaves_the_pick_alone_and_decisions_check_the_panel(agent):
+    # Live: a tick that read S18 landed after the reviewer picked S17, and their S17 edit went to S18.
+    _, client, store, incidents, install = agent("p1-throughput")
+    s01, s02 = incidents["S01"]["id"], incidents["S02"]["id"]
+
+    tick = gradio_app.refresh_queue(s02)
+    assert "value" not in tick and s02 in [v for _, v in tick["choices"]]
+    assert gradio_app.refresh_queue("INC-gone")["value"] == tick["choices"][0][1]
+    assert gradio_app.refresh_queue(None)["value"] == tick["choices"][0][1]
+
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(s01)
+    steps = views.review(store, client, s01)["steps"]
+    shown_s02 = gradio_app.select_review(s02)[-1]
+
+    out = gradio_app._decide("edit")(s01, "", "", steps, shown_s02)
+    assert "showing another incident" in out[0] and "nothing was sent" in out[0]
+    assert out[-2]["value"] == s01 and out[-1] == views.review_key(store, s01)
+    assert store.reviews(s01) == [] and graph.pending(s01)
+    assert "showing another incident" in gradio_app.diagnose(s02, gradio_app.select_review(s01)[-1])[0]
+
+    out = gradio_app._decide("edit")(s01, "", "", steps, gradio_app.select_review(s01)[-1])
+    assert "validated" in out[0] and [r["decision"] for r in store.reviews(s01)] == ["edit"]
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 

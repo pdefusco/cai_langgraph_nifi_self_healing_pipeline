@@ -169,20 +169,35 @@ def refresh_fleet(choice):
             views.kpi_frame(snapshot, choice))
 
 
-@_timed
-def refresh_kpi_choices(choice):
-    choices = views.kpi_choices(_snapshot())
+def _new_choices(choices: list, selected):
+    """
+    A timer's dropdown update. It leaves the value alone while the
+    selection is still listed. A tick sends the value it read when it
+    fired, so setting it back would undo a pick made while it ran.
+    """
+
     values = [value for _, value in choices]
 
-    return gr.Dropdown(choices=choices, value=choice if choice in values else (values[0] if values else None))
+    if selected in values:
+        return gr.update(choices=choices)
+
+    return gr.update(choices=choices, value=values[0] if values else None)
+
+
+@_timed
+def refresh_kpi_choices(choice):
+    return _new_choices(views.kpi_choices(_snapshot()), choice)
 
 
 @_timed
 def refresh_queue(selected):
-    choices = views.queue_choices(get_store(), keep=selected)
-    values = [value for _, value in choices]
+    return _new_choices(views.queue_choices(get_store(), keep=selected), selected)
 
-    return gr.Dropdown(choices=choices, value=selected if selected in values else (values[0] if values else None))
+
+def _queue_at(incident_id):
+    """The queue with incident_id selected: the incident a decision was just made on."""
+
+    return gr.update(choices=views.queue_choices(get_store(), keep=incident_id), value=incident_id)
 
 
 # show_review's outputs: evidence, proposal, diff, commands, steps and the four buttons.
@@ -235,9 +250,29 @@ def who_is_reviewing(request: gr.Request):
     return caller(request)[0]
 
 
+def _answer(message, incident_id):
+    """A decision handler's outputs: the message, the panel, the queue and the panel's key."""
+
+    return ((message,) + show_review(incident_id) +
+            (_queue_at(incident_id), views.review_key(get_store(), incident_id)))
+
+
+def _shows_another(incident_id, shown) -> str:
+    """
+    Why not to act when the panel the reviewer read (shown, its review key)
+    was for another incident than the dropdown's, else "".
+    """
+
+    if shown and shown.split("|", 1)[0] != incident_id:
+        return (f"The panel was showing another incident; it now shows {incident_id}, and nothing was sent. "
+                "Check it and decide again.")
+
+    return ""
+
+
 def _decide(decision):
     @_timed
-    def handler(incident_id, reviewer, reason, steps_text, request: gr.Request = None,
+    def handler(incident_id, reviewer, reason, steps_text, shown=None, request: gr.Request = None,
                 progress=gr.Progress()):
         login, permission = caller(request)
 
@@ -245,21 +280,24 @@ def _decide(decision):
             message = (f"{login or 'You'} can only view this project, so the decision was not sent; "
                        "a project collaborator with write access decides.")
 
-            return (message,) + show_review(incident_id) + (refresh_queue(incident_id),)
+            return _answer(message, incident_id)
+
+        if mismatch := _shows_another(incident_id, shown):
+            return _answer(mismatch, incident_id)
 
         if decision == "approve":
             progress(0, desc="Applying (dry run)" if not config.ARMED else "Applying to the tenant")
 
         message = views.decide(incident_id, decision, (reviewer or "").strip() or login, reason, steps_text)
 
-        return (message,) + show_review(incident_id) + (refresh_queue(incident_id),)
+        return _answer(message, incident_id)
 
     return handler
 
 
 @_timed
-def diagnose(incident_id):
-    return (views.diagnose(incident_id),) + show_review(incident_id) + (refresh_queue(incident_id),)
+def diagnose(incident_id, shown=None):
+    return _answer(_shows_another(incident_id, shown) or views.diagnose(incident_id), incident_id)
 
 
 @_timed
@@ -379,12 +417,14 @@ def build() -> gr.Blocks:
             follow_timer.tick(follow_review, inputs=[queue_pick, seen], outputs=panel + [seen],
                               show_progress="hidden")
 
-            decision_inputs = [queue_pick, reviewer, reason, steps]
-            decision_outputs = [review_result] + panel + [queue_pick]
+            # seen goes in so a decision can tell the panel the reviewer read
+            # was for the incident the dropdown now names.
+            decision_inputs = [queue_pick, reviewer, reason, steps, seen]
+            decision_outputs = [review_result] + panel + [queue_pick, seen]
             approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
             edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
             reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
-            diagnose_btn.click(diagnose, inputs=[queue_pick], outputs=decision_outputs)
+            diagnose_btn.click(diagnose, inputs=[queue_pick, seen], outputs=decision_outputs)
 
         with gr.Tab("History"):
             history_refresh = gr.Button("Refresh")
