@@ -37,6 +37,7 @@ _graph = None
 _connection = None
 _pool = None
 _running: dict = {}  # incident id -> Lock: one run of a thread at a time
+_waiting: dict = {}  # incident id -> Future, from submit() until the run ends
 
 
 def build(checkpointer=None):
@@ -92,6 +93,7 @@ def reset() -> None:
 
         _graph, _connection = None, None
         _running.clear()
+        _waiting.clear()
 
 
 def _config(incident_id: str) -> dict:
@@ -207,6 +209,46 @@ def _run(incident_id: str) -> None:
 
 
 def submit(incident: dict):
-    """Start an incident's run in the background. Returns the Future."""
+    """
+    Start an incident's run in the background. Returns the Future; an
+    incident already queued or running keeps its place and its Future.
+    """
 
-    return _executor().submit(_run, incident["id"])
+    incident_id = incident["id"]
+    pool = _executor()
+
+    with _lock:
+        future = _waiting.get(incident_id)
+
+        if future is None:
+            future = _waiting[incident_id] = pool.submit(_run, incident_id)
+
+    future.add_done_callback(lambda done: _forget(incident_id, done))
+
+    return future
+
+
+def _forget(incident_id: str, future) -> None:
+    with _lock:
+        if _waiting.get(incident_id) is future:
+            del _waiting[incident_id]
+
+
+def run_state(incident_id: str) -> tuple | None:
+    """
+    None when no run is queued or running for the incident; else
+    ("running", 0, 0) or ("queued", position, waiting), position from 1.
+    """
+
+    with _lock:
+        future = _waiting.get(incident_id)
+
+        if future is None:
+            return None
+
+        if future.running():
+            return "running", 0, 0
+
+        queued = [i for i, f in _waiting.items() if not f.running() and not f.done()]
+
+    return ("queued", queued.index(incident_id) + 1, len(queued)) if incident_id in queued else None

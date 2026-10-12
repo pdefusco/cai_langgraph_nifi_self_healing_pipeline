@@ -3,6 +3,9 @@ The UI's views on a mock tenant: fleet table and chart, the review panel
 through a whole approve, history, system, and the Blocks layout itself.
 """
 
+import threading
+import time
+
 import gradio as gr
 
 import config
@@ -107,6 +110,47 @@ def test_review_shows_why_the_last_run_stopped(agent, monkeypatch):
     shown = views.review(store, client, incident["id"])
     assert shown["status"] == "NEW" and "last run stopped" in shown["proposal"]
     assert "Token has expired" in shown["proposal"]
+
+
+def test_queued_incidents_show_their_place_and_are_not_queued_twice(agent, monkeypatch):
+    _, client, store, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "AGENT_WORKERS", 1)
+    graph._pool = None
+    gate = threading.Event()
+
+    def slow(messages):
+        gate.wait(30)
+
+        return proposal(S01_FIX)(messages)
+
+    install(ScriptedLLM(slow, *[proposal([{"action": "NO_ACTION"}])] * 2))
+    s01, s02, s03 = (incidents[k]["id"] for k in ("S01", "S02", "S03"))
+
+    try:
+        first = graph.submit(incidents["S01"])
+        deadline = time.time() + 10
+
+        while graph.run_state(s01) != ("running", 0, 0) and time.time() < deadline:
+            time.sleep(0.01)
+
+        second = graph.submit(incidents["S02"])
+        graph.submit(incidents["S03"])
+
+        assert graph.submit(incidents["S02"]) is second
+        assert graph.run_state(s02) == ("queued", 1, 2) and graph.run_state(s03) == ("queued", 2, 2)
+
+        panel = views.review(store, client, s03)
+        assert "Queued for diagnosis: **2** of 2" in panel["proposal"] and not panel["can_diagnose"]
+        assert "agent is diagnosing" in views.review(store, client, s01)["proposal"]
+        assert "2 of 2 waiting" in views.diagnose(s03)
+
+    finally:
+        gate.set()
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    assert first.done() and graph.run_state(s01) is None and graph.run_state(s03) is None
+    assert graph.pending(s01)["plan"]["ok"] and not views.review(store, client, s01)["can_diagnose"]
 
 
 def test_blocks_build_and_handlers(agent):

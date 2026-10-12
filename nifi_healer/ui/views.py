@@ -190,11 +190,12 @@ def _latest_proposal(store, incident_id: str) -> dict | None:
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
-    {evidence, proposal, diff, commands, steps, can_approve, pending, status}.
+    {evidence, proposal, diff, commands, steps, can_approve, can_diagnose,
+    pending, status}.
     """
 
     blank = {"evidence": "Select an incident.", "proposal": "", "diff": [], "commands": "",
-             "steps": "", "can_approve": False, "pending": False, "status": ""}
+             "steps": "", "can_approve": False, "can_diagnose": False, "pending": False, "status": ""}
     incident = store.incident(incident_id) if incident_id else None
 
     if not incident:
@@ -224,13 +225,22 @@ def review(store, client, incident_id: str | None) -> dict:
         waiting = {"NEW": "Not diagnosed yet. Diagnose runs the agent (needs the LLM endpoint).",
                    "DIAGNOSING": "The agent is diagnosing this incident."}
         text = waiting.get(incident["status"], "No proposal.")
+        run = graph.run_state(incident_id)
         stopped = graph.state(incident_id).get("error") if incident["status"] == "NEW" else ""
 
-        if stopped:
+        if run and run[0] == "running":
+            text = "The agent is diagnosing this incident; the proposal appears here when it is ready."
+
+        elif run:
+            text = (f"Queued for diagnosis: **{run[1]}** of {run[2]} waiting, "
+                    f"{config.AGENT_WORKERS} diagnosed at a time.")
+
+        elif stopped:
             text = (f"**The last run stopped:** {stopped[:400]}\n\n"
                     "Diagnose runs the agent again; so does an app restart.")
 
-        return dict(blank, evidence="\n".join(evidence), proposal=text, status=incident["status"])
+        return dict(blank, evidence="\n".join(evidence), proposal=text, status=incident["status"],
+                    can_diagnose=incident["status"] in graph.RUNNABLE and run is None)
 
     text = ["### Proposal",
             f"**Diagnosis.** {proposal.get('diagnosis') or ''}"]
@@ -275,6 +285,7 @@ def review(store, client, incident_id: str | None) -> dict:
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
         "can_approve": bool(payload and plan.get("ok")),
+        "can_diagnose": False,
         "pending": bool(payload),
         "status": incident["status"],
     }
@@ -345,6 +356,11 @@ def diagnose(incident_id: str | None) -> str:
         return f"{incident_id} is {incident['status'] if incident else 'unknown'}; nothing to diagnose."
 
     graph.submit(incident)
+    run = graph.run_state(incident_id)
+
+    if run and run[0] == "queued":
+        return (f"Queued {incident_id} for diagnosis, {run[1]} of {run[2]} waiting; "
+                f"{config.AGENT_WORKERS} are diagnosed at a time.")
 
     return f"Diagnosing {incident_id}; it appears here when the proposal is ready."
 

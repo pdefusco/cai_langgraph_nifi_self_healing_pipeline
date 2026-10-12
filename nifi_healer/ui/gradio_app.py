@@ -13,7 +13,9 @@ views.py; the UI has no write path of its own besides a reviewer's
 decision, and none at all to SELFHEAL_ARMED.
 """
 
+import functools
 import threading
+import time
 
 import gradio as gr
 
@@ -27,6 +29,9 @@ from nifi_healer.ui import views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
+
+# A handler slower than this is logged, to find what keeps a page waiting.
+SLOW_HANDLER_SECONDS = 2.0
 
 
 def log(message: str) -> None:
@@ -80,6 +85,24 @@ def _snapshot() -> dict:
 # ---------------------------------------------------------------------
 
 
+def _timed(handler):
+    @functools.wraps(handler)
+    def timed(*args, **kwargs):
+        began = time.monotonic()
+
+        try:
+            return handler(*args, **kwargs)
+
+        finally:
+            took = time.monotonic() - began
+
+            if took > SLOW_HANDLER_SECONDS:
+                log(f"slow handler {handler.__qualname__}: {took:.1f}s")
+
+    return timed
+
+
+@_timed
 def refresh_fleet(choice):
     snapshot = _snapshot()
 
@@ -87,6 +110,7 @@ def refresh_fleet(choice):
             views.kpi_frame(snapshot, choice))
 
 
+@_timed
 def refresh_kpi_choices(choice):
     choices = views.kpi_choices(_snapshot())
     values = [value for _, value in choices]
@@ -94,6 +118,7 @@ def refresh_kpi_choices(choice):
     return gr.Dropdown(choices=choices, value=choice if choice in values else (values[0] if values else None))
 
 
+@_timed
 def refresh_queue(selected):
     choices = views.queue_choices(get_store())
     values = [value for _, value in choices]
@@ -101,6 +126,7 @@ def refresh_queue(selected):
     return gr.Dropdown(choices=choices, value=selected if selected in values else (values[0] if values else None))
 
 
+@_timed
 def show_review(incident_id):
     view = views.review(get_store(), get_client(), incident_id)
     pending = view["pending"]
@@ -109,10 +135,11 @@ def show_review(incident_id):
             gr.Code(value=view["steps"], interactive=pending),
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
-            gr.Button(interactive=view["status"] in graph.RUNNABLE))
+            gr.Button(interactive=view["can_diagnose"]))
 
 
 def _decide(decision):
+    @_timed
     def handler(incident_id, reviewer, reason, steps_text, progress=gr.Progress()):
         if decision == "approve":
             progress(0, desc="Applying (dry run)" if not config.ARMED else "Applying to the tenant")
@@ -124,10 +151,12 @@ def _decide(decision):
     return handler
 
 
+@_timed
 def diagnose(incident_id):
     return (views.diagnose(incident_id),) + show_review(incident_id) + (refresh_queue(incident_id),)
 
 
+@_timed
 def refresh_history(selected):
     store = get_store()
     choices = views.history_choices(store)
@@ -137,10 +166,12 @@ def refresh_history(selected):
     return views.history_rows(store), gr.Dropdown(choices=choices, value=selected)
 
 
+@_timed
 def show_incident(incident_id):
     return views.incident_detail(get_store(), incident_id)
 
 
+@_timed
 def refresh_system():
     return views.system(_snapshot(), get_client())
 
