@@ -75,8 +75,9 @@ def get_graph():
     with _lock:
         if _graph is None:
             config.ensure_dirs()
-            # SqliteSaver serializes access with its own lock.
-            _connection = sqlite3.connect(str(config.CHECKPOINT_PATH), check_same_thread=False)
+            # SqliteSaver serializes access with its own lock. The timeout
+            # matches the store's: the project filesystem is network storage.
+            _connection = sqlite3.connect(str(config.CHECKPOINT_PATH), timeout=30, check_same_thread=False)
             _graph = build(SqliteSaver(_connection))
 
         return _graph
@@ -131,9 +132,9 @@ def start(incident_id: str) -> dict:
         if incident is None:
             raise ValueError(f"no incident {incident_id}")
 
-        if incident["status"] not in RUNNABLE:
+        if not diagnosable(incident):
             raise ValueError(f"{incident_id} is {incident['status']}; only {' or '.join(RUNNABLE)} "
-                             "incidents are diagnosed")
+                             "incidents are diagnosed, or one marked for review with no paused review")
 
         return graph.invoke({"incident_id": incident_id}, _config(incident_id))
 
@@ -169,16 +170,31 @@ def state(incident_id: str) -> dict:
     return get_graph().get_state(_config(incident_id)).values
 
 
+def orphaned(incident: dict) -> bool:
+    """
+    Marked PENDING_REVIEW but with no paused review: human_review set the
+    status and then the checkpoint write failed (the database was locked).
+    """
+
+    return incident["status"] == "PENDING_REVIEW" and not pending(incident["id"])
+
+
+def diagnosable(incident: dict) -> bool:
+    return incident["status"] in RUNNABLE or orphaned(incident)
+
+
 def recover() -> int:
     """
     At app start: queue every incident left NEW or DIAGNOSING (the app
-    stopped, or the LLM was down). Pending reviews need nothing; their
-    checkpoint is waiting. Returns how many were queued.
+    stopped, or the LLM was down), and every orphaned review. Pending
+    reviews need nothing; their checkpoint is waiting. Returns how many
+    were queued.
     """
 
-    queued = 0
+    store, queued = get_store(), 0
+    orphans = [i for i in store.incidents(statuses=("PENDING_REVIEW",)) if orphaned(i)]
 
-    for incident in get_store().incidents(statuses=RUNNABLE):
+    for incident in store.incidents(statuses=RUNNABLE) + orphans:
         submit(incident)
         queued += 1
 

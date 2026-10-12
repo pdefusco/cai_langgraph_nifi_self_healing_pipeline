@@ -247,8 +247,16 @@ plus its flags as the job arguments. The launcher runs them as an ordinary Pytho
 | `/home/cdsw/data/healer.db` | the store |
 | `/home/cdsw/data/checkpoints.sqlite` | LangGraph checkpoints, so pending reviews survive a restart |
 | `/home/cdsw/chroma` | the playbooks |
+| `/home/cdsw/data/app.owner` | the host and pid of the app process that last started |
 
 Mock and live never share a store, a fleet file or checkpoints: mock files carry a `.mock` suffix.
+
+**"database is locked".** Inside one app process every database has a single serialized connection, so this
+error means another process holds the file. That could be a second copy of the app, a session or job running
+`app.py`, or a lock the network filesystem has not released yet. The app logs `[app] <handler>: database is locked
+(<which> database)`, and if a different process has written `app.owner` since this one started, the log names
+it. A review whose save failed this way shows as "marked for review, but … no paused review". Diagnose picks it
+up again, and so does an app restart.
 
 ## Configuration reference
 

@@ -3,14 +3,17 @@ The UI's views on a mock tenant: fleet table and chart, the review panel
 through a whole approve, history, system, and the Blocks layout itself.
 """
 
+import json
+import sqlite3
 import threading
 import time
 
 import gradio as gr
+import pytest
 
 import config
 from nifi_healer import llm
-from nifi_healer.agent import graph
+from nifi_healer.agent import graph, nodes
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.ui import gradio_app, views
 
@@ -151,6 +154,71 @@ def test_queued_incidents_show_their_place_and_are_not_queued_twice(agent, monke
 
     assert first.done() and graph.run_state(s01) is None and graph.run_state(s03) is None
     assert graph.pending(s01)["plan"]["ok"] and not views.review(store, client, s01)["can_diagnose"]
+
+
+def test_an_unusable_reply_is_shown_for_review(agent):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(*["I think the consumer is slow."] * 2 * nodes.MAX_ATTEMPTS))
+    graph.start(incident["id"])
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["status"] == "PENDING_REVIEW" and panel["pending"] and not panel["can_approve"]
+    assert "No usable proposal" in panel["proposal"] and "I think the consumer is slow." in panel["proposal"]
+    assert "Submit edit" in panel["proposal"] and panel["steps"] == "[]"
+
+    assert views.decide(incident["id"], "reject", reason="no proposal").endswith("rejected.")
+
+
+def test_a_review_whose_checkpoint_was_lost_can_be_picked_up_again(agent, monkeypatch):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+
+    def locked(payload):
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as broken:
+        broken.setattr(nodes, "interrupt", locked)
+
+        with pytest.raises(sqlite3.OperationalError):
+            graph.start(incident["id"])
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["status"] == "PENDING_REVIEW" and not panel["pending"] and panel["can_diagnose"]
+    assert "no paused review" in panel["proposal"] and "S01 Consumer" in panel["proposal"]
+    assert graph.orphaned(store.incident(incident["id"]))
+
+    try:
+        assert views.diagnose(incident["id"]).startswith("Diagnosing")
+
+    finally:
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["pending"] and panel["can_approve"] and not panel["can_diagnose"]
+
+
+def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):
+    agent("p1-throughput")
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    gradio_app._claim_data_dir()
+
+    def locked(*_):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(views, "review", locked)
+
+    with pytest.raises(gr.Error, match="database was busy") as raised:
+        gradio_app.show_review("INC-1")
+
+    assert "Another app process" not in raised.value.message
+
+    (tmp_path / "app.owner").write_text(json.dumps({"host": "other-pod", "pid": 7}))
+
+    with pytest.raises(gr.Error, match=r"Another app process \(other-pod pid 7\)"):
+        gradio_app.show_review("INC-1")
 
 
 def test_blocks_build_and_handlers(agent):

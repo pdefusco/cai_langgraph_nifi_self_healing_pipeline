@@ -187,6 +187,11 @@ def _latest_proposal(store, incident_id: str) -> dict | None:
     return rows[-1] if rows else None
 
 
+ORPHANED = ("**This incident is marked for review, but its run has no paused review:** saving the "
+            "review point failed (the database was locked). Diagnose picks the run up again; so does "
+            "an app restart.")
+
+
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
@@ -203,6 +208,7 @@ def review(store, client, incident_id: str | None) -> dict:
 
     now = client.now()
     payload = graph.pending(incident_id)
+    orphaned = incident["status"] == "PENDING_REVIEW" and not payload
     signals = incident.get("signals") or []
     evidence = [f"### {incident['id']}",
                 f"**{incident['pack']}** · process group **{incident['process_group']}** · "
@@ -221,11 +227,12 @@ def review(store, client, incident_id: str | None) -> dict:
                     "citations": (row or {}).get("citations") or [], "steps": (row or {}).get("action") or []}
         playbooks = {}
 
-    if not proposal.get("diagnosis") and not proposal.get("steps"):
+    run = graph.run_state(incident_id)
+
+    if not payload and not proposal.get("diagnosis") and not proposal.get("steps"):
         waiting = {"NEW": "Not diagnosed yet. Diagnose runs the agent (needs the LLM endpoint).",
                    "DIAGNOSING": "The agent is diagnosing this incident."}
         text = waiting.get(incident["status"], "No proposal.")
-        run = graph.run_state(incident_id)
         stopped = graph.state(incident_id).get("error") if incident["status"] == "NEW" else ""
 
         if run and run[0] == "running":
@@ -239,22 +246,33 @@ def review(store, client, incident_id: str | None) -> dict:
             text = (f"**The last run stopped:** {stopped[:400]}\n\n"
                     "Diagnose runs the agent again; so does an app restart.")
 
+        elif orphaned:
+            text = ORPHANED
+
         return dict(blank, evidence="\n".join(evidence), proposal=text, status=incident["status"],
-                    can_diagnose=incident["status"] in graph.RUNNABLE and run is None)
+                    can_diagnose=(incident["status"] in graph.RUNNABLE or orphaned) and run is None)
 
-    text = ["### Proposal",
-            f"**Diagnosis.** {proposal.get('diagnosis') or ''}"]
+    if proposal.get("parse_error"):
+        text = ["### No usable proposal",
+                f"The agent's last reply could not be read as a proposal: {proposal['parse_error']}",
+                "Write the steps under **Steps** and **Submit edit**, or **Reject** with a reason.",
+                "**The agent's last reply:**",
+                "```\n" + (proposal.get("rationale") or "(empty)").replace("```", "'''") + "\n```"]
 
-    if proposal.get("root_cause_component"):
-        text.append(f"**Root cause:** `{proposal['root_cause_component']}`")
+    else:
+        text = ["### Proposal",
+                f"**Diagnosis.** {proposal.get('diagnosis') or ''}"]
 
-    text += [f"**Rationale.** {proposal.get('rationale') or ''}"]
+        if proposal.get("root_cause_component"):
+            text.append(f"**Root cause:** `{proposal['root_cause_component']}`")
 
-    if proposal.get("expected_effect"):
-        text.append(f"**Expected effect.** {proposal['expected_effect']}")
+        text += [f"**Rationale.** {proposal.get('rationale') or ''}"]
 
-    if proposal.get("confidence") is not None:
-        text.append(f"**Confidence:** {proposal['confidence']:.2f}")
+        if proposal.get("expected_effect"):
+            text.append(f"**Expected effect.** {proposal['expected_effect']}")
+
+        if proposal.get("confidence") is not None:
+            text.append(f"**Confidence:** {proposal['confidence']:.2f}")
 
     citations = proposal.get("citations") or []
 
@@ -266,7 +284,7 @@ def review(store, client, incident_id: str | None) -> dict:
     text.append(f"**Action family:** {family} · **risk:** {plan.get('risk') or '?'} · "
                 f"**writes:** {'ARMED: approval changes the tenant' if config.ARMED else 'disarmed: approval is a dry run'}")
 
-    if plan.get("problems"):
+    if plan.get("problems") and not proposal.get("parse_error"):
         text.append("**Validation failed:**\n" + "\n".join(f"- {p}" for p in plan["problems"]))
 
     if plan.get("warnings"):
@@ -274,6 +292,9 @@ def review(store, client, incident_id: str | None) -> dict:
 
     if payload and payload.get("error"):
         text.append(f"**Last decision not accepted:** {payload['error']}")
+
+    if orphaned:
+        text.append(ORPHANED)
 
     diff = [[d.get("path"), json.dumps(d.get("before"), default=str), json.dumps(d.get("after"), default=str)]
             for d in plan.get("diff") or []]
@@ -285,7 +306,7 @@ def review(store, client, incident_id: str | None) -> dict:
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
         "can_approve": bool(payload and plan.get("ok")),
-        "can_diagnose": False,
+        "can_diagnose": orphaned and run is None,
         "pending": bool(payload),
         "status": incident["status"],
     }
@@ -352,7 +373,7 @@ def diagnose(incident_id: str | None) -> str:
 
     incident = get_store().incident(incident_id)
 
-    if not incident or incident["status"] not in graph.RUNNABLE:
+    if not incident or not graph.diagnosable(incident):
         return f"{incident_id} is {incident['status'] if incident else 'unknown'}; nothing to diagnose."
 
     graph.submit(incident)

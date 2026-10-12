@@ -14,8 +14,13 @@ decision, and none at all to SELFHEAL_ARMED.
 """
 
 import functools
+import json
+import os
+import socket
+import sqlite3
 import threading
 import time
+import traceback
 
 import gradio as gr
 
@@ -44,6 +49,7 @@ def startup() -> None:
             return
 
         config.ensure_dirs()
+        _claim_data_dir()
         client = get_client()
 
         if config.MOCK:
@@ -85,6 +91,53 @@ def _snapshot() -> dict:
 # ---------------------------------------------------------------------
 
 
+def _owner_file() -> str:
+    return os.path.join(config.DATA_DIR, "app.owner")
+
+
+def _claim_data_dir() -> None:
+    """Record this process as the data directory's user, to name a second one if locks appear."""
+
+    me = {"host": socket.gethostname(), "pid": os.getpid(), "started": time.time()}
+
+    try:
+        with open(_owner_file(), "w") as handle:
+            json.dump(me, handle)
+
+    except OSError as exc:
+        log(f"could not write {_owner_file()}: {exc}")
+
+    log(f"using {config.DATA_DIR} as {me['host']} pid {me['pid']}")
+
+
+def _other_owner() -> str:
+    """Who else claimed the data directory since this process did, or ""."""
+
+    try:
+        with open(_owner_file()) as handle:
+            owner = json.load(handle)
+
+    except (OSError, ValueError):
+        return ""
+
+    if owner.get("host") == socket.gethostname() and owner.get("pid") == os.getpid():
+        return ""
+
+    return f"{owner.get('host')} pid {owner.get('pid')}"
+
+
+def _locked(handler, exc: sqlite3.OperationalError):
+    frames = [f.filename for f in traceback.extract_tb(exc.__traceback__)]
+    database = ("checkpoints" if any("checkpoint" in f for f in frames)
+                else "healer" if any(f.endswith(os.path.join("store", "db.py")) for f in frames) else "?")
+    other = _other_owner()
+    log(f"{handler.__qualname__}: {exc} ({database} database)"
+        + (f"; another app process claimed the data directory: {other}" if other else ""))
+
+    return gr.Error(f"The {database} database was busy ({exc}); this view loads on the next refresh."
+                    + (f" Another app process ({other}) is using the same data directory." if other else ""))
+
+
 def _timed(handler):
     @functools.wraps(handler)
     def timed(*args, **kwargs):
@@ -92,6 +145,12 @@ def _timed(handler):
 
         try:
             return handler(*args, **kwargs)
+
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc):
+                raise
+
+            raise _locked(handler, exc) from exc
 
         finally:
             took = time.monotonic() - began
