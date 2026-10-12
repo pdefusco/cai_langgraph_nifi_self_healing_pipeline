@@ -511,6 +511,13 @@ class World:
                 raise MockError(_INBOUND_MESSAGE)
 
             groups = groups_from_definition(definition)
+            given = {g.get("name") for g in parameter_groups or [] if isinstance(g, dict)}
+
+            # As live: the definition's values are not enough on create.
+            for group in groups:
+                if group["name"] not in given:
+                    raise MockError(f"Missing expected parameter group '{group['name']}' in configuration")
+
             _merge_parameters(groups, parameter_groups or [])
             ident = uuid.uuid5(uuid.NAMESPACE_URL, f"{name}/{self.now()}")
             crn = _crn("deployment", f"nfh-mock/{ident}")

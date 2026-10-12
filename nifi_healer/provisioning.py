@@ -111,6 +111,15 @@ def create_deployment_args(pack_name: str, flow_version_crn: str) -> list:
         "--auto-start-flow",
     ]
 
+    # Every parameter group the flow references must be given here, values
+    # and all, or createDeployment fails with "Missing expected parameter
+    # group". These are the faulty baseline values the scenarios start from.
+    if pack.parameter_context:
+        args += ["--parameter-groups", json.dumps([{
+            "name": pack.parameter_context,
+            "parameters": [{"name": k, "value": v} for k, v in sorted(pack.parameters.items())],
+        }])]
+
     if pack.has_listen_components:
         args.append("--ignore-deployment-inbound-configuration-checks")
 

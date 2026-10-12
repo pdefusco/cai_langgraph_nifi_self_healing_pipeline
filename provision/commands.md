@@ -58,7 +58,11 @@ cdp df create-deployment --service-crn $SVC --flow-version-crn $FV \
     --deployment-name nfh-p1-throughput \
     --cluster-size '{"name":"EXTRA_SMALL"}' --static-node-count 1 \
     --cfm-nifi-version $NIFI --auto-start-flow
-    # p5 (Listen* processor) also needs --ignore-deployment-inbound-configuration-checks
+    # p5 also needs, or createDeployment fails with "Missing expected parameter group":
+    #   --parameter-groups '[{"name": "nfh-p5-parameters", "parameters": [
+    #       {"name": "s17.target.url", "value": "http://10.255.255.1:8080/ingest"},
+    #       {"name": "s18.copies", "value": "50"}]}]'
+    # and, for its Listen* processor, --ignore-deployment-inbound-configuration-checks
     # p7 is MEDIUM x2, oversized on purpose
 
 cdp df describe-deployment --deployment-crn $D        # poll .deployment.status.state
