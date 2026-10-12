@@ -3,6 +3,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# The suite is offline and hermetic: a CAI project's environment (live
+# client, CRNs, LLM endpoint, CDP keys) must not reach config, which reads
+# it once at import.
+for _name in list(os.environ):
+    if _name.startswith(("SELFHEAL_", "LLM_", "EMBEDDING_", "CDP_")):
+        del os.environ[_name]
+
 import pytest  # noqa: E402
 
 import config  # noqa: E402

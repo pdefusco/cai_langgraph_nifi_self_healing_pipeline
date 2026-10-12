@@ -99,13 +99,15 @@ METRIC_OVERRIDES_FILE = os.path.join(PROVISION_OUT_DIR, "metric_overrides.json")
 # CDP / DataFlow
 # ---------------------------------------------------------------------
 
-# The mock tenant's own CRNs. In mock mode they are the defaults, so the
-# guardrails check the mock exactly as they check a live service.
+# The mock tenant's own CRNs. In mock mode they are always used, so the
+# guardrails check the mock exactly as they check a live service, and a
+# project whose environment carries the live CRNs (for its provisioning
+# jobs) can still run the app on the mock.
 MOCK_SERVICE_CRN = "crn:cdp:df:us-west-1:mock:service:nfh-mock"
 MOCK_ENVIRONMENT_CRN = "crn:cdp:environments:us-west-1:mock:environment:nfh-mock"
 
-SERVICE_CRN = os.environ.get("SELFHEAL_SERVICE_CRN", MOCK_SERVICE_CRN if MOCK else "")
-ENVIRONMENT_CRN = os.environ.get("SELFHEAL_ENVIRONMENT_CRN", MOCK_ENVIRONMENT_CRN if MOCK else "")
+SERVICE_CRN = MOCK_SERVICE_CRN if MOCK else os.environ.get("SELFHEAL_SERVICE_CRN", "")
+ENVIRONMENT_CRN = MOCK_ENVIRONMENT_CRN if MOCK else os.environ.get("SELFHEAL_ENVIRONMENT_CRN", "")
 
 # Every flow definition and deployment this app creates carries this
 # prefix, and the guardrails refuse to touch anything that does not.

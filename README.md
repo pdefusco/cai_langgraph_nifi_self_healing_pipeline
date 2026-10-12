@@ -247,7 +247,7 @@ Mock and live never share a store, a fleet file or checkpoints: mock files carry
 |---|---|---|
 | `SELFHEAL_DF_CLIENT` | `mock` | `live` runs the `cdp` CLI; anything else uses the simulated tenant |
 | `SELFHEAL_ARMED` | `true` for mock, `false` for live | allow writes; otherwise approvals are dry runs |
-| `SELFHEAL_SERVICE_CRN`, `SELFHEAL_ENVIRONMENT_CRN` | the mock's own CRNs | the DataFlow service and the CDP environment |
+| `SELFHEAL_SERVICE_CRN`, `SELFHEAL_ENVIRONMENT_CRN` | (none) | the live DataFlow service and CDP environment; mock mode ignores them and always uses its own CRNs |
 | `SELFHEAL_PREFIX` | `nfh-` | names the app may create or touch |
 | `SELFHEAL_DENYLIST` | (empty) | deployment CRNs never touched, comma-separated |
 | `SELFHEAL_NIFI_VERSION` | `2.6.0.4.12.0.2-1` | NiFi build for deployments and processor bundles |
