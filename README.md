@@ -112,6 +112,12 @@ Each action family uses one API path:
   - drift of the base flow version;
   - a half-applied version change; and
   - that the workload endpoint is reachable.
+- **Two fixes to one deployment.** S15 and S16 both live in `nfh-p4-dataloss-latency` and are both diagnosed on its
+  first version. Once S15's fix is deployed, S16's edit is planned again on the version S15 deployed. It is applied
+  only if every version since S16's diagnosis came from this app's own applied actions, and if the diff is still
+  exactly the one the reviewer approved. Any other drift is refused: diagnose again.
+- **Cooldown.** An armed approval inside a deployment's cooldown (30 minutes after the last change, so the previous
+  fix can be measured) is turned away before the review is answered. The review stays open; approve it again later.
 - **Commands it never uses.** It never uses `STOP_AND_EMPTY_QUEUES`, never sends `--kpis` together with a version
   change, and never restarts a deployment.
 - **Credentials.** They are passed only in the subprocess environment, never on a command line and never in a log.
@@ -154,7 +160,9 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
 - **Fleet:** about 20 KPIs breach within seconds, and an incident opens for every scenario except S19.
 - **Review Queue:**
   - Each incident shows its evidence, the diagnosis with playbook citations, the diff and the exact commands.
-  - **Approve** applies the change to the mock.
+  - **Approve** applies the change to the mock. With writes armed it runs in the background: a flow edit imports
+    a version and waits minutes for the deployment, so the click returns at once and the panel follows the change
+    until it lands (**Last action: … APPLIED**).
   - **Submit edit** re-validates JSON steps you have changed.
   - **Reject** requires a reason.
 - **System → Fast-forward** moves the mock clock past the 5-minute settle and the 15-minute verify window. History

@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 
 import config
 from nifi_healer import llm
+from nifi_healer.actions import executor
 from nifi_healer.agent import graph
+from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi.detectors import group_name
 from nifi_healer.store.db import CLOSED_STATUSES, get_store
 
@@ -22,7 +24,7 @@ FLEET_HEADERS = ["Pack", "Process group", "KPI", "Status", "Latest", "Threshold"
 DIFF_HEADERS = ["Path", "Before", "After"]
 HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Opened", "Action", "Reviewed by"]
 
-QUEUE_STATUSES = ("PENDING_REVIEW", "NEW", "DIAGNOSING")
+QUEUE_STATUSES = ("PENDING_REVIEW", "NEW", "DIAGNOSING", "APPLYING")
 
 STATUS_MARK = {"ok": "ok", "breaching": "BREACHING", "warning": "warning", "imbalance": "IMBALANCE",
                "alert": "ALERT", "missing": "no chart"}
@@ -171,20 +173,52 @@ def kpi_frame(snapshot: dict, choice: str | None):
 # ---------------------------------------------------------------------
 
 
-def queue_choices(store) -> list:
+def queue_choices(store, keep: str | None = None) -> list:
+    """The open incidents, plus `keep` (the one on screen) once it closes, so the view stays on it."""
+
+    incidents = store.incidents(statuses=QUEUE_STATUSES)
+
+    if keep and keep not in {i["id"] for i in incidents}:
+        incidents += [i for i in [store.incident(keep)] if i]
+
     choices = []
 
-    for incident in store.incidents(statuses=QUEUE_STATUSES):
+    for incident in incidents:
         waiting = "awaiting review" if incident["status"] == "PENDING_REVIEW" else incident["status"].lower()
         choices.append((f"{incident['id']} · {incident['process_group']} · {waiting}", incident["id"]))
 
     return choices
 
 
+def review_key(store, incident_id: str | None) -> str:
+    """Changes whenever the review panel for the incident would show something new."""
+
+    incident = store.incident(incident_id) if incident_id else None
+
+    return f"{incident_id}|{incident and incident['status']}|{graph.run_state(incident_id) if incident else None}"
+
+
 def _latest_proposal(store, incident_id: str) -> dict | None:
     rows = [p for p in store.proposals(incident_id) if p["status"] != "SUPERSEDED"]
 
     return rows[-1] if rows else None
+
+
+APPLYING = ("**Applying the approved change to the tenant.** A flow edit imports a new flow version and "
+            "deploys it, which takes several minutes; this panel updates when it is done, and History "
+            "has the commands.")
+
+
+def _last_action(store, incident_id: str) -> str:
+    actions = store.actions(incident_id=incident_id)
+
+    if not actions:
+        return ""
+
+    action = actions[-1]
+    error = f": {action['error']}" if action.get("error") else ""
+
+    return f"**Last action:** {action['action_type']} **{action['status']}**{error}"
 
 
 ORPHANED = ("**This incident is marked for review, but its run has no paused review:** saving the "
@@ -296,6 +330,14 @@ def review(store, client, incident_id: str | None) -> dict:
     if orphaned:
         text.append(ORPHANED)
 
+    applying = bool(run and run[0] == "applying")
+
+    if applying:
+        text.append(APPLYING)
+
+    elif not payload and _last_action(store, incident_id):
+        text.append(_last_action(store, incident_id))
+
     diff = [[d.get("path"), json.dumps(d.get("before"), default=str), json.dumps(d.get("after"), default=str)]
             for d in plan.get("diff") or []]
 
@@ -305,9 +347,9 @@ def review(store, client, incident_id: str | None) -> dict:
         "diff": diff,
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
-        "can_approve": bool(payload and plan.get("ok")),
+        "can_approve": bool(payload and plan.get("ok")) and not applying,
         "can_diagnose": orphaned and run is None,
-        "pending": bool(payload),
+        "pending": bool(payload) and not applying,
         "status": incident["status"],
     }
 
@@ -319,7 +361,12 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
     if not incident_id:
         return "Select an incident first."
 
-    if not graph.pending(incident_id):
+    if (graph.run_state(incident_id) or ("",))[0] == "applying":
+        return f"{incident_id}'s approval is being applied; History shows the result."
+
+    waiting = graph.pending(incident_id)
+
+    if not waiting:
         return f"{incident_id} is not waiting for a review."
 
     answer = {"decision": decision, "reviewer": reviewer.strip(), "reason": reason.strip()}
@@ -335,6 +382,17 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
             steps = [steps]
 
         answer["steps"] = steps
+
+    if decision == "approve" and config.ARMED and (waiting.get("plan") or {}).get("ok"):
+        refusal = executor.precheck(get_client(), get_store(), get_store().incident(incident_id))
+
+        if refusal:
+            return f"Not applied yet, {refusal} The review stays open: approve again then."
+
+        graph.resume_in_background(incident_id, answer)
+
+        return ("Approved; applying to the tenant in the background. This panel follows it, "
+                "and History shows the result.")
 
     state = graph.resume(incident_id, answer)
     waiting = graph.pending(incident_id)

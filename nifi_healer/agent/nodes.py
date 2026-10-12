@@ -299,7 +299,7 @@ def after_review(state: dict) -> str:
 def apply_remediation(state: dict) -> dict:
     client, store = get_client(), get_store()
     incident = store.incident(state["incident_id"])
-    proposal = {"id": state.get("proposal_id"), "action": state["plan"]["steps"]}
+    proposal = {"id": state.get("proposal_id"), "action": state["plan"]["steps"], "diff": state["plan"].get("diff")}
     action = executor.execute(client, store, incident, proposal, wait=_wait_for(client, incident))
 
     return {"result": {k: action.get(k) for k in ("id", "status", "dry_run", "action_type", "argv", "error",

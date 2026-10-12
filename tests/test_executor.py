@@ -109,6 +109,43 @@ def test_drifted_version_is_refused(tenant):
     assert not report["ok"] and "diagnose again" in report["problems"][0]
 
 
+def test_a_fix_on_top_of_this_apps_own_fix_is_planned_again_and_keeps_both(tenant, monkeypatch):
+    world, client, store = tenant("p1-throughput")
+    monkeypatch.setattr(config, "COOLDOWN_SECONDS", 0)
+    s01, s02 = incident_for(client, store, "S01"), incident_for(client, store, "S02")
+    settle = lambda: world.settle(s01["deployment_crn"])  # noqa: E731
+    reviewed = dict(proposal_for(store, s02, packs.SCENARIOS["S02"].expected),
+                    diff=executor.plan(client, s02, packs.SCENARIOS["S02"].expected)["diff"])
+
+    first = executor.execute(client, store, s01, proposal_for(store, s01, packs.SCENARIOS["S01"].expected),
+                             dry_run=False, wait=settle)
+    assert first["status"] == "APPLIED", first["error"]
+
+    # S02 was reviewed on the version before S01's fix; a different diff is not what was reviewed.
+    wrong = executor.execute(client, store, s02, dict(reviewed, diff=[]), dry_run=False, wait=settle)
+    assert wrong["status"] == "REFUSED" and "no longer makes exactly the reviewed change" in wrong["error"]
+
+    store.update_incident(s02["id"], client.now(), status="PENDING_REVIEW")
+    second = executor.execute(client, store, s02, reviewed, dry_run=False, wait=settle)
+    assert second["status"] == "APPLIED", second["error"]
+    assert second["from_flow_version_crn"] == first["to_flow_version_crn"]
+
+    edited = client.flow_definition(second["to_flow_version_crn"])
+    consumer = next(p for _, g in walk_groups(edited["flowContents"])
+                    for p in g.get("processors") or [] if p["name"] == "S01 Consumer")
+    assert consumer["concurrentlySchedulableTaskCount"] == 4
+
+    # Two of this app's versions back is still its own line; a base it did not come from is not.
+    s03 = incident_for(client, store, "S03")
+    assert executor.rebased(client, store, dict(s03, expected_flow_version_crn=first["from_flow_version_crn"])
+                            )["rebased_by"] == s02["id"]
+    foreign = dict(s03, expected_flow_version_crn="crn:cdp:df:mock:flow-version:someone-elses")
+    assert "rebased_from" not in executor.rebased(client, store, foreign)
+    refused = executor.execute(client, store, foreign, proposal_for(store, foreign, packs.SCENARIOS["S03"].expected),
+                               dry_run=False, wait=settle)
+    assert refused["status"] == "REFUSED" and "someone changed it" in refused["error"]
+
+
 def test_parameter_update(tenant):
     world, client, store = tenant("p5-parameters")
     incident = incident_for(client, store, "S17")

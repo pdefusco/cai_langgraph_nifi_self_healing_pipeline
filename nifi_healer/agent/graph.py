@@ -13,7 +13,9 @@ The remediation graph, one thread per incident (thread_id = incident id).
 The checkpointer is SQLite on the project filesystem, so a run paused at
 human_review survives an app restart; the UI resumes it with
 resume(incident_id, decision). Runs started by the poller go through a
-small thread pool so a slow LLM never stalls polling.
+small thread pool so a slow LLM never stalls polling; armed approvals
+go through their own pool (resume_in_background) so a reviewer's click
+returns while the deployment changes.
 """
 
 import sqlite3
@@ -36,8 +38,13 @@ _lock = threading.Lock()
 _graph = None
 _connection = None
 _pool = None
+_apply_pool = None
 _running: dict = {}  # incident id -> Lock: one run of a thread at a time
 _waiting: dict = {}  # incident id -> Future, from submit() until the run ends
+_applying: dict = {}  # incident id -> Future, from resume_in_background() until the decision is applied
+
+# Approvals applied at once; each one waits minutes for its deployment.
+APPLY_WORKERS = 4
 
 
 def build(checkpointer=None):
@@ -95,6 +102,7 @@ def reset() -> None:
         _graph, _connection = None, None
         _running.clear()
         _waiting.clear()
+        _applying.clear()
 
 
 def _config(incident_id: str) -> dict:
@@ -239,24 +247,60 @@ def submit(incident: dict):
         if future is None:
             future = _waiting[incident_id] = pool.submit(_run, incident_id)
 
-    future.add_done_callback(lambda done: _forget(incident_id, done))
+    future.add_done_callback(lambda done: _forget(incident_id, done, _waiting))
 
     return future
 
 
-def _forget(incident_id: str, future) -> None:
+def _forget(incident_id: str, future, futures: dict) -> None:
     with _lock:
-        if _waiting.get(incident_id) is future:
-            del _waiting[incident_id]
+        if futures.get(incident_id) is future:
+            del futures[incident_id]
+
+
+def _resume(incident_id: str, decision: dict) -> None:
+    try:
+        resume(incident_id, decision)
+
+    except Exception as exc:  # recorded by the executor where it can be; logged either way
+        nodes.log(f"{incident_id}: applying the decision failed: {type(exc).__name__}: {exc}")
+
+
+def resume_in_background(incident_id: str, decision: dict):
+    """
+    resume() on a worker thread, for an armed approval: the executor waits
+    for the deployment to settle, which takes minutes, and a UI handler
+    that long blocks the reviewer's tab. Returns the Future; an incident
+    already being applied keeps its Future and the new decision is dropped.
+    """
+
+    global _apply_pool
+
+    with _lock:
+        if _apply_pool is None:
+            _apply_pool = ThreadPoolExecutor(max_workers=APPLY_WORKERS, thread_name_prefix="apply")
+
+        future = _applying.get(incident_id)
+
+        if future is None:
+            future = _applying[incident_id] = _apply_pool.submit(_resume, incident_id, decision)
+
+    future.add_done_callback(lambda done: _forget(incident_id, done, _applying))
+
+    return future
 
 
 def run_state(incident_id: str) -> tuple | None:
     """
     None when no run is queued or running for the incident; else
-    ("running", 0, 0) or ("queued", position, waiting), position from 1.
+    ("applying", 0, 0) for a decision being applied, ("running", 0, 0), or
+    ("queued", position, waiting) with position from 1.
     """
 
     with _lock:
+        if incident_id in _applying:
+            return "applying", 0, 0
+
         future = _waiting.get(incident_id)
 
         if future is None:

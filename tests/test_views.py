@@ -43,6 +43,17 @@ def test_fleet_views(agent):
     assert views.kpi_frame(snapshot, None).empty
 
 
+def applied(incident_id: str) -> None:
+    """Wait for an approval being applied in the background."""
+
+    future = graph._applying.get(incident_id)
+
+    if future is not None:
+        future.result(timeout=30)
+
+    assert graph.run_state(incident_id) is None
+
+
 def test_review_approve_and_history(agent):
     _, client, store, incidents, install = agent("p1-throughput")
     incident = incidents["S01"]
@@ -62,8 +73,14 @@ def test_review_approve_and_history(agent):
 
     assert "not valid JSON" in views.decide(incident["id"], "edit", steps_text="[{")
     assert views.decide(incident["id"], "reject").startswith("Not accepted")
-    assert "Applied" in views.decide(incident["id"], "approve", reviewer="ops")
+    assert "in the background" in views.decide(incident["id"], "approve", reviewer="ops")
+    applied(incident["id"])
     assert "not waiting" in views.decide(incident["id"], "approve")
+
+    panel = views.review(store, client, incident["id"])
+    assert "**Last action:** SET_CONCURRENT_TASKS **APPLIED**" in panel["proposal"]
+    assert incident["id"] in [v for _, v in views.queue_choices(store, keep=incident["id"])]
+    assert incident["id"] not in [v for _, v in views.queue_choices(store)]
 
     row = next(r for r in views.history_rows(store) if r[0] == incident["id"])
     assert row[3] == "VERIFYING" and "APPLIED" in row[6] and row[7] == "ops"
@@ -87,6 +104,54 @@ def test_edit_and_dry_run_messages(agent, monkeypatch):
     assert "validated" in views.decide(incident["id"], "edit", steps_text=fixed)
     assert "disarmed" in views.review(store, client, incident["id"])["proposal"]
     assert views.decide(incident["id"], "approve").startswith("Dry run recorded")
+
+
+def test_an_approval_in_cooldown_keeps_the_review_open(agent, monkeypatch):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(incident["id"])
+    store.add_action("INC-earlier", "p1-throughput", incident["deployment_crn"], "SET_RUN_SCHEDULE",
+                     dry_run=False, status="APPLIED", started_at=client.now() - 60)
+
+    message = views.decide(incident["id"], "approve")
+    assert message.startswith("Not applied yet, cooldown") and "review stays open" in message
+    assert graph.run_state(incident["id"]) is None and graph.pending(incident["id"])
+    assert views.review(store, client, incident["id"])["can_approve"]
+    assert store.actions(incident_id=incident["id"]) == []
+
+
+def test_the_panel_follows_an_approval_being_applied(agent, monkeypatch):
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(incident["id"])
+    gate, entered = threading.Event(), threading.Event()
+    resume = graph.resume
+
+    def slow(*args):
+        entered.set()
+        gate.wait(30)
+
+        return resume(*args)
+
+    monkeypatch.setattr(graph, "resume", slow)
+    before = views.review_key(store, incident["id"])
+
+    try:
+        views.decide(incident["id"], "approve")
+        assert entered.wait(10)
+        panel = views.review(store, client, incident["id"])
+        assert "Applying the approved change" in panel["proposal"]
+        assert not panel["can_approve"] and not panel["pending"]
+        assert "being applied" in views.decide(incident["id"], "approve")
+        assert views.review_key(store, incident["id"]) != before
+
+    finally:
+        gate.set()
+        applied(incident["id"])
+
+    assert store.incident(incident["id"])["status"] == "VERIFYING"
 
 
 def test_diagnose_and_system(agent, monkeypatch):
@@ -227,7 +292,13 @@ def test_blocks_build_and_handlers(agent):
     assert isinstance(gradio_app.build(), gr.Blocks)
 
     out = gradio_app.show_review(incidents["S01"]["id"])
-    assert len(out) == 9 and "Not diagnosed yet" in out[1]
+    assert len(out) == gradio_app.PANEL_OUTPUTS and "Not diagnosed yet" in out[1]
+
+    *panel, key = gradio_app.select_review(incidents["S01"]["id"])
+    assert panel[1] == out[1] and key
+    assert all(isinstance(o, dict) and o.get("__type__") == "update" and len(o) == 1
+               for o in gradio_app.follow_review(incidents["S01"]["id"], key))
+    assert gradio_app.follow_review(incidents["S01"]["id"], "")[-1] == key
 
     table, picker = gradio_app.refresh_history(None)
     assert len(table) == len(incidents) and picker.value in {i["id"] for i in incidents.values()}

@@ -179,10 +179,14 @@ def refresh_kpi_choices(choice):
 
 @_timed
 def refresh_queue(selected):
-    choices = views.queue_choices(get_store())
+    choices = views.queue_choices(get_store(), keep=selected)
     values = [value for _, value in choices]
 
     return gr.Dropdown(choices=choices, value=selected if selected in values else (values[0] if values else None))
+
+
+# show_review's outputs: evidence, proposal, diff, commands, steps and the four buttons.
+PANEL_OUTPUTS = 9
 
 
 @_timed
@@ -195,6 +199,23 @@ def show_review(incident_id):
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
             gr.Button(interactive=view["can_diagnose"]))
+
+
+@_timed
+def select_review(incident_id):
+    return show_review(incident_id) + (views.review_key(get_store(), incident_id),)
+
+
+@_timed
+def follow_review(incident_id, seen):
+    """Re-render the panel only when it would change (an approval being applied finishes)."""
+
+    key = views.review_key(get_store(), incident_id)
+
+    if key == seen:
+        return (gr.skip(),) * (PANEL_OUTPUTS + 1)
+
+    return show_review(incident_id) + (key,)
 
 
 def _decide(decision):
@@ -321,12 +342,16 @@ def build() -> gr.Blocks:
 
             review_result = gr.Markdown()
             panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn]
+            seen = gr.State("")
             queue_timer = gr.Timer(5.0)
+            follow_timer = gr.Timer(3.0)
 
-            queue_pick.change(show_review, inputs=[queue_pick], outputs=panel)
+            queue_pick.change(select_review, inputs=[queue_pick], outputs=panel + [seen])
             queue_refresh.click(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
-                show_review, inputs=[queue_pick], outputs=panel)
+                select_review, inputs=[queue_pick], outputs=panel + [seen])
             queue_timer.tick(refresh_queue, inputs=[queue_pick], outputs=[queue_pick], show_progress="hidden")
+            follow_timer.tick(follow_review, inputs=[queue_pick, seen], outputs=panel + [seen],
+                              show_progress="hidden")
 
             decision_inputs = [queue_pick, reviewer, reason, steps]
             decision_outputs = [review_result] + panel + [queue_pick]
@@ -371,7 +396,7 @@ def build() -> gr.Blocks:
         # between refreshes (and for API callers). Handlers check the ids.
         demo.load(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
-            show_review, inputs=[queue_pick], outputs=panel)
+            select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick])
         demo.load(refresh_system, outputs=[system_md])
 

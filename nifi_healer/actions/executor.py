@@ -25,6 +25,14 @@ Guards, in order, before any write: the rate limit for the deployment
 no half-applied version change, the deployed version is still the one
 the incident was diagnosed against, and (inside guardrails.act) the
 deployment is the recorded nfh- deployment on the expected service.
+
+One drift is allowed: a version this app deployed itself, for another
+incident in the same deployment (S15's fix, then S16's). The flow edit
+is planned again on that version and applied only if its diff is still
+exactly the one the reviewer approved.
+
+`precheck` checks the rate limit before a review is answered, so a
+cooldown leaves the review open instead of failing it.
 """
 
 import json
@@ -118,6 +126,50 @@ def _deployed(client: Client, incident: dict) -> dict:
         raise Refused(f"could not read the deployed flow: {facts['error']}")
 
     return facts
+
+
+def rebased(client: Client, store, incident: dict) -> dict:
+    """
+    The incident to plan a flow edit with. If every version deployed since
+    the one the incident was diagnosed on came from this app's own applied
+    actions, the incident comes back with the current version as its base
+    and `rebased_from` set; any other drift is left for plan() to refuse.
+    """
+
+    base = incident.get("expected_flow_version_crn") or ""
+
+    if not base:
+        return incident
+
+    current = _deployed(client, incident)["flow_version_crn"]
+    ours = {a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=incident["deployment_crn"])
+            if a["status"] == "APPLIED" and a.get("to_flow_version_crn")}
+    crn, seen = current, set()
+
+    while crn != base and crn in ours and crn not in seen:
+        seen.add(crn)
+        crn = ours[crn].get("from_flow_version_crn")
+
+    if current == base or crn != base:
+        return incident
+
+    return dict(incident, expected_flow_version_crn=current, rebased_from=base,
+                rebased_by=ours[current]["incident_id"])
+
+
+def precheck(client: Client, store, incident: dict) -> str:
+    """
+    Why an armed approval would be refused for a reason that passes with
+    time (the deployment's rate limit), or "". Reads only the store.
+    """
+
+    try:
+        guardrails.assert_rate_allowed(store.performed_action_times(incident["deployment_crn"]), client.now())
+
+    except guardrails.NotAllowed as exc:
+        return str(exc)
+
+    return ""
 
 
 def _plan_flow_edit(client: Client, incident: dict, steps: list, report: dict) -> None:
@@ -290,7 +342,7 @@ def execute(client: Client, store, incident: dict, proposal: dict, dry_run: bool
         return _finish(client, store, incident, action_id, audit, "DRY_RUN", "DRY_RUN")
 
     return _finish(client, store, incident, action_id, audit, "APPLIED", "VERIFYING",
-                   to_flow_version_crn=to_version)
+                   to_flow_version_crn=to_version, **audit.get("rebase", {}))
 
 
 def _finish(client: Client, store, incident: dict, action_id: int, audit: dict, status: str,
@@ -332,10 +384,24 @@ def _execute(client: Client, store, incident: dict, steps: list, proposal: dict,
             raise Refused(f"the DataFlow workload endpoint is not reachable: {unreachable}")
 
     guardrails.assert_not_half_applied(client, deployment, flow)
+
+    if catalog.family_of(steps) == catalog.FLOW_EDIT:
+        incident = rebased(client, store, incident)
+
     report = plan(client, incident, steps)
 
     if not report["ok"]:
         raise Refused("; ".join(report["problems"]))
+
+    if incident.get("rebased_from"):
+        if report["diff"] != proposal.get("diff"):
+            raise Refused(f"the deployment now runs {incident['expected_flow_version_crn']}, which "
+                          f"{incident['rebased_by']} deployed, and on it this edit no longer makes exactly "
+                          "the reviewed change; diagnose again")
+
+        log(f"[{pack}] {incident['id']}: planned on {incident['expected_flow_version_crn']} "
+            f"({incident['rebased_by']}'s change) instead of {incident['rebased_from']}; the diff is unchanged")
+        audit["rebase"] = {"from_flow_version_crn": incident["expected_flow_version_crn"]}
 
     family = report["family"]
 
