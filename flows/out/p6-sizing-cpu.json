@@ -1,0 +1,350 @@
+{
+  "externalControllerServices": {},
+  "flowContents": {
+    "comments": "Self-healing test pack: CPU sizing. Built by flows/build_all.py.",
+    "componentType": "PROCESS_GROUP",
+    "connections": [],
+    "controllerServices": [],
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultFlowFileExpiration": "0 sec",
+    "executionEngine": null,
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "funnels": [],
+    "groupIdentifier": null,
+    "identifier": "fd754393-6ba6-5612-afdf-a908961e1730",
+    "inputPorts": [],
+    "instanceIdentifier": null,
+    "labels": [],
+    "logFileSuffix": null,
+    "maxConcurrentTasks": null,
+    "name": "nfh-p6-sizing-cpu",
+    "outputPorts": [],
+    "parameterContextName": null,
+    "position": null,
+    "processGroups": [
+      {
+        "comments": "Compression and hashing need about twice the CPU an EXTRA_SMALL node has. (symptom: sizing_cpu)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "d74a8ac6-cbcb-57e6-bebd-7d6965f5c8e3",
+              "instanceIdentifier": null,
+              "name": "S20 Compress",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "d63939ce-8b3e-53e8-8a2a-8cb3c6828490",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "ROUND_ROBIN",
+            "name": "s20-to-compress",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "49fda4ab-6484-51da-9503-5ed54b580006",
+              "instanceIdentifier": null,
+              "name": "S20 Payload Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "611e04e2-13fe-551a-9662-d2b305b68c9f",
+              "instanceIdentifier": null,
+              "name": "S20 Hash",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "8d6647f2-6f61-5758-83f2-079d87dedca7",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s20-to-hash",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "d74a8ac6-cbcb-57e6-bebd-7d6965f5c8e3",
+              "instanceIdentifier": null,
+              "name": "S20 Compress",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "254800eb-88a5-55fc-895a-e1ca941712d7",
+              "instanceIdentifier": null,
+              "name": "S20 Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "7e676677-ede8-50c1-99e7-cfd77d6e1c9a",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s20-hashed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+              "id": "611e04e2-13fe-551a-9662-d2b305b68c9f",
+              "instanceIdentifier": null,
+              "name": "S20 Hash",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "fd754393-6ba6-5612-afdf-a908961e1730",
+        "identifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S20 CPU Saturated",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "PRIMARY",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "49fda4ab-6484-51da-9503-5ed54b580006",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S20 Payload Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "3",
+              "Data Format": "Binary",
+              "File Size": "10 MB",
+              "Unique FlowFiles": "true"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "2 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 4,
+            "executionNode": "ALL",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "d74a8ac6-cbcb-57e6-bebd-7d6965f5c8e3",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S20 Compress",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Compression Format": "gzip",
+              "Compression Level": "9",
+              "Mode": "compress"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.CompressContent",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 2,
+            "executionNode": "ALL",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "611e04e2-13fe-551a-9662-d2b305b68c9f",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S20 Hash",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Hash Algorithm": "SHA-256"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.CryptographicHashContent",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "53716d20-3fa4-5a42-899e-be16ff74c55d",
+            "identifier": "254800eb-88a5-55fc-895a-e1ca941712d7",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S20 Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      }
+    ],
+    "processors": [],
+    "remoteProcessGroups": [],
+    "scheduledState": null,
+    "statelessFlowTimeout": null,
+    "versionedFlowCoordinates": null
+  },
+  "flowEncodingVersion": "1.0",
+  "latest": false,
+  "parameterContexts": {},
+  "parameterProviders": {}
+}

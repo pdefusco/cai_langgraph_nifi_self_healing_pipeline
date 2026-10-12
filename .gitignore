@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Local state (store, checkpoints, Chroma, mock tenant) when not on CAI.
+var/
+
+# Read from a live tenant by provision/03; specific to one environment.
+provision/out/kpi_metadata_*.json

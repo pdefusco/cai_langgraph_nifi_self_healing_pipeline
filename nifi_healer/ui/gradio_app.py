@@ -1,0 +1,295 @@
+"""
+The review app: Fleet, Review Queue, History, System.
+
+    python app.py            # CAI Application script; binds CDSW_APP_PORT on 127.0.0.1
+
+startup() runs once per process: the mock tenant (built if absent), the
+poller thread with the agent as its on_incident hook, and a re-queue of
+incidents a previous process left undiagnosed. Page loads never start
+anything, so opening the app in five tabs still polls once.
+
+Every handler reads the store or the poller cache and goes through
+views.py; the UI has no write path of its own besides a reviewer's
+decision, and none at all to SELFHEAL_ARMED.
+"""
+
+import threading
+
+import gradio as gr
+
+import config
+from nifi_healer.agent import graph
+from nifi_healer.cdp.client import get_client
+from nifi_healer.rag import retriever
+from nifi_healer.runtime import poller as poller_module
+from nifi_healer.store.db import get_store
+from nifi_healer.ui import views
+
+_started = threading.Event()
+_start_lock = threading.Lock()
+
+
+def log(message: str) -> None:
+    print(f"[app] {message}", flush=True)
+
+
+def startup() -> None:
+    with _start_lock:
+        if _started.is_set():
+            return
+
+        config.ensure_dirs()
+        client = get_client()
+
+        if config.MOCK:
+            from nifi_healer.sim import bootstrap
+
+            if bootstrap.ensure():
+                log("built the mock tenant")
+
+        threading.Thread(target=_warm_playbooks, name="rag-warm", daemon=True).start()
+        poller_module.start(client, get_store(), on_incident=graph.submit)
+        queued = graph.recover() if config.AUTO_DIAGNOSE else 0
+
+        if queued:
+            log(f"re-queued {queued} undiagnosed incident(s)")
+
+        log(f"{client.kind} client, writes {'ARMED' if config.ARMED else 'disarmed'}")
+        _started.set()
+
+
+def _warm_playbooks() -> None:
+    try:
+        retriever.ensure()
+
+    except Exception as exc:  # the first incident retries; the agent runs without playbooks if not
+        log(f"playbook ingest failed: {exc}")
+
+
+def _snapshot() -> dict:
+    current = poller_module.get()
+
+    if current is None:
+        return {"packs": {}, "heartbeat": {}, "now": get_client().now()}
+
+    return current.snapshot()
+
+
+# ---------------------------------------------------------------------
+# Handlers
+# ---------------------------------------------------------------------
+
+
+def refresh_fleet(choice):
+    snapshot = _snapshot()
+
+    return (views.fleet_header(snapshot), views.fleet_rows(snapshot, get_store()),
+            views.kpi_frame(snapshot, choice))
+
+
+def refresh_kpi_choices(choice):
+    choices = views.kpi_choices(_snapshot())
+    values = [value for _, value in choices]
+
+    return gr.Dropdown(choices=choices, value=choice if choice in values else (values[0] if values else None))
+
+
+def refresh_queue(selected):
+    choices = views.queue_choices(get_store())
+    values = [value for _, value in choices]
+
+    return gr.Dropdown(choices=choices, value=selected if selected in values else (values[0] if values else None))
+
+
+def show_review(incident_id):
+    view = views.review(get_store(), get_client(), incident_id)
+    pending = view["pending"]
+
+    return (view["evidence"], view["proposal"], view["diff"], view["commands"],
+            gr.Code(value=view["steps"], interactive=pending),
+            gr.Button(interactive=view["can_approve"]),
+            gr.Button(interactive=pending), gr.Button(interactive=pending),
+            gr.Button(interactive=view["status"] in graph.RUNNABLE))
+
+
+def _decide(decision):
+    def handler(incident_id, reviewer, reason, steps_text, progress=gr.Progress()):
+        if decision == "approve":
+            progress(0, desc="Applying (dry run)" if not config.ARMED else "Applying to the tenant")
+
+        message = views.decide(incident_id, decision, reviewer, reason, steps_text)
+
+        return (message,) + show_review(incident_id) + (refresh_queue(incident_id),)
+
+    return handler
+
+
+def diagnose(incident_id):
+    return (views.diagnose(incident_id),) + show_review(incident_id) + (refresh_queue(incident_id),)
+
+
+def refresh_history(selected):
+    store = get_store()
+    choices = views.history_choices(store)
+    values = [value for _, value in choices]
+    selected = selected if selected in values else (values[0] if values else None)
+
+    return views.history_rows(store), gr.Dropdown(choices=choices, value=selected)
+
+
+def show_incident(incident_id):
+    return views.incident_detail(get_store(), incident_id)
+
+
+def refresh_system():
+    return views.system(_snapshot(), get_client())
+
+
+def poll_now():
+    current = poller_module.get()
+
+    if current is None:
+        return "The poller is not running."
+
+    current.poll_now()
+
+    return "Polled every deployment."
+
+
+def selftest():
+    return get_client().selftest()
+
+
+def fast_forward(minutes):
+    if not config.MOCK:
+        return "Fast-forward only exists in mock mode."
+
+    get_client().world.skip(float(minutes) * 60)
+    current = poller_module.get()
+
+    if current is not None:
+        current.poll_now()
+        current.evaluate_outcomes()
+
+    return f"Moved the mock clock {minutes:g} minutes forward, polled, and evaluated outcomes."
+
+
+# ---------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------
+
+
+def build() -> gr.Blocks:
+    with gr.Blocks(title="NiFi Self-Healing") as demo:
+        gr.Markdown("## NiFi Self-Healing Pipeline\n"
+                    f"CDF DataFlow · {'mock tenant' if config.MOCK else 'live tenant'} · writes "
+                    f"{'**ARMED**' if config.ARMED else 'disarmed (dry runs)'}")
+
+        with gr.Tab("Fleet"):
+            fleet_header = gr.Markdown()
+            fleet_table = gr.Dataframe(headers=views.FLEET_HEADERS, interactive=False, wrap=True,
+                                       max_height=520)
+
+            with gr.Row():
+                kpi_pick = gr.Dropdown(label="KPI chart", choices=[], scale=3, allow_custom_value=True)
+
+            kpi_plot = gr.LinePlot(x="time", y="value", color="series", height=300, label="KPI")
+            fleet_timer = gr.Timer(1.0)
+            choices_timer = gr.Timer(15.0)
+            fleet_timer.tick(refresh_fleet, inputs=[kpi_pick], outputs=[fleet_header, fleet_table, kpi_plot],
+                             show_progress="hidden")
+            choices_timer.tick(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick],
+                               show_progress="hidden")
+            kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=[fleet_header, fleet_table, kpi_plot])
+
+        with gr.Tab("Review Queue"):
+            with gr.Row():
+                queue_pick = gr.Dropdown(label="Incident", choices=[], scale=4, allow_custom_value=True)
+                queue_refresh = gr.Button("Refresh", scale=1)
+
+            with gr.Row():
+                with gr.Column(scale=2):
+                    evidence = gr.Markdown()
+
+                with gr.Column(scale=3):
+                    proposal = gr.Markdown()
+
+            diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True, label="Change")
+            commands = gr.Code(language="shell", label="Exact cdp commands", interactive=False)
+            steps = gr.Code(language="json", label="Steps (edit, then Submit edit to re-validate)",
+                            interactive=False)
+
+            with gr.Row():
+                reviewer = gr.Textbox(label="Reviewer", scale=1)
+                reason = gr.Textbox(label="Reason (required to reject)", scale=3)
+
+            with gr.Row():
+                approve_btn = gr.Button("Approve", variant="primary", interactive=False)
+                edit_btn = gr.Button("Submit edit", interactive=False)
+                reject_btn = gr.Button("Reject", variant="stop", interactive=False)
+                diagnose_btn = gr.Button("Diagnose", interactive=False)
+
+            review_result = gr.Markdown()
+            panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn]
+            queue_timer = gr.Timer(5.0)
+
+            queue_pick.change(show_review, inputs=[queue_pick], outputs=panel)
+            queue_refresh.click(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
+                show_review, inputs=[queue_pick], outputs=panel)
+            queue_timer.tick(refresh_queue, inputs=[queue_pick], outputs=[queue_pick], show_progress="hidden")
+
+            decision_inputs = [queue_pick, reviewer, reason, steps]
+            decision_outputs = [review_result] + panel + [queue_pick]
+            approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
+            edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
+            reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
+            diagnose_btn.click(diagnose, inputs=[queue_pick], outputs=decision_outputs)
+
+        with gr.Tab("History"):
+            history_refresh = gr.Button("Refresh")
+            history_table = gr.Dataframe(headers=views.HISTORY_HEADERS, interactive=False, wrap=True,
+                                         max_height=420)
+            history_pick = gr.Dropdown(label="Incident", choices=[], allow_custom_value=True)
+            history_detail = gr.Markdown()
+
+            history_refresh.click(refresh_history, inputs=[history_pick],
+                                  outputs=[history_table, history_pick])
+            history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
+
+        with gr.Tab("System"):
+            system_md = gr.Markdown()
+
+            with gr.Row():
+                system_refresh = gr.Button("Refresh")
+                poll_btn = gr.Button("Poll now")
+                selftest_btn = gr.Button("Selftest")
+
+            with gr.Row(visible=config.MOCK):
+                minutes = gr.Slider(1, 120, value=20, step=1, label="Fast-forward the mock clock (minutes)")
+                forward_btn = gr.Button("Fast-forward")
+
+            system_result = gr.Markdown()
+            selftest_out = gr.JSON(label="Selftest")
+
+            system_refresh.click(refresh_system, outputs=[system_md])
+            poll_btn.click(poll_now, outputs=[system_result]).then(refresh_system, outputs=[system_md])
+            selftest_btn.click(selftest, outputs=[selftest_out])
+            forward_btn.click(fast_forward, inputs=[minutes], outputs=[system_result]).then(
+                refresh_system, outputs=[system_md])
+
+        # Choices are filled per session; allow_custom_value keeps a pick valid
+        # between refreshes (and for API callers). Handlers check the ids.
+        demo.load(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick])
+        demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
+            show_review, inputs=[queue_pick], outputs=panel)
+        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick])
+        demo.load(refresh_system, outputs=[system_md])
+
+    return demo
+
+
+def main() -> None:
+    startup()
+    build().queue(default_concurrency_limit=4).launch(
+        server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
+        theme=gr.themes.Soft())

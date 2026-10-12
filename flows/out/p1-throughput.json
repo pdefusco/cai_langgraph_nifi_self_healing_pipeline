@@ -1,0 +1,806 @@
+{
+  "externalControllerServices": {},
+  "flowContents": {
+    "comments": "Self-healing test pack: Throughput. Built by flows/build_all.py.",
+    "componentType": "PROCESS_GROUP",
+    "connections": [],
+    "controllerServices": [],
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultFlowFileExpiration": "0 sec",
+    "executionEngine": null,
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "funnels": [],
+    "groupIdentifier": null,
+    "identifier": "2e9d9b0d-d30c-5712-bbdb-a7156817414b",
+    "inputPorts": [],
+    "instanceIdentifier": null,
+    "labels": [],
+    "logFileSuffix": null,
+    "maxConcurrentTasks": null,
+    "name": "nfh-p1-throughput",
+    "outputPorts": [],
+    "parameterContextName": null,
+    "position": null,
+    "processGroups": [
+      {
+        "comments": "The consumer runs one concurrent task while its input arrives three times faster. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "4f316be3-0679-5c73-b717-e92a0230131d",
+              "id": "9ba0079a-c7a0-5373-b365-d2d64f5cefe8",
+              "instanceIdentifier": null,
+              "name": "S01 Consumer",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "4f316be3-0679-5c73-b717-e92a0230131d",
+            "identifier": "bbac49ad-c332-527c-8529-3ca2de9bee89",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s01-backlog",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "4f316be3-0679-5c73-b717-e92a0230131d",
+              "id": "bbc63109-3f30-550d-879e-0fea882e73c3",
+              "instanceIdentifier": null,
+              "name": "S01 Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "2e9d9b0d-d30c-5712-bbdb-a7156817414b",
+        "identifier": "4f316be3-0679-5c73-b717-e92a0230131d",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S01 Slow Consumer",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "4f316be3-0679-5c73-b717-e92a0230131d",
+            "identifier": "bbc63109-3f30-550d-879e-0fea882e73c3",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S01 Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "3",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "4f316be3-0679-5c73-b717-e92a0230131d",
+            "identifier": "9ba0079a-c7a0-5373-b365-d2d64f5cefe8",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S01 Consumer",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      },
+      {
+        "comments": "The drain is scheduled every 10 seconds, so it is idle most of the time. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+              "id": "170cd841-e2b7-5f95-bc5f-c6bd4f4afa3a",
+              "instanceIdentifier": null,
+              "name": "S02 Drain",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+            "identifier": "c3c8943c-3462-5ddc-8d63-0b8dab3a8e93",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s02-backlog",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+              "id": "bf60567b-f5d7-5c08-9edd-3ea12262e3f1",
+              "instanceIdentifier": null,
+              "name": "S02 Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "2e9d9b0d-d30c-5712-bbdb-a7156817414b",
+        "identifier": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S02 Slow Run Schedule",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 420.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+            "identifier": "bf60567b-f5d7-5c08-9edd-3ea12262e3f1",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S02 Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "1",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 4,
+            "executionNode": "ALL",
+            "groupIdentifier": "9f3a430d-44d8-5f60-9dcc-2a8b14066fd3",
+            "identifier": "170cd841-e2b7-5f95-bc5f-c6bd4f4afa3a",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S02 Drain",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "10 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      },
+      {
+        "comments": "The middle stage of a three-stage pipeline has a quarter of its neighbours' capacity. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "977e9eca-5058-51e2-bf33-37118fef72df",
+              "instanceIdentifier": null,
+              "name": "S03 Enrich",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "7bf77d72-d5f3-5542-9ed1-8aa4dace703d",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s03-to-enrich",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "89bdff7e-f571-5e66-96b2-cb076c7435bf",
+              "instanceIdentifier": null,
+              "name": "S03 Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "c7a57fb8-0081-592f-8c8a-d7fa4fdbba55",
+              "instanceIdentifier": null,
+              "name": "S03 Transform",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "49507ab7-90cb-5631-8ee0-acb13365a3cf",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s03-to-transform",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "977e9eca-5058-51e2-bf33-37118fef72df",
+              "instanceIdentifier": null,
+              "name": "S03 Enrich",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "4afa18a0-48ff-55c2-ae70-6081cc65ec65",
+              "instanceIdentifier": null,
+              "name": "S03 Publish",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "f27e4fd3-07fb-5ebf-9dd1-8fdf6b5a9d4a",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s03-to-publish",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b14204c4-26ad-58da-942a-9700bf764a50",
+              "id": "c7a57fb8-0081-592f-8c8a-d7fa4fdbba55",
+              "instanceIdentifier": null,
+              "name": "S03 Transform",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "2e9d9b0d-d30c-5712-bbdb-a7156817414b",
+        "identifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S03 Pipeline Bottleneck",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 840.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "89bdff7e-f571-5e66-96b2-cb076c7435bf",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S03 Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "2",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 4,
+            "executionNode": "ALL",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "977e9eca-5058-51e2-bf33-37118fef72df",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S03 Enrich",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "c7a57fb8-0081-592f-8c8a-d7fa4fdbba55",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S03 Transform",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 4,
+            "executionNode": "ALL",
+            "groupIdentifier": "b14204c4-26ad-58da-942a-9700bf764a50",
+            "identifier": "4afa18a0-48ff-55c2-ae70-6081cc65ec65",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S03 Publish",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      },
+      {
+        "comments": "Bursts of 600 drain at one per second, so every burst waits up to ten minutes. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "d924234c-c315-5224-a675-af7619d00c56",
+              "id": "0e877997-3c71-5adb-9463-8e8419499b23",
+              "instanceIdentifier": null,
+              "name": "S04 Drain",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "d924234c-c315-5224-a675-af7619d00c56",
+            "identifier": "b5f4bf01-4cdd-526e-8897-71c2cfa09cb0",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s04-burst",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "d924234c-c315-5224-a675-af7619d00c56",
+              "id": "5b7f5613-88bc-539b-a2df-e00b3577de59",
+              "instanceIdentifier": null,
+              "name": "S04 Burst Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "2e9d9b0d-d30c-5712-bbdb-a7156817414b",
+        "identifier": "d924234c-c315-5224-a675-af7619d00c56",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S04 Bursty Oscillator",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 1260.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "d924234c-c315-5224-a675-af7619d00c56",
+            "identifier": "5b7f5613-88bc-539b-a2df-e00b3577de59",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S04 Burst Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "600",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "600 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "d924234c-c315-5224-a675-af7619d00c56",
+            "identifier": "0e877997-3c71-5adb-9463-8e8419499b23",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S04 Drain",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      }
+    ],
+    "processors": [],
+    "remoteProcessGroups": [],
+    "scheduledState": null,
+    "statelessFlowTimeout": null,
+    "versionedFlowCoordinates": null
+  },
+  "flowEncodingVersion": "1.0",
+  "latest": false,
+  "parameterContexts": {},
+  "parameterProviders": {}
+}

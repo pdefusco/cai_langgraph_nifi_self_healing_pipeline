@@ -1,0 +1,18 @@
+# Python 3.12 (PBJ Workbench). Versions are the ones the test suite runs on.
+
+# cdpcli is pinned exactly: the mock tenant checks every command and
+# option against this version's bundled spec (nifi_healer/cdp/cli_spec.py).
+cdpcli==0.9.164
+
+langgraph==1.2.14
+langgraph-checkpoint-sqlite==3.1.1
+langchain-core==1.6.9
+langchain-openai==1.7.0
+openai==3.29.0
+chromadb==1.5.9
+gradio>=6.2,<7
+pydantic==2.14.1
+PyYAML==6.0.3
+pandas==3.0.6
+
+pytest==9.1.1
