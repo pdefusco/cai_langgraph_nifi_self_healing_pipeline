@@ -29,6 +29,7 @@ Ported from agentstudio_nifi_monitoring_and_self_healing_pipelines
 (self_healing/df_api.py), where these behaviours were verified live.
 """
 
+import base64
 import json
 import os
 import shlex
@@ -368,9 +369,13 @@ class Client:
 
     def flow_definition(self, flow_version_crn: str) -> dict:
         """
-        The flow definition of a catalog version, parsed. `flowDefinition`
-        arrives as a JSON string, not an object. Returns the error dict on
-        failure.
+        The flow definition of a catalog version, parsed. Returns the error
+        dict on failure.
+
+        `get-flow-version` is a CLI-side command: cdpcli base64-decodes the
+        API's `flowDefinition` and prints the flow JSON itself, so
+        `flowContents` is at the top level. The raw API shape (a base64 or
+        JSON string under `flowDefinition`) is accepted too.
         """
 
         result = self.get_flow_version(flow_version_crn)
@@ -378,14 +383,19 @@ class Client:
         if "error" in result:
             return result
 
-        definition = result.get("flowDefinition")
+        definition = result if "flowContents" in result else result.get("flowDefinition")
 
         if isinstance(definition, str):
             try:
                 definition = json.loads(definition)
 
             except ValueError:
-                return {"error": "flowDefinition is not JSON.", "command": flow_version_crn}
+                try:
+                    definition = json.loads(base64.b64decode(definition, validate=True))
+
+                except ValueError:
+                    return {"error": "flowDefinition is neither JSON nor base64 JSON.",
+                            "command": flow_version_crn}
 
         if not isinstance(definition, dict) or "flowContents" not in definition:
             return {"error": "the response carries no flow definition with flowContents.",

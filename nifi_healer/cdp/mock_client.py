@@ -355,8 +355,10 @@ class MockClient(Client):
     def _df_get_flow_version(self, options: dict) -> dict:
         (crn,) = self._required(options, "flow-version-crn")
 
+        # What cdpcli prints, not what the API returns: the CLI decodes the
+        # base64 `flowDefinition` and prints the flow JSON itself.
         with self.world.reading():
-            return {"flowDefinition": json.dumps(self.world.version(crn)["definition"])}
+            return json.loads(json.dumps(self.world.version(crn)["definition"]))
 
     def _definition_file(self, options: dict) -> dict:
         (path,) = self._required(options, "file")

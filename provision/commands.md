@@ -46,7 +46,8 @@ cdp df import-flow-definition --file flows/out/p1-throughput.json \
 
 ```bash
 cdp df get-flow-version --flow-version-crn $FV
-    # .flowDefinition is a JSON string. Parse it before comparing.
+    # prints the flow JSON itself (.flowContents at the top level): the CLI
+    # base64-decodes the API's .flowDefinition before printing
 cdp df delete-flow --flow-crn $CANARY_FLOW
 ```
 
@@ -175,7 +176,7 @@ The agent's flow edits go through the same version swap, with a new catalog
 version in between:
 
 ```bash
-cdp df get-flow-version --flow-version-crn $CURRENT_FV      # parse .flowDefinition (a string)
+cdp df get-flow-version --flow-version-crn $CURRENT_FV > current.json   # the flow JSON itself
 # edit the JSON
 cdp df import-flow-definition-version --flow-crn $FLOW --file edited.json --comments "..."
 cdp df change-flow-version-in-deployment ... --flow-version-crn $NEW_FV \
