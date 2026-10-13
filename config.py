@@ -90,6 +90,10 @@ FLEET_FILE = os.path.join(DATA_DIR, f"fleet{_SUFFIX}.json")
 MOCK_WORLD_FILE = os.path.join(DATA_DIR, "mock_world.json")
 EDITS_DIR = os.path.join(DATA_DIR, "edits")
 
+# The offline replay (nifi_healer/eval/replay.py) keeps its own mock
+# tenant, store and checkpoints here; the Scorecard reads its record.
+REPLAY_DIR = os.environ.get("SELFHEAL_REPLAY_DIR", os.path.join(DATA_DIR, "replay"))
+
 FLOWS_OUT_DIR = os.path.join(REPO_ROOT, "flows", "out")
 PROVISION_OUT_DIR = os.path.join(REPO_ROOT, "provision", "out")
 PLAYBOOKS_DIR = os.path.join(REPO_ROOT, "playbooks")

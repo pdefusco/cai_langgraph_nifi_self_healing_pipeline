@@ -189,6 +189,13 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
 - **Scorecard** shows how often the agent's first proposal is valid, picks the scenario's design fix, is approved as
   proposed, and works (a reviewer's label counts over the measured verdict), by agent version, scenario, fix or
   who chose it.
+- **Offline replay.** `.venv/bin/python -m nifi_healer.eval.replay --trials 3` runs every scenario three times,
+  each round on a fresh mock tenant of its own (`var/data/replay`), against the configured LLM: detect, diagnose,
+  approve, judge. It is the only place a proposal is approved without a reviewer, and it refuses unless the client
+  is the mock; it never touches a live tenant. `--pack`/`--scenario` narrow it; `--oracle` answers with the design
+  fix, which tests the harness rather than the agent. On CAI, run it as a job (script `cai_job.py`, Arguments
+  `-m nifi_healer.eval.replay --trials 3`). **Scorecard → Incidents: Replay** shows its runs, with how many faults
+  were detected.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.

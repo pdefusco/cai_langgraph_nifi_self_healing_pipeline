@@ -7,12 +7,14 @@ Counts come from eval/scorecard.py; a reviewer's label on a fix counts
 over the verdict measured for it.
 """
 
-from nifi_healer.eval import scorecard as sc
+from nifi_healer.eval import replay, scorecard as sc
 from nifi_healer.ui.monitor import _e, _when
 
 SINCE = {"24 h": 86400, "7 d": 7 * 86400, "All": None}
 DEFAULT_SINCE = "7 d"
 GROUPINGS = tuple(sc.GROUPINGS)
+LIVE, REPLAY = "Live", "Replay"
+SOURCES = (LIVE, REPLAY)
 _RECENT = 50
 
 _MATCH_CHIP = {sc.EXPECTED: ("mx-v-IMPROVED", "design fix"), sc.ACCEPTABLE: ("mx-v-IMPROVED", "acceptable"),
@@ -26,13 +28,28 @@ _BAR = {sc.APPROVED: "approved", sc.EDITED: "edited", sc.REJECTED: "rejected", s
         sc.PENDING: "pending"}
 
 
-def model(store, now: float, since: str = DEFAULT_SINCE, grouping: str = GROUPINGS[0]) -> dict:
+def model(store, now: float, since: str = DEFAULT_SINCE, grouping: str = GROUPINGS[0], source: str = LIVE) -> dict:
+    """
+    The live agent's incidents from the store, or with source REPLAY the
+    offline replay's trials from its record (eval/replay.py), timed on
+    the replay's own clock.
+    """
+
     span = SINCE.get(since, SINCE[DEFAULT_SINCE])
-    found = sc.cases(store.record(now - span if span else 0.0))
+    seen = None
+
+    if source == REPLAY:
+        snapshot = replay.load()
+        now = (snapshot or {}).get("now") or now
+        found = replay.cases(snapshot, now - span if span else 0.0) if snapshot else []
+        seen = replay.detection(snapshot, now - span if span else 0.0) if snapshot else None
+
+    else:
+        found = sc.cases(store.record(now - span if span else 0.0))
 
     return {"since": since if since in SINCE else DEFAULT_SINCE, "grouping": grouping if grouping in sc.GROUPINGS
             else GROUPINGS[0], "now": now, "cases": found, "overall": sc.summarize(found),
-            "rows": sc.table(found, grouping)}
+            "rows": sc.table(found, grouping), "source": REPLAY if source == REPLAY else LIVE, "detection": seen}
 
 
 def pct(rate) -> str:
@@ -68,11 +85,19 @@ def _of(hits: int, total: int, what: str) -> str:
     return f"{hits} of {total} {what}" if total else f"no {what} yet"
 
 
-def _tiles(s: dict) -> str:
+def _tiles(s: dict, seen: dict | None = None) -> str:
     matched = s["match"][sc.EXPECTED] + s["match"][sc.ACCEPTABLE]
     labelled = sum(s["match"].values())
     decided = s["review"][sc.APPROVED] + s["review"][sc.EDITED] + s["review"][sc.REJECTED]
     worked = s["results"][sc.WORKED]
+
+    if seen is None:
+        approved = _tile("Approved as proposed", pct(s["approved"]), _of(s["review"][sc.APPROVED], decided, "decided"))
+
+    else:   # the replay approves every valid proposal; what it can count instead is detection
+        approved = _tile("Faults detected", pct(seen["detected"] / seen["faults"] if seen["faults"] else None),
+                         _of(seen["detected"], seen["faults"], "fault trials")
+                         + (f" · control quiet in {seen['quiet']} of {seen['controls']}" if seen["controls"] else ""))
 
     return '<div class="sc-tiles">' + "".join((
         _tile("Incidents", str(s["incidents"]),
@@ -80,7 +105,7 @@ def _tiles(s: dict) -> str:
         _tile("Valid first try", pct(s["valid_first"]),
               _of(s["first_valid"], s["proposed"], "incidents proposed for")),
         _tile("Picked the design fix", pct(s["matched"]), _of(matched, labelled, "with a design label")),
-        _tile("Approved as proposed", pct(s["approved"]), _of(s["review"][sc.APPROVED], decided, "decided")),
+        approved,
         _tile("Fix worked", pct(s["worked"]),
               _of(worked, s["judged"], "judged") + (f" · {s['labelled']} by a reviewer" if s["labelled"] else "")),
         _tile("Regressions", str(s["regressed"]), "worse in a later window"
@@ -166,24 +191,44 @@ def _recent(m: dict) -> str:
             + "".join(_case(c, m["now"]) for c in shown) + "</tbody></table></div>")
 
 
+_HOW_TO_REPLAY = ("Run one as a CAI job: script <code>cai_job.py</code>, Arguments "
+                  "<code>-m nifi_healer.eval.replay --trials 3</code>. It replays every scenario on its own mock "
+                  "tenant against the configured LLM, and never touches the live one.")
+
+
 def render(m: dict) -> str:
     s = m["overall"]
     window = "all time" if m["since"] == "All" else f"the last {m['since']}"
+    seen = m.get("detection")
+    replayed = m.get("source") == REPLAY
 
     if not m["cases"]:
+        if replayed:
+            return (f'<div class="mx sc"><p class="mx-empty">'
+                    + ("No replay runs yet. " if seen is None else f"No replay trials over {_e(window)}. ")
+                    + _HOW_TO_REPLAY + "</p></div>")
+
         return (f'<div class="mx sc"><p class="mx-empty">No incidents over {_e(window)}. '
                 "The scorecard fills in as the agent handles them.</p></div>")
 
-    return (f'<div class="mx sc"><div class="mx-head"><span class="mx-name">Agent scorecard</span>'
-            f'<span class="mx-facts"><span>over <b>{_e(window)}</b></span>'
-            f"<span><b>{s['applied']}</b> fixes applied</span><span><b>{s['dry_runs']}</b> dry runs</span>"
+    facts = (f"<span><b>{seen['runs']}</b> run(s)</span>" if replayed else "") + \
+        f"<span><b>{s['applied']}</b> fixes applied</span>" + \
+        ("" if replayed else f"<span><b>{s['dry_runs']}</b> dry runs</span>")
+    hint = ("Replay trials run on a fresh mock tenant each round, against the configured LLM; every valid "
+            "proposal was approved automatically (mock only), so Review shows no reviewer's judgement, and the "
+            "replay's own clock dates them. A fault is detected when it opens an incident within 30 simulated "
+            "minutes. " if replayed else "")
+
+    return (f'<div class="mx sc"><div class="mx-head"><span class="mx-name">'
+            f'{"Replay scorecard" if replayed else "Agent scorecard"}</span>'
+            f'<span class="mx-facts"><span>over <b>{_e(window)}</b></span>' + facts
             + (f"<span><b>{s['apply_failed']}</b> failed to apply</span>" if s["apply_failed"] else "")
             + f"<span><b>{s['repairs']}</b> re-proposals</span></span></div>"
-            + _tiles(s) + _groups(m) + _recent(m)
-            + '<p class="mx-hint">The design fix is each scenario\'s known-correct lever, kept from the agent; '
-              "a fix matches on its action and target, not its values. A reviewer's label on a fix (History → "
-              "Correct the outcome) counts over its measured verdict. A healthy-control incident is a false "
-              "alarm: the right proposal there is NO_ACTION.</p></div>")
+            + _tiles(s, seen if replayed else None) + _groups(m) + _recent(m)
+            + f'<p class="mx-hint">{hint}The design fix is each scenario\'s known-correct lever, kept from the '
+              "agent; a fix matches on its action and target, not its values. A reviewer's label on a fix "
+              "(History → Correct the outcome) counts over its measured verdict. A healthy-control incident is a "
+              "false alarm: the right proposal there is NO_ACTION.</p></div>")
 
 
 CSS = """

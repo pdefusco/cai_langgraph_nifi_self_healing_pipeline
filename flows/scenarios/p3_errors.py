@@ -110,7 +110,9 @@ S11 = Scenario(
     build=build_s11,
     kpis=(
         Kpi("S11", "connection", "s11-unmatched", "queued_count", above=100),
-        Kpi("S11", "processor", "S11 Publish", "flowfiles_in", alert=False, good="up", primary=False),
+        # Decides too: the fix stops the unmatched queue growing, but the
+        # quarantine drains it at 6/min, so only Publish shows it at once.
+        Kpi("S11", "processor", "S11 Publish", "flowfiles_in", alert=False, good="up"),
     ),
     family="FLOW_EDIT",
     expected=(action("SET_PROCESSOR_PROPERTY", "S11 Extract Order", property="orderId", value="$.order_id"),),

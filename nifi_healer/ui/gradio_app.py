@@ -472,9 +472,9 @@ def pick_change(evt: gr.EventData):
 
 
 @_timed
-def show_scorecard(since, grouping):
+def show_scorecard(since, grouping, source=scorecard.LIVE):
     m = scorecard.model(get_store(), get_client().now(), since or scorecard.DEFAULT_SINCE,
-                        grouping or scorecard.GROUPINGS[0])
+                        grouping or scorecard.GROUPINGS[0], source or scorecard.LIVE)
 
     return scorecard.render(m)
 
@@ -682,6 +682,8 @@ def build() -> gr.Blocks:
 
         with gr.Tab("Scorecard"):
             with gr.Row():
+                score_source = gr.Radio(list(scorecard.SOURCES), value=scorecard.LIVE, label="Incidents",
+                                        info="Replay: the offline replay's trials (eval/replay.py)", scale=2)
                 score_since = gr.Radio(list(scorecard.SINCE), value=scorecard.DEFAULT_SINCE, label="Since",
                                        scale=2)
                 score_group = gr.Radio(list(scorecard.GROUPINGS), value=scorecard.GROUPINGS[0],
@@ -689,9 +691,10 @@ def build() -> gr.Blocks:
                 score_refresh = gr.Button("Refresh", scale=1)
 
             score_html = gr.HTML()
-            score_inputs = dict(inputs=[score_since, score_group], outputs=[score_html])
+            score_inputs = dict(inputs=[score_since, score_group, score_source], outputs=[score_html])
 
             score_refresh.click(show_scorecard, **score_inputs)
+            score_source.change(show_scorecard, **score_inputs)
             score_since.change(show_scorecard, **score_inputs)
             score_group.change(show_scorecard, **score_inputs)
 
