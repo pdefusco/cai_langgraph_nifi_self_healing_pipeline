@@ -433,6 +433,167 @@ def model(store, pack: str, entry: dict, now: float, span: str = DEFAULT_RANGE, 
 
 
 # ---------------------------------------------------------------------
+# The fleet
+# ---------------------------------------------------------------------
+
+FLEET_SORTS = ("Needs attention", "Recent change", "Name")
+
+# A KPI within this fraction of its alert threshold (on the bad side) is "near".
+_NEAR = 0.8
+
+STATE_TEXT = {None: "no data", 0: "fine", 1: "near", 2: "over"}
+HEALTH_TEXT = {"CONCERNING_HEALTH": "concerning", "BAD_HEALTH": "bad health"}
+
+
+def kpi_state(kpi: dict, value):
+    """0 fine, 1 near its alert threshold, 2 over it; None without a value or a threshold."""
+
+    if value is None:
+        return None
+
+    if kpi.get("above") is not None:
+        return 2 if value > kpi["above"] else 1 if value >= _NEAR * kpi["above"] else 0
+
+    if kpi.get("below") is not None:
+        return 2 if value < kpi["below"] else 1 if value * _NEAR <= kpi["below"] else 0
+
+    return None
+
+
+def _worst(states) -> int | None:
+    return max((s for s in states if s is not None), default=None)
+
+
+def _carry(m: dict, values: list) -> list:
+    """
+    values with each gap a line would be drawn across filled by the bucket
+    before it, and the newest buckets (not yet polled) by the last value.
+    """
+
+    bridge = max(1, round(2 * max(m["step"], _BRIDGE_SECONDS) / m["step"]))
+    out = list(values)
+    present = [i for i, v in enumerate(values) if v is not None]
+
+    for a, b in zip(present, present[1:]):
+        if b - a <= bridge:
+            out[a + 1:b] = [values[a]] * (b - a - 1)
+
+    if present:
+        last = present[-1]
+        out[last + 1:last + 3] = [values[last]] * len(out[last + 1:last + 3])
+
+    return out
+
+
+def _merged(bars: list) -> list:
+    """Incident bars merged where they overlap: one lane per deployment."""
+
+    out = []
+
+    for bar in sorted(bars, key=lambda b: b["start"]):
+        end = bar["end"] if bar["end"] is not None else math.inf
+
+        if out and bar["start"] < out[-1]["stop"]:
+            last = out[-1]
+            last["bars"].append(bar)
+            last["stop"] = max(last["stop"], end)
+
+        else:
+            out.append({"start": bar["start"], "stop": end, "bars": [bar]})
+
+    for group in out:
+        states = {b["state"] for b in group["bars"]}
+        group["end"] = None if group["stop"] == math.inf else group["stop"]
+        group["state"] = "open" if "open" in states else "improved" if states == {"improved"} else "nochange"
+        group["label"] = group["bars"][0]["id"] + (f" +{len(group['bars']) - 1}" if len(group["bars"]) > 1 else "")
+
+    return out
+
+
+def _origin(store, crn: str, found: list):
+    times = [t for t in [store.first_sample_at(crn)] + [c["t"] for c in found] if t is not None]
+
+    return min(times) if times else None
+
+
+def _fleet_row(store, pack: str, entry: dict, since: float, step: float, n: int, now: float) -> dict:
+    crn = entry.get("deployment_crn") or ""
+    found = change_log.attribute(store.changes(crn), store.actions(deployment_crn=crn))
+    origin = _origin(store, crn, found)
+    segments, _ = _segments(store, pack, found, origin if origin is not None else since)
+    grid = store.history(crn, since, step)
+    watched = [k for k in entry.get("kpis") or [] if not k.get("rollup")
+               and (k.get("above") is not None or k.get("below") is not None)]
+    columns = [(k, _carry({"step": step}, _series(grid, k["key"], n))) for k in watched]
+    states = [_worst(kpi_state(k, values[i]) for k, values in columns) for i in range(n)]
+    texts = []
+
+    for i in range(n):
+        at = [kpi_state(k, values[i]) for k, values in columns]
+        over, near = at.count(2), at.count(1)
+        texts.append("no data" if states[i] is None else f"{over} over" if over else f"{near} near" if near else "fine")
+
+    # Now: each KPI at its newest bucket in the window.
+    latest = [kpi_state(k, next((v for v in reversed(values) if v is not None), None)) for k, values in columns]
+    incidents = [bar for bars in _incidents(store, pack, crn, since, since + n * step, now).values() for bar in bars]
+    changed = [s for s in segments if s["source"]]
+    verdicts = [s for s in changed if s["source"] == "agent"]
+    d = store.deployment(crn) or {}
+
+    return {
+        "pack": pack, "name": d.get("name") or entry.get("deployment_name") or pack, "deployment": d,
+        "segments": segments, "states": states, "texts": texts, "incidents": _merged(incidents),
+        "over": latest.count(2), "near": latest.count(1), "watched": len(watched),
+        "now_state": _worst(latest), "bad_buckets": states.count(2),
+        "open": sum(1 for bar in incidents if bar["state"] == "open"),
+        "last_change": changed[-1] if changed else None,
+        "verdict": verdicts[-1]["verdict"] if verdicts else "",
+        "changes_in_range": sum(1 for s in changed if since <= s["start"] <= since + n * step),
+    }
+
+
+def needs_attention(row: dict) -> bool:
+    state = row["deployment"].get("state")
+
+    return bool(row["open"] or row["over"] or (state and state != "GOOD_HEALTH"))
+
+
+def _sort_key(sort: str):
+    if sort == "Recent change":
+        return lambda r: (-(r["last_change"]["start"] if r["last_change"] else -1e18), r["name"])
+
+    if sort == "Name":
+        return lambda r: r["name"]
+
+    return lambda r: (-needs_attention(r), -r["open"], -r["over"], -r["near"], -r["bad_buckets"], r["name"])
+
+
+def fleet_model(store, packs: dict, now: float, span: str = DEFAULT_RANGE, query: str = "",
+                sort: str = FLEET_SORTS[0], attention_only: bool = False, selected: str = "") -> dict:
+    """
+    Every deployment on one time axis: per bucket, the worst state of its
+    alerting KPIs, with its changes and incidents. One history read per
+    deployment, from the same store the deployment view reads.
+    """
+
+    firsts = [store.first_sample_at(e.get("deployment_crn") or "") for e in packs.values()]
+    firsts = [t for t in firsts if t is not None]
+    since, step, n = _window(span, min(firsts) if firsts else None, now)
+    rows = [_fleet_row(store, pack, entry, since, step, n, now) for pack, entry in packs.items()]
+    words = (query or "").strip().lower()
+    shown = [r for r in rows if (not words or words in r["pack"].lower() or words in r["name"].lower())
+             and (not attention_only or needs_attention(r))]
+
+    return {
+        "now": now, "span": span, "since": since, "step": step, "n": n, "end": since + n * step,
+        "rows": sorted(shown, key=_sort_key(sort)), "total": len(rows), "selected": selected or "",
+        "attention": sum(1 for r in rows if needs_attention(r)),
+        "open": sum(r["open"] for r in rows), "changes": sum(r["changes_in_range"] for r in rows),
+        "filtered": bool(words or attention_only),
+    }
+
+
+# ---------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------
 
@@ -877,6 +1038,139 @@ def render(m: dict) -> str:
             f'{_ledger(m)}</div>')
 
 
+FLEET_LEGEND = (
+    '<div class="mx-legend">'
+    '<span><i class="mx-key-s mx-s0"></i>KPIs fine</span>'
+    f'<span><i class="mx-key-s mx-s1"></i>near an alert threshold (≥ {_NEAR:.0%})</span>'
+    '<span><i class="mx-key-s mx-s2"></i>over one</span>'
+    '<span><i class="mx-key-s"></i>no data</span>'
+    '<span><i class="mx-key-agent"></i>Agent change</span>'
+    '<span><i class="mx-key-operator"></i>Operator change</span>'
+    '<span><i class="mx-inc mx-open"></i>open incident</span>'
+    '<span><i class="mx-inc mx-improved"></i>resolved</span>'
+    '<span><i class="mx-inc mx-nochange"></i>other closed</span>'
+    '</div>')
+
+_FLEET_HEIGHT = 42
+
+
+def _frow(gutter: str, plot: str, stats: str, cls: str = "", attrs: str = "", height: int = _FLEET_HEIGHT) -> str:
+    return (f'<div class="mx-row{(" " + cls) if cls else ""}"{attrs}><div class="mx-gut">{gutter}</div>'
+            f'<div class="mx-plot" style="height:{height}px">{plot}</div><div class="mx-stats">{stats}</div></div>')
+
+
+def _strip(f: dict, row: dict) -> str:
+    """The health strip, the change lines and the markers of one deployment."""
+
+    w = _W / f["n"]
+    m = dict(f, segments=row["segments"], selected=None)
+    body = _backdrop(m, _FLEET_HEIGHT).replace('y1="0"', 'y1="14"')
+    runs, start = [], 0
+
+    for i, s in enumerate(row["states"] + [object()]):
+        if i and s != row["states"][start]:
+            runs.append((start, i, row["states"][start]))
+            start = i
+
+    body += "".join(f'<rect class="mx-s{s}" x="{a * w:.2f}" y="15" width="{(b - a) * w:.2f}" height="11"/>'
+                    for a, b, s in runs if s is not None)
+    parts = [_svg(_FLEET_HEIGHT, body)]
+
+    for s in row["segments"]:
+        if s["source"] and f["since"] <= s["start"] <= f["end"]:
+            label = f"{s['letter']} · {_when(s['start'], True)} · {s['who']} · {KIND_LABEL.get(s['kind'], s['kind'])} · {s['short']}"
+            parts.append(f'<button class="mx-mk mx-{s["source"]}" data-pick="{s["index"]}" '
+                         f'style="left:{_pct(f, s["start"]):.2f}%" title="{_e(label)}" aria-label="{_e(label)}"></button>')
+
+    for group in row["incidents"]:
+        left = _pct(f, max(group["start"], f["since"]))
+        right = _pct(f, group["end"] if group["end"] is not None else f["now"])
+        title = "\n".join(f"{b['id']} · {_hhmm(b['start'])}–{_hhmm(b['end']) if b['end'] else 'open'} · "
+                          f"{b['status'].lower()} · {b['summary']}" for b in group["bars"])
+        parts.append(f'<span class="mx-inc mx-finc mx-{group["state"]}" '
+                     f'style="left:{left:.2f}%;width:{max(0.4, right - left):.2f}%" title="{_e(title)}">'
+                     f'{_e(group["label"])}</span>')
+
+    return "".join(parts)
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 3600:
+        return f"{max(1, seconds / 60):.0f} min ago"
+
+    if seconds < 172800:
+        return f"{seconds / 3600:.0f} h ago"
+
+    return f"{seconds / 86400:.0f} d ago"
+
+
+def _fleet_stats(f: dict, row: dict) -> str:
+    state = row["now_state"]
+    now_text = (f"{row['over']} over" if row["over"] else f"{row['near']} near" if row["near"]
+                else STATE_TEXT[state] if row["watched"] else "no alerts")
+    # The crosshair swaps the text for the bucket's; at rest it is each KPI's newest value.
+    cells = [f'<span class="mx-now mx-n{state if state is not None else "x"}">'
+             f'<span class="mx-val" data-v="{_e("|".join(row["texts"]))}" data-last="{_e(now_text)}">'
+             f'{_e(now_text)}</span></span>']
+    cells.append(f'<span class="mx-open{" mx-has" if row["open"] else ""}">{row["open"] or "—"}</span>')
+    last = row["last_change"]
+
+    if last:
+        cells.append(f'<span class="mx-last" title="{_e(last["who"] + " · " + last["short"])}">'
+                     f'<i class="mx-key-{last["source"]}"></i><b>{_e(last["letter"])}</b> '
+                     f'{_e(_ago(f["now"] - last["start"]))}</span>')
+
+    else:
+        cells.append('<span class="mx-last mx-none">none</span>')
+
+    verdict = row["verdict"]
+    cells.append(f'<span class="mx-chip mx-v-{_e(verdict)}">{_e(verdict.replace("_", " ").lower())}</span>'
+                 if verdict else '<span class="mx-none">—</span>')
+
+    return "".join(cells)
+
+
+def render_fleet(f: dict) -> str:
+    if not f or not f.get("total"):
+        return '<div class="mx"><p class="mx-empty">No deployments registered yet.</p></div>'
+
+    facts = [f"<b>{f['total']}</b> deployment{'' if f['total'] == 1 else 's'}",
+             f"<b>{f['attention']}</b> need{'s' if f['attention'] == 1 else ''} attention",
+             f"<b>{f['open']}</b> open incident{'' if f['open'] == 1 else 's'}",
+             f"<b>{f['changes']}</b> change{'' if f['changes'] == 1 else 's'} in range", "times UTC"]
+
+    if f["filtered"]:
+        facts.insert(1, f"{len(f['rows'])} shown")
+
+    head = (f'<div class="mx-head"><span class="mx-name">Fleet</span>'
+            f'<span class="mx-facts">{"".join(f"<span>{x}</span>" for x in facts)}</span></div>')
+    axis = _axis(dict(f, segments=[], selected=None))
+    axis = axis[:-len("</div>")] + ('<div class="mx-stats mx-stats-head"><span>KPIs now</span><span>Open</span>'
+                                    '<span>Last change</span><span>Verdict</span></div></div>')
+    rows = [axis]
+
+    for row in f["rows"]:
+        d = row["deployment"]
+        meta = [f"v{d['flow_version']}" if d.get("flow_version") is not None else "",
+                _e(f"{d['cluster_size']} × {d.get('node_count') or '?'}") if d.get("cluster_size") else "",
+                f'<span class="mx-state">{_e(HEALTH_TEXT.get(d["state"], d["state"].replace("_", " ").lower()))}</span>'
+                if d.get("state") and d["state"] != "GOOD_HEALTH" else ""]
+        gutter = (f'<span class="mx-lbl" title="{_e(row["name"])}">{_e(row["name"])}</span>'
+                  f'<span class="mx-meta">{" · ".join(x for x in meta if x)}</span>')
+        cls = "mx-frow" + (" mx-sel" if row["pack"] == f["selected"] else "")
+        attrs = f' data-pack="{_e(row["pack"])}" tabindex="0" role="button" aria-label="Open {_e(row["name"])}"'
+        rows.append(_frow(gutter, _strip(f, row), _fleet_stats(f, row), cls, attrs))
+
+    if not f["rows"]:
+        rows.append('<p class="mx-empty">No deployment matches the filter.</p>')
+
+    timeline = (f'<div class="mx-tl" data-since="{f["since"]:.0f}" data-step="{f["step"]}" data-n="{f["n"]}">'
+                + "".join(rows) + '<div class="mx-cross" hidden></div><div class="mx-crosslbl" hidden></div></div>')
+
+    return (f'<div class="mx mx-fleet">{head}{FLEET_LEGEND}<div class="mx-scroll">{timeline}</div>'
+            '<p class="mx-hint">Click a deployment to open its timeline below; click a marker to open it at that change.</p></div>')
+
+
 # ---------------------------------------------------------------------
 # Browser side
 # ---------------------------------------------------------------------
@@ -913,8 +1207,17 @@ element.addEventListener('mousemove', function(e){
 });
 element.addEventListener('mouseleave', function(){ var p = parts(); if (p) rest(p); });
 element.addEventListener('click', function(e){
-  var b = e.target.closest('[data-pick]');
-  if (b) trigger('click', {pick: b.dataset.pick});
+  var b = e.target.closest('[data-pick]'), row = e.target.closest('[data-pack]');
+  if (!b && !row) return;
+  var data = {};
+  if (b) data.pick = b.dataset.pick;
+  if (row) data.pack = row.dataset.pack;
+  trigger('click', data);
+});
+element.addEventListener('keydown', function(e){
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  var row = e.target.closest('[data-pack]');
+  if (row && e.target === row){ e.preventDefault(); trigger('click', {pack: row.dataset.pack}); }
 });
 """
 
@@ -1027,5 +1330,33 @@ CSS = """
 .mx-d{display:block;font:11px var(--mx-mono);font-variant-numeric:tabular-nums;color:var(--mx-muted)}
 .mx-d.mx-good{color:var(--mx-good)}.mx-d.mx-bad{color:var(--mx-bad)}
 .mx-k .mx-lbl{display:block}.mx-k .mx-meta{display:block}
+.mx-fleet{--mx-stats:350px}
+.mx-fleet .mx-row{grid-template-columns:var(--mx-gut) 1fr var(--mx-stats)}
+.mx-fleet .mx-tl{min-width:1040px}
+.mx-stats{display:grid;grid-template-columns:70px 40px 1fr 96px;align-items:center;gap:10px;padding:0 12px;border-left:1px solid var(--mx-line);font-size:12px;min-width:0}
+.mx-stats-head span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mx-muted);white-space:nowrap}
+.mx-frow{cursor:pointer}
+.mx-frow:hover{background:var(--mx-surface-2)}
+.mx-frow.mx-sel{background:var(--mx-accent-tint);box-shadow:inset 3px 0 0 var(--mx-accent)}
+.mx-frow:focus-visible{outline:2px solid var(--mx-accent);outline-offset:-2px}
+.mx-s0{fill:color-mix(in srgb,var(--mx-good) 30%,transparent)}
+.mx-s1{fill:color-mix(in srgb,var(--mx-bad) 40%,transparent)}
+.mx-s2{fill:var(--mx-bad)}
+.mx-key-s{width:14px;height:10px;border:1px solid var(--mx-line)}
+.mx-key-s.mx-s0{background:color-mix(in srgb,var(--mx-good) 30%,transparent)}
+.mx-key-s.mx-s1{background:color-mix(in srgb,var(--mx-bad) 40%,transparent)}
+.mx-key-s.mx-s2{background:var(--mx-bad)}
+.mx .mx-finc{top:29px;height:11px;font:500 9px/9px var(--mx-mono);padding:0 4px}
+.mx-now{font:500 12px var(--mx-mono);white-space:nowrap}
+.mx-now .mx-val{font-weight:inherit}
+.mx-n2{color:var(--mx-bad);font-weight:600}.mx-n1{color:var(--mx-bad)}.mx-n0{color:var(--mx-good)}.mx-nx{color:var(--mx-muted)}
+.mx-open{font:500 12px var(--mx-mono);color:var(--mx-muted)}
+.mx-open.mx-has{color:var(--mx-bad);font-weight:600}
+.mx-last{display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden}
+.mx-last i{display:inline-block;flex:none}
+.mx-stats > .mx-chip{justify-self:start}
+.mx-none{color:var(--mx-muted)}
+.mx-state{color:var(--mx-bad)}
+.mx-hint{margin:0;padding:8px 16px;font-size:12px;color:var(--mx-muted);border-top:1px solid var(--mx-line)}
 @media (max-width:720px){.mx{--mx-gut:160px}}
 """

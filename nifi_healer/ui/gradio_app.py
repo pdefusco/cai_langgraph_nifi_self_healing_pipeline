@@ -1,5 +1,5 @@
 """
-The review app: Fleet, Review Queue, History, System.
+The review app: Fleet, Review Queue, History, Monitor, System.
 
     python app.py            # CAI Application script; binds CDSW_APP_PORT on 127.0.0.1
 
@@ -364,6 +364,33 @@ def show_monitor(pack, span, change):
     return monitor.render(_monitor_model(pack, span, change))
 
 
+@_timed
+def show_fleet(span, query, sort, attention, pack):
+    """The fleet overview, with the deployment shown below it highlighted."""
+
+    f = monitor.fleet_model(get_store(), fleet.deployed_packs(), get_client().now(), span or monitor.DEFAULT_RANGE,
+                            query or "", sort or monitor.FLEET_SORTS[0], bool(attention), pack or "")
+
+    return monitor.render_fleet(f)
+
+
+@_timed
+def pick_fleet(span, evt: gr.EventData):
+    """A fleet row clicked: its deployment below, at the marker's change if one was clicked."""
+
+    data = getattr(evt, "_data", None) or {}
+    m = _monitor_model(data.get("pack"), span, data.get("pick"))
+
+    if not m:
+        return gr.skip(), gr.skip(), gr.skip()
+
+    choices = monitor.change_choices(m)
+    selected = str(m["selected"]) if m.get("selected") is not None else None
+
+    return (gr.update(value=data["pack"]), monitor.render(m),
+            gr.update(choices=choices, value=selected if selected in [v for _, v in choices] else None))
+
+
 def pick_change(evt: gr.EventData):
     """A change marker or ledger column clicked in the chart."""
 
@@ -502,20 +529,37 @@ def build() -> gr.Blocks:
 
         with gr.Tab("Monitor"):
             with gr.Row():
-                mon_pack = gr.Dropdown(label="Deployment", choices=[], scale=2, allow_custom_value=True)
                 mon_range = gr.Radio(list(monitor.RANGES), value=monitor.DEFAULT_RANGE, label="Range", scale=2)
+                fleet_query = gr.Textbox(label="Filter deployments", placeholder="name", scale=2)
+                fleet_sort = gr.Radio(list(monitor.FLEET_SORTS), value=monitor.FLEET_SORTS[0], label="Sort",
+                                      scale=3)
+                fleet_attention = gr.Checkbox(label="Needs attention only", scale=1)
+
+            fleet_html = gr.HTML(js_on_load=monitor.JS)
+
+            with gr.Row():
+                mon_pack = gr.Dropdown(label="Deployment", choices=[], scale=2, allow_custom_value=True)
                 mon_change = gr.Dropdown(label="Change", choices=[], scale=3, allow_custom_value=True)
 
             mon_html = gr.HTML(js_on_load=monitor.JS)
             mon_timer = gr.Timer(30.0)
             mon_inputs = [mon_pack, mon_range, mon_change]
+            fleet_inputs = [mon_range, fleet_query, fleet_sort, fleet_attention, mon_pack]
+            fleet_out = dict(inputs=fleet_inputs, outputs=[fleet_html], show_progress="hidden")
 
             mon_timer.tick(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change],
-                           show_progress="hidden")
-            mon_pack.input(pick_deployment, inputs=[mon_pack, mon_range], outputs=[mon_html, mon_change])
+                           show_progress="hidden").then(show_fleet, **fleet_out)
+            mon_pack.input(pick_deployment, inputs=[mon_pack, mon_range], outputs=[mon_html, mon_change]).then(
+                show_fleet, **fleet_out)
             mon_range.change(show_monitor, inputs=mon_inputs, outputs=[mon_html])
+            mon_range.change(show_fleet, **fleet_out)
+            fleet_query.input(show_fleet, trigger_mode="always_last", **fleet_out)
+            fleet_sort.change(show_fleet, **fleet_out)
+            fleet_attention.change(show_fleet, **fleet_out)
             mon_change.change(show_monitor, inputs=mon_inputs, outputs=[mon_html], show_progress="hidden")
             mon_html.click(pick_change, outputs=[mon_change])
+            fleet_html.click(pick_fleet, inputs=[mon_range], outputs=[mon_pack, mon_html, mon_change]).then(
+                show_fleet, **fleet_out)
 
         with gr.Tab("System"):
             system_md = gr.Markdown()
@@ -546,7 +590,8 @@ def build() -> gr.Blocks:
             select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail])
         demo.load(refresh_system, outputs=[system_md])
-        demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change])
+        demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
+            show_fleet, **fleet_out)
 
     return demo
 

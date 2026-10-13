@@ -96,8 +96,8 @@ def test_mock_events_and_poller(tenant):
     assert store.first_sample_at(entry["deployment_crn"]) < before
 
 
-def _approved_s01(agent):
-    world, client, store, incidents, install = agent("p1-throughput")
+def _approved_s01(agent, *more):
+    world, client, store, incidents, install = agent("p1-throughput", *more)
     incident = incidents["S01"]
     install(ScriptedLLM(proposal(S01_FIX)))
     graph.start(incident["id"])
@@ -172,6 +172,61 @@ def test_ledger_levels_and_deltas():
     assert monitor._level(m, values, {"start": 520, "end": 560}) == 6        # inside one bucket
 
 
+def test_fleet_states_carry_and_merge():
+    assert [monitor.kpi_state({"above": 100}, v) for v in (None, 50, 80, 100, 101)] == [None, 0, 1, 1, 2]
+    assert [monitor.kpi_state({"below": 10}, v) for v in (20, 12, 10, 9)] == [0, 1, 1, 2]
+    assert monitor.kpi_state({"key": "k"}, 5) is None
+
+    # Hourly buckets bridge a gap of two; the two newest (not yet polled) take the last value.
+    assert monitor._carry({"step": 3600}, [1, None, 2, None, None, None, 3, None, None, None]) == \
+        [1, 1, 2, None, None, None, 3, 3, 3, None]
+
+    bars = [{"id": "S01", "start": 0, "end": 100, "state": "improved"},
+            {"id": "S02", "start": 50, "end": 150, "state": "rejected"},
+            {"id": "S03", "start": 200, "end": None, "state": "open"}]
+    merged = monitor._merged(bars)
+    assert [(g["label"], g["start"], g["end"], g["state"]) for g in merged] == [
+        ("S01 +1", 0, 150, "nochange"), ("S03", 200, None, "open")]
+
+
+def test_fleet_model_and_render(agent):
+    client, store, entry, _ = _approved_s01(agent, "p5-parameters")
+    packs = fleet.deployed_packs()
+    now = client.now()
+    store.add_changes(packs["p5-parameters"]["deployment_crn"], "p5-parameters",
+                      [{"event_crn": "op/1", "t": now - 600, "kind": "parameters", "name": "<b>Params</b> ${x} `y`"}])
+
+    f = monitor.fleet_model(store, packs, now, "12 h", selected="p1-throughput")
+    rows = {r["pack"]: r for r in f["rows"]}
+    assert f["total"] == 2 and set(rows) == {"p1-throughput", "p5-parameters"} and not f["filtered"]
+    assert all(len(r["states"]) == f["n"] == len(r["texts"]) for r in f["rows"])
+
+    p1, p5 = rows["p1-throughput"], rows["p5-parameters"]
+    assert p1["last_change"]["source"] == "agent" and p1["last_change"]["letter"] == "B"
+    assert p1["verdict"] == "IMPROVED" and p1["watched"] > 0
+    assert p5["last_change"]["source"] == "operator" and p5["verdict"] == ""
+    assert f["open"] == p1["open"] + p5["open"] and f["changes"] >= 2
+
+    assert [r["pack"] for r in monitor.fleet_model(store, packs, now, sort="Recent change")["rows"]][0] == \
+        "p5-parameters"
+    assert [r["name"] for r in monitor.fleet_model(store, packs, now, sort="Name")["rows"]] == \
+        sorted(r["name"] for r in f["rows"])
+
+    only = monitor.fleet_model(store, packs, now, query="P5")
+    assert [r["pack"] for r in only["rows"]] == ["p5-parameters"] and only["filtered"] and only["total"] == 2
+    assert all(monitor.needs_attention(r) for r in monitor.fleet_model(store, packs, now, attention_only=True)["rows"])
+
+    html = monitor.render_fleet(f)
+    assert html.count('data-pack="p1-throughput"') == 1 and html.count("mx-sel") == 1
+    assert "${" not in html and "`" not in html and "<b>Params" not in html
+    assert 'class="mx-mk mx-agent" data-pick="1"' in html and "mx-mk mx-operator" in html
+    assert all(len(v.split("|")) == f["n"] for v in re.findall(r'class="mx-val" data-v="([^"]*)"', html))
+
+    assert "No deployment matches the filter." in monitor.render_fleet(
+        monitor.fleet_model(store, packs, now, query="nothing-like-it"))
+    assert "No deployments registered yet." in monitor.render_fleet(monitor.fleet_model(store, {}, now))
+
+
 def test_monitor_handlers(agent):
     client, store, entry, _ = _approved_s01(agent)
 
@@ -188,3 +243,14 @@ def test_monitor_handlers(agent):
 
     event = gr.EventData(None, {"pick": "1"})
     assert gradio_app.pick_change(event)["value"] == "1"
+
+    # The fleet: the shown deployment highlighted; a row or a marker opens it below.
+    html = gradio_app.show_fleet("12 h", "", monitor.FLEET_SORTS[0], False, "p1-throughput")
+    assert 'data-pack="p1-throughput"' in html and "mx-sel" in html
+
+    pack, detail, picks = gradio_app.pick_fleet("12 h", gr.EventData(None, {"pack": "p1-throughput", "pick": "1"}))
+    assert pack["value"] == "p1-throughput" and picks["value"] == "1" and "Change B · " in detail
+    assert [v for _, v in picks["choices"]] == ["1"]
+    pack, detail, picks = gradio_app.pick_fleet("3 h", gr.EventData(None, {"pack": "p1-throughput"}))
+    assert picks["value"] == "1" and "mx-tl" in detail
+    assert gradio_app.pick_fleet("12 h", gr.EventData(None, {"pack": "nope"})) == (gr.skip(),) * 3
