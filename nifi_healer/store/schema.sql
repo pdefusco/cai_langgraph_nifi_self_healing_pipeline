@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     incident_id         TEXT NOT NULL REFERENCES incidents (id),
     proposal_id         INTEGER REFERENCES proposals (id),
-    decision            TEXT NOT NULL,      -- approve | reject | edit
+    decision            TEXT NOT NULL,      -- approve | reject | edit | rediagnose
     reviewer            TEXT,
     reason              TEXT,
     edits_json          TEXT,

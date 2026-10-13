@@ -141,6 +141,9 @@ def test_a_fix_on_top_of_this_apps_own_fix_is_planned_again_and_keeps_both(tenan
                             )["rebased_by"] == s02["id"]
     foreign = dict(s03, expected_flow_version_crn="crn:cdp:df:mock:flow-version:someone-elses")
     assert "rebased_from" not in executor.rebased(client, store, foreign)
+    current = second["to_flow_version_crn"]
+    assert not executor.stale(store, dict(s03, expected_flow_version_crn=first["from_flow_version_crn"]), current)
+    assert executor.stale(store, foreign, current) and not executor.stale(store, foreign, "")
     refused = executor.execute(client, store, foreign, proposal_for(store, foreign, packs.SCENARIOS["S03"].expected),
                                dry_run=False, wait=settle)
     assert refused["status"] == "REFUSED" and "someone changed it" in refused["error"]

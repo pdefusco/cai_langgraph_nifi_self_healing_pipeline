@@ -142,7 +142,23 @@ def rebased(client: Client, store, incident: dict) -> dict:
         return incident
 
     current = _deployed(client, incident)["flow_version_crn"]
-    ours = {a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=incident["deployment_crn"])
+    crn, ours = _walk_back(store, incident["deployment_crn"], current, base)
+
+    if current == base or crn != base:
+        return incident
+
+    return dict(incident, expected_flow_version_crn=current, rebased_from=base,
+                rebased_by=ours[current]["incident_id"])
+
+
+def _walk_back(store, deployment_crn: str, current: str, base: str) -> tuple:
+    """
+    Follow `current` back through the versions this app's own applied
+    actions deployed, until `base` or a version they did not deploy.
+    Returns (where it stopped, {deployed version: action}).
+    """
+
+    ours = {a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=deployment_crn)
             if a["status"] == "APPLIED" and a.get("to_flow_version_crn")}
     crn, seen = current, set()
 
@@ -150,11 +166,22 @@ def rebased(client: Client, store, incident: dict) -> dict:
         seen.add(crn)
         crn = ours[crn].get("from_flow_version_crn")
 
-    if current == base or crn != base:
-        return incident
+    return crn, ours
 
-    return dict(incident, expected_flow_version_crn=current, rebased_from=base,
-                rebased_by=ours[current]["incident_id"])
+
+def stale(store, incident: dict, current: str) -> bool:
+    """
+    Whether the incident was diagnosed on a flow version the deployment
+    (now on `current`) no longer runs, for a reason other than this app's
+    own applied actions, which rebased() plans across.
+    """
+
+    base = incident.get("expected_flow_version_crn") or ""
+
+    if not base or not current or current == base:
+        return False
+
+    return _walk_back(store, incident["deployment_crn"], current, base)[0] != base
 
 
 def precheck(client: Client, store, incident: dict) -> str:

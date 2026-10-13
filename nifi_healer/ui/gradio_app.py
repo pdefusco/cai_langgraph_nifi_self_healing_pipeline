@@ -296,8 +296,16 @@ def _decide(decision):
 
 
 @_timed
-def diagnose(incident_id, shown=None):
-    return _answer(_shows_another(incident_id, shown) or views.diagnose(incident_id), incident_id)
+def diagnose(incident_id, shown=None, reviewer="", request: gr.Request = None):
+    login, permission = caller(request)
+
+    if permission.upper() == "RO" and incident_id and graph.pending(incident_id):
+        # Diagnosing an open review again replaces its proposal: a decision.
+        return _answer(f"{login or 'You'} can only view this project, so the review was not diagnosed "
+                       "again; a project collaborator with write access decides.", incident_id)
+
+    return _answer(_shows_another(incident_id, shown)
+                   or views.diagnose(incident_id, (reviewer or "").strip() or login), incident_id)
 
 
 @_timed
@@ -424,7 +432,7 @@ def build() -> gr.Blocks:
             approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
             edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
             reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
-            diagnose_btn.click(diagnose, inputs=[queue_pick, seen], outputs=decision_outputs)
+            diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
         with gr.Tab("History"):
             history_refresh = gr.Button("Refresh")

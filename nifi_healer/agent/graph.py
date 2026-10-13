@@ -5,10 +5,11 @@ The remediation graph, one thread per incident (thread_id = incident id).
         validate_proposal: invalid, agent-written, attempts left -> diagnose_and_propose
                            NO_ACTION                              -> record_no_action -> END
                            otherwise                              -> human_review
-        human_review [interrupt]: approve -> apply_remediation -> END
-                                  edit    -> validate_proposal
-                                  reject  -> record_feedback -> END
-                                  invalid -> human_review (asks again)
+        human_review [interrupt]: approve    -> apply_remediation -> END
+                                  edit       -> validate_proposal
+                                  reject     -> record_feedback -> END
+                                  rediagnose -> gather_context (the proposal is stale)
+                                  invalid    -> human_review (asks again)
 
 The checkpointer is SQLite on the project filesystem, so a run paused at
 human_review survives an app restart; the UI resumes it with
@@ -69,7 +70,8 @@ def build(checkpointer=None):
                                  "no_action": "record_no_action"})
     graph.add_conditional_edges("human_review", nodes.after_review,
                                 {"apply": "apply_remediation", "reject": "record_feedback",
-                                 "validate": "validate_proposal", "again": "human_review"})
+                                 "validate": "validate_proposal", "again": "human_review",
+                                 "rediagnose": "gather_context"})
     graph.add_edge("apply_remediation", END)
     graph.add_edge("record_feedback", END)
     graph.add_edge("record_no_action", END)
@@ -234,10 +236,21 @@ def _run(incident_id: str) -> None:
         nodes.log(f"{incident_id}: run failed: {type(exc).__name__}: {exc}")
 
 
-def submit(incident: dict):
+def _rediagnose(incident_id: str, decision: dict) -> None:
+    try:
+        resume(incident_id, decision)
+
+    except Exception as exc:  # a failed run must not kill the worker
+        nodes.log(f"{incident_id}: diagnosing again failed: {type(exc).__name__}: {exc}")
+
+
+def submit(incident: dict, rediagnose: dict | None = None):
     """
     Start an incident's run in the background. Returns the Future; an
     incident already queued or running keeps its place and its Future.
+    With `rediagnose` (a decision: reviewer, reason), a stale review is
+    answered "rediagnose" instead, which runs the agent again from
+    gather_context on the same worker pool.
     """
 
     incident_id = incident["id"]
@@ -247,7 +260,9 @@ def submit(incident: dict):
         future = _waiting.get(incident_id)
 
         if future is None:
-            future = _waiting[incident_id] = pool.submit(_run, incident_id)
+            future = _waiting[incident_id] = (
+                pool.submit(_rediagnose, incident_id, dict(rediagnose, decision="rediagnose")) if rediagnose
+                else pool.submit(_run, incident_id))
 
     future.add_done_callback(lambda done: _forget(incident_id, done, _waiting))
 

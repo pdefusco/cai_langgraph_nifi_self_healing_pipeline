@@ -226,6 +226,28 @@ ORPHANED = ("**This incident is marked for review, but its run has no paused rev
             "an app restart.")
 
 
+def stale(store, incident: dict) -> str:
+    """
+    Why a paused review's proposal is out of date, or "": it was diagnosed
+    on a flow version the deployment no longer runs, and not because this
+    app's own approvals moved it (an approval plans across those). The
+    deployed version is the poller's last read, so this costs no cdp call.
+    """
+
+    deployed = store.deployment(incident["deployment_crn"]) or {}
+
+    if not executor.stale(store, incident, deployed.get("flow_version_crn") or ""):
+        return ""
+
+    versions = {v["crn"]: v["version"] for v in store.flow_versions(incident["pack"])}
+    was = versions.get(incident.get("expected_flow_version_crn"))
+
+    return (f"**Stale.** This was diagnosed on flow v{was or '?'}, and the deployment now runs "
+            f"v{deployed.get('flow_version') or '?'}, which this app did not deploy: the proposal reads a "
+            "flow that is no longer running, and a flow edit planned on it is refused. **Diagnose** "
+            "replaces it with a new diagnosis of the running version.")
+
+
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
@@ -336,6 +358,10 @@ def review(store, client, incident_id: str | None) -> dict:
         text.append(ORPHANED)
 
     applying = bool(run and run[0] == "applying")
+    outdated = stale(store, incident) if payload and not applying and run is None else ""
+
+    if outdated:
+        text.append(outdated)
 
     if applying:
         text.append(APPLYING)
@@ -353,7 +379,7 @@ def review(store, client, incident_id: str | None) -> dict:
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
         "can_approve": bool(payload and plan.get("ok")) and not applying,
-        "can_diagnose": orphaned and run is None,
+        "can_diagnose": (orphaned or bool(outdated)) and run is None,
         "pending": bool(payload) and not applying,
         "status": incident["status"],
     }
@@ -425,7 +451,7 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
     return f"{result.get('status') or 'Done'}: {result.get('error') or ''}".strip()
 
 
-def diagnose(incident_id: str | None) -> str:
+def diagnose(incident_id: str | None, reviewer: str = "") -> str:
     if not incident_id:
         return "Select an incident first."
 
@@ -434,12 +460,23 @@ def diagnose(incident_id: str | None) -> str:
     if not ok:
         return f"The LLM is not available: {reason}"
 
-    incident = get_store().incident(incident_id)
+    store = get_store()
+    incident = store.incident(incident_id)
+    outdated = stale(store, incident) if incident and graph.pending(incident_id) else ""
 
-    if not incident or not graph.diagnosable(incident):
+    if outdated:
+        if graph.run_state(incident_id):
+            return f"{incident_id} is already being worked on; this panel follows it."
+
+        graph.submit(incident, rediagnose={"reviewer": reviewer.strip(),
+                                           "reason": "stale: diagnosed on a flow version no longer deployed"})
+
+    elif not incident or not graph.diagnosable(incident):
         return f"{incident_id} is {incident['status'] if incident else 'unknown'}; nothing to diagnose."
 
-    graph.submit(incident)
+    else:
+        graph.submit(incident)
+
     run = graph.run_state(incident_id)
 
     if run and run[0] == "queued":

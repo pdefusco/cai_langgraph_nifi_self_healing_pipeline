@@ -116,6 +116,10 @@ Each action family uses one API path:
   first version. Once S15's fix is deployed, S16's edit is planned again on the version S15 deployed. It is applied
   only if every version since S16's diagnosis came from this app's own applied actions, and if the diff is still
   exactly the one the reviewer approved. Any other drift is refused: diagnose again.
+- **Stale reviews.** An open review whose deployment has since moved to a version this app did not deploy (a
+  rebuilt baseline, a hand change) is marked **Stale** in the Review Queue: its proposal reads a flow that is no
+  longer running. **Diagnose** replaces it: the review is answered "rediagnose" (recorded, with the reviewer), and
+  the agent runs again on the deployed version.
 - **Cooldown.** An armed approval inside a deployment's cooldown (30 minutes after the last change, so the previous
   fix can be measured) is turned away before the review is answered. The review stays open; approve it again later.
 - **Who decides.** On CAI the Reviewer field defaults to the viewer's login, from the `REMOTE-USER` header CAI adds

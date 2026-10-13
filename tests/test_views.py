@@ -12,7 +12,7 @@ import gradio as gr
 import pytest
 
 import config
-from nifi_healer import llm
+from nifi_healer import llm, provisioning
 from nifi_healer.agent import graph, nodes
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.ui import gradio_app, views
@@ -287,6 +287,46 @@ def test_a_review_whose_checkpoint_was_lost_can_be_picked_up_again(agent, monkey
 
     panel = views.review(store, client, incident["id"])
     assert panel["pending"] and panel["can_approve"] and not panel["can_diagnose"]
+
+
+def test_a_review_diagnosed_on_a_version_no_longer_deployed_is_diagnosed_again(agent):
+    # Live: S17 stayed open across a rebuilt baseline (v1 -> v2) and kept its v1 proposal.
+    world, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    model = install(ScriptedLLM(proposal(S01_FIX), proposal(S01_FIX)))
+    graph.start(incident["id"])
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["pending"] and not panel["can_diagnose"] and "Stale" not in panel["proposal"]
+    first = graph.pending(incident["id"])["proposal_id"]
+
+    provisioning.import_flow(client, "p1-throughput", new_baseline=True)
+    world.skip(31 * 60)
+    provisioning.reset_pack(client, "p1-throughput", dry_run=False, flow_only=True,
+                            wait=lambda: world.settle(incident["deployment_crn"]))
+    Poller(client, store).poll_now()
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["pending"] and panel["can_diagnose"]
+    assert "**Stale.** This was diagnosed on flow v1, and the deployment now runs v2" in panel["proposal"]
+
+    try:
+        assert views.diagnose(incident["id"], "ops").startswith("Diagnosing")
+
+    finally:
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    assert len(model.calls) == 2
+    review = graph.pending(incident["id"])
+    assert review and review["proposal_id"] != first and review["plan"]["ok"]
+    assert store.incident(incident["id"])["expected_flow_version_crn"] == \
+        client.flow_facts(incident["deployment_crn"], incident["deployed_flow_crn"])["flow_version_crn"]
+    assert [p["status"] for p in store.proposals(incident["id"])] == ["SUPERSEDED", "VALID"]
+    assert [(r["decision"], r["reviewer"]) for r in store.reviews(incident["id"])] == [("rediagnose", "ops")]
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["can_approve"] and not panel["can_diagnose"] and "Stale" not in panel["proposal"]
 
 
 def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):

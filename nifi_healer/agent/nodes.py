@@ -34,7 +34,7 @@ from nifi_healer.store.db import get_store
 # LLM proposals per run before an invalid one goes to review as it is.
 MAX_ATTEMPTS = 3
 
-DECISIONS = ("approve", "reject", "edit")
+DECISIONS = ("approve", "reject", "edit", "rediagnose")
 
 
 def log(message: str) -> None:
@@ -270,6 +270,17 @@ def human_review(state: dict) -> dict:
     if decision == "edit" and not isinstance(steps, list):
         return {"review_error": "an edit needs the new steps, as a list"}
 
+    if decision == "rediagnose":
+        # The proposal read a flow version the deployment no longer runs:
+        # diagnose again on the one it runs now.
+        incident = state["incident"]
+        facts = get_client().flow_facts(incident["deployment_crn"], incident["deployed_flow_crn"])
+
+        if facts.get("error") or not facts.get("flow_version_crn"):
+            return {"review_error": f"could not read the deployed flow: {facts.get('error') or 'no version'}"}
+
+        get_store().update_incident(incident_id, _now(), expected_flow_version_crn=facts["flow_version_crn"])
+
     get_store().add_review(incident_id, decision, _now(), proposal_id=state.get("proposal_id"),
                            reviewer=reviewer, reason=reason, edits=steps if decision == "edit" else None)
     review = {"decision": decision, "reason": reason, "reviewer": reviewer}
@@ -288,7 +299,8 @@ def after_review(state: dict) -> str:
     if state.get("review_error"):
         return "again"
 
-    return {"approve": "apply", "reject": "reject", "edit": "validate"}[state["review"]["decision"]]
+    return {"approve": "apply", "reject": "reject", "edit": "validate",
+            "rediagnose": "rediagnose"}[state["review"]["decision"]]
 
 
 # ---------------------------------------------------------------------

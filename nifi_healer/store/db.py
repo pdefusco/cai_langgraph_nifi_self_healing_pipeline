@@ -138,6 +138,9 @@ class Store:
     def deployments(self) -> list:
         return self._all("SELECT * FROM deployments ORDER BY pack")
 
+    def deployment(self, crn: str) -> dict | None:
+        return self._one("SELECT * FROM deployments WHERE crn = ?", (crn,))
+
     def note_flow_version(self, crn: str, pack: str, flow_crn: str, version, seen_at: float,
                           source: str = "external", incident_id: str = "",
                           comments: str = "") -> None:
