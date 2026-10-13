@@ -31,7 +31,7 @@ from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
 from nifi_healer.store.db import get_store
-from nifi_healer.ui import monitor, views
+from nifi_healer.ui import monitor, scorecard, views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
@@ -449,6 +449,14 @@ def pick_change(evt: gr.EventData):
 
 
 @_timed
+def show_scorecard(since, grouping):
+    m = scorecard.model(get_store(), get_client().now(), since or scorecard.DEFAULT_SINCE,
+                        grouping or scorecard.GROUPINGS[0])
+
+    return scorecard.render(m)
+
+
+@_timed
 def refresh_system():
     return views.system(_snapshot(), get_client())
 
@@ -641,6 +649,21 @@ def build() -> gr.Blocks:
             fleet_html.click(pick_fleet, inputs=[mon_range], outputs=[mon_pack, mon_html, mon_change]).then(
                 show_fleet, **fleet_out)
 
+        with gr.Tab("Scorecard"):
+            with gr.Row():
+                score_since = gr.Radio(list(scorecard.SINCE), value=scorecard.DEFAULT_SINCE, label="Since",
+                                       scale=2)
+                score_group = gr.Radio(list(scorecard.GROUPINGS), value=scorecard.GROUPINGS[0],
+                                       label="Group by", scale=4)
+                score_refresh = gr.Button("Refresh", scale=1)
+
+            score_html = gr.HTML()
+            score_inputs = dict(inputs=[score_since, score_group], outputs=[score_html])
+
+            score_refresh.click(show_scorecard, **score_inputs)
+            score_since.change(show_scorecard, **score_inputs)
+            score_group.change(show_scorecard, **score_inputs)
+
         with gr.Tab("System"):
             system_md = gr.Markdown()
 
@@ -672,6 +695,7 @@ def build() -> gr.Blocks:
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail]).then(
             pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
         demo.load(refresh_system, outputs=[system_md])
+        demo.load(show_scorecard, **score_inputs)
         demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
             show_fleet, **fleet_out)
 
@@ -682,4 +706,4 @@ def main() -> None:
     startup()
     build().queue(default_concurrency_limit=4).launch(
         server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
-        theme=gr.themes.Soft(), css=monitor.CSS)
+        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS)

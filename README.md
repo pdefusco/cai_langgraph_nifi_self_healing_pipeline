@@ -180,6 +180,9 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   required) without touching the measured verdicts, or re-check a window from a later start to skip a stretch the
   fix could not show in. A re-check's verdict replaces the old one, which is kept, and the incident's status
   follows it.
+- **Scorecard** shows how often the agent's first proposal is valid, picks the scenario's design fix, is approved as
+  proposed, and works (a reviewer's label counts over the measured verdict), by agent version, scenario, fix or
+  who chose it.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.

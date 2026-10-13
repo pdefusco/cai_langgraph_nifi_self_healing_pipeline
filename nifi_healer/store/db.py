@@ -501,6 +501,18 @@ class Store:
 
         return {r["action_id"]: r for r in rows}
 
+    def record(self, since: float = 0.0) -> dict:
+        """Every incident opened at or after `since`, with all its rows, by table: the scorecard's reads."""
+
+        mine = "incident_id IN (SELECT id FROM incidents WHERE opened_at >= ?)"
+        out = {"incidents": self._all("SELECT * FROM incidents WHERE opened_at >= ? ORDER BY opened_at",
+                                      (since,))}
+
+        for table in ("proposals", "reviews", "actions", "outcomes", "action_labels"):
+            out[table] = self._all(f"SELECT * FROM {table} WHERE {mine} ORDER BY id", (since,))
+
+        return out
+
 
 _STORE = {"store": None}
 _STORE_LOCK = threading.Lock()
