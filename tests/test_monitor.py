@@ -144,7 +144,10 @@ def test_monitor_model_and_render(agent):
 
     # Select the agent's change: its verdict and window instead.
     html = monitor.render(monitor.model(store, "p1-throughput", entry, now, selected="1"))
-    assert "Change B · " in html and "mx-v-IMPROVED" in html and "15 min window" in html
+    assert "Change B · " in html and "mx-v-IMPROVED" in html
+    assert '15 min <span class="mx-chip mx-v-IMPROVED">improved</span>' in html
+    assert '1 h <span class="mx-chip mx-v-pending">pending · due ' in html and "12 h " in html
+    assert [w["label"] for w in agent_seg["windows"]] == ["15 min", "1 h", "12 h"]
 
     # Every bucket's value for the crosshair, one per bucket.
     values = re.search(r'class="mx-val" data-v="([^"]*)"', html).group(1).split("|")

@@ -1,13 +1,17 @@
 """
 Did a remediation work? The ground truth Phases 2 and 3 learn from.
 
-    verdict = evaluate(kpis, series_by_key, started_at, finished_at)
+    span = plan(window, started_at, now)
+    verdict = evaluate(kpis, series_by_key, started_at, finished_at, signalled, span)
 
-Both halves of the comparison come from *one* chart response, split at
-the change (`metrics.split_at`): buckets are anchored to each request, so
-two responses never line up. Buckets from the start of the change to
-VERIFY_SETTLE_SECONDS after it finished are dropped; they straddle the
-restart of the affected components.
+Each verify window (config.VERIFY_WINDOWS) is judged from *one* chart
+response, split at the change: buckets are anchored to each request, so
+two responses never line up. The 15 min window reads the 1 h chart, the
+1 h window the 12 h chart and the 12 h window the 1 day chart, each with
+at least two buckets after the change. Buckets from the start of the
+change to the settle gap after it finished (VERIFY_SETTLE_SECONDS, or a
+bucket if that is longer) are dropped; they straddle the restart of the
+affected components. So is a before bucket that runs into the change.
 
 Each KPI is judged in its own good direction:
 
@@ -46,31 +50,65 @@ _RATE_RISE = 0.1
 PERIODS = (("LAST_THIRTY_MINUTES", 1800), ("LAST_ONE_HOUR", 3600),
            ("LAST_TWELVE_HOURS", 12 * 3600), ("LAST_ONE_DAY", 24 * 3600))
 
+# Buckets per chart: ~25, so a bucket is at most a 24th of the period.
+_BUCKETS = 24
 
-def period_for(started_at: float, now: float) -> str:
-    """The shortest chart period reaching a verify window back before the change."""
 
-    needed = now - (started_at - config.VERIFY_WINDOW_SECONDS)
+def _plan(name: str, seconds: int, window: float) -> dict:
+    bucket = seconds / _BUCKETS
+
+    return {"period": name, "seconds": seconds, "bucket": bucket, "window": window,
+            "settle": max(config.VERIFY_SETTLE_SECONDS, bucket),
+            "before": max(config.VERIFY_WINDOW_SECONDS, 3 * bucket)}
+
+
+def plan(window: float, started_at: float, now: float) -> dict | None:
+    """
+    The chart to judge `window` from, read at `now`: the shortest period
+    with at least two buckets in the window that still reaches back over
+    the before window. Its buckets set the settle gap (the bucket
+    straddling the change is dropped) and widen the before window to
+    three. None when no chart reaches back that far any more.
+    """
 
     for name, seconds in PERIODS:
-        if seconds >= needed:
-            return name
+        found = _plan(name, seconds, window)
 
-    return PERIODS[-1][0]
+        if window >= 2 * found["bucket"] and seconds >= now - (started_at - found["before"]) + found["bucket"]:
+            return found
 
-
-def due_at(finished_at: float) -> float:
-    return finished_at + config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS
+    return None
 
 
-def windows(series: list, started_at: float, finished_at: float) -> tuple:
-    """(before, after): one verify window either side, the settle gap dropped."""
+def due_at(finished_at: float, window: float | None = None, started_at: float | None = None) -> float:
+    """When `window` closes: read on time, its chart is the shortest that holds it whole."""
 
-    settle = (finished_at - started_at) + config.VERIFY_SETTLE_SECONDS
-    before, after = metrics.split_at(series, started_at, settle)
-    before = [(t, v) for t, v in before if t >= started_at - config.VERIFY_WINDOW_SECONDS]
-    after = [(t, v) for t, v in after
-             if t <= finished_at + config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS]
+    window = window or config.VERIFY_WINDOW_SECONDS
+    started_at = finished_at if started_at is None else started_at
+
+    for name, seconds in PERIODS:
+        found = _plan(name, seconds, window)
+        span = found["before"] + (finished_at - started_at) + found["settle"] + window + found["bucket"]
+
+        if window >= 2 * found["bucket"] and seconds >= span:
+            return finished_at + found["settle"] + window
+
+    return finished_at + config.VERIFY_SETTLE_SECONDS + window
+
+
+def windows(series: list, started_at: float, finished_at: float, span: dict | None = None) -> tuple:
+    """
+    (before, after): the before window up to the change, the after window
+    from the end of the settle gap. `span` is a plan(); the 15 min window
+    at a fine chart's buckets when absent.
+    """
+
+    span = span or {"bucket": 0.0, "settle": config.VERIFY_SETTLE_SECONDS,
+                    "before": config.VERIFY_WINDOW_SECONDS, "window": config.VERIFY_WINDOW_SECONDS}
+    start, end = finished_at + span["settle"], finished_at + span["settle"] + span["window"]
+    before = [(t, v) for t, v in series
+              if started_at - span["before"] <= t and t + span["bucket"] < started_at]
+    after = [(t, v) for t, v in series if start <= t <= end]
 
     return before, after
 
@@ -157,18 +195,19 @@ def combine(verdicts: list) -> str:
 
 
 def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: float,
-             signalled=()) -> dict:
+             signalled=(), span: dict | None = None) -> dict:
     """
     kpis: the fleet KPI entries of the incident's scenario.
     series_by_key: {kpi key: [(t, value)]} from one chart response.
     signalled: keys of the KPIs whose signals opened the incident.
+    span: the plan() of the window judged; the 15 min window when absent.
     """
 
     judged = []
 
     # Roll-up KPIs are read only as the group's in and out, below.
     for kpi in (k for k in kpis if not k.get("rollup")):
-        before, after = windows(series_by_key.get(kpi["key"]) or [], started_at, finished_at)
+        before, after = windows(series_by_key.get(kpi["key"]) or [], started_at, finished_at, span)
         judged.append(dict(judge(kpi, before, after), signalled=kpi.get("key") in signalled))
 
     deciding = [j for j in judged if j["primary"] or j["signalled"]] or judged
@@ -176,13 +215,15 @@ def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: fl
     side_effects = [j["kpi"] for j in judged if j not in deciding and j["verdict"] == WORSENED]
 
     return {"verdict": verdict, "kpis": judged, "side_effects": side_effects,
-            "group": group_change(kpis, series_by_key, started_at, finished_at),
+            "group": group_change(kpis, series_by_key, started_at, finished_at, span),
             "started_at": started_at, "finished_at": finished_at,
-            "settle_seconds": config.VERIFY_SETTLE_SECONDS,
-            "window_seconds": config.VERIFY_WINDOW_SECONDS}
+            "settle_seconds": span["settle"] if span else config.VERIFY_SETTLE_SECONDS,
+            "window_seconds": span["window"] if span else config.VERIFY_WINDOW_SECONDS,
+            "before_seconds": span["before"] if span else config.VERIFY_WINDOW_SECONDS}
 
 
-def group_change(kpis: list, series_by_key: dict, started_at: float, finished_at: float) -> dict:
+def group_change(kpis: list, series_by_key: dict, started_at: float, finished_at: float,
+                 span: dict | None = None) -> dict:
     """
     The process group's in and out (kpi/rollup.py) either side of the
     change, and out over in. Shown with the verdict, never deciding it.
@@ -197,7 +238,7 @@ def group_change(kpis: list, series_by_key: dict, started_at: float, finished_at
     change = {"edges": flow["edges"]}
 
     for side in ("in", "out"):
-        before, after = windows(flow[side], started_at, finished_at)
+        before, after = windows(flow[side], started_at, finished_at, span)
         change[side] = {"before": metrics.summarize(before), "after": metrics.summarize(after)}
 
     for when in ("before", "after"):

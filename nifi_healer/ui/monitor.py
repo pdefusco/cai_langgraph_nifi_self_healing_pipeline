@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 import config
 from nifi_healer import fleet
 from nifi_healer.kpi import changes as change_log
-from nifi_healer.kpi import rollup
+from nifi_healer.kpi import outcomes, rollup
 from nifi_healer.kpi.detectors import group_name
 from nifi_healer.store.db import OPEN_STATUSES
 from nifi_healer.ui import views
@@ -252,7 +252,7 @@ def _agent_segment(store, change: dict, by_crn: dict, flow, used: set, cache: di
 
     if incident_id not in cache:
         cache[incident_id] = {"proposals": {p["id"]: p for p in store.proposals(incident_id)},
-                              "outcomes": {o["action_id"]: o for o in store.outcomes(incident_id)},
+                              "outcomes": _by_action(store.outcomes(incident_id)),
                               "incident": store.incident(incident_id) or {}}
 
     found = cache[incident_id]
@@ -269,7 +269,9 @@ def _agent_segment(store, change: dict, by_crn: dict, flow, used: set, cache: di
             flow = version
             short_text = f"v{version} · {short_text}"
 
-    outcome = found["outcomes"].get(action.get("id"))
+    judged = found["outcomes"].get(action.get("id")) or {}
+    windows = _windows(action, judged)
+    outcome = views.shown_outcome(list(judged.values()))
     details = (outcome or {}).get("details") or {}
     diagnosis = proposal.get("diagnosis") or ""
 
@@ -279,14 +281,43 @@ def _agent_segment(store, change: dict, by_crn: dict, flow, used: set, cache: di
         "note": _clip(diagnosis, 280), "result": _outcome_line(details),
         "incident": incident_id.split("-", 3)[-1] if incident_id else "",
         "verdict": (outcome or {}).get("verdict") or "pending",
-        "window": views._minutes(details["window_seconds"]) if details.get("window_seconds") else "",
+        "window": views.window_label(outcome["window_seconds"]) if outcome else "",
+        "windows": windows, "regression": any(w["regression"] for w in windows),
     }
+
+
+def _by_action(found: list) -> dict:
+    """{action id: {window seconds: outcome}}."""
+
+    out = {}
+
+    for o in found:
+        out.setdefault(o["action_id"], {})[o["window_seconds"]] = o
+
+    return out
+
+
+def _windows(action: dict, judged: dict) -> list:
+    """Every verify window of an applied action: its verdict, or when it is due."""
+
+    out = []
+
+    for window in sorted(set(config.VERIFY_WINDOWS) | set(judged)):
+        o = judged.get(window)
+        details = (o or {}).get("details") or {}
+        due = outcomes.due_at(action["finished_at"], window, action.get("started_at")) \
+            if action.get("finished_at") else None
+        out.append({"label": views.window_label(window), "verdict": o["verdict"] if o else "pending",
+                    "due": due, "regression": bool(details.get("regression")),
+                    "reason": details.get("reason") or "" if details.get("cut") or details.get("missed") else ""})
+
+    return out
 
 
 def _operator_segment(change: dict, versions: list, flow, used: set) -> dict:
     kind, t = change["kind"], change["t"]
     out = {"source": "operator", "who": "Operator", "flow": flow, "note": "", "result": "",
-           "incident": "", "verdict": "", "window": ""}
+           "incident": "", "verdict": "", "window": "", "windows": [], "regression": False}
 
     if kind == "flow_version":
         seen = [r for r in versions if r["crn"] not in used and r.get("first_seen_at") is not None
@@ -320,7 +351,7 @@ def _segments(store, pack: str, found: list, origin: float) -> tuple:
     used, cache, minor = set(), {}, []
     segments = [{"start": origin, "kind": "created", "source": "", "who": "", "flow": flow,
                  "short": "as provisioned", "what": "", "note": "", "result": "", "incident": "",
-                 "verdict": "", "window": ""}]
+                 "verdict": "", "window": "", "windows": [], "regression": False}]
 
     for change in found:
         if change["kind"] == "created":
@@ -836,21 +867,31 @@ def _detail(m: dict) -> str:
         body.append(f'<p class="mx-note mx-result">{_e(s["result"])}</p>')
 
     if s["source"] == "agent":
-        if s["verdict"] == "pending":
-            wait = views._minutes(config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS)
-            verdict = f'Verdict <span class="mx-chip mx-v-pending">pending</span> measured {wait} after the change'
-
-        else:
-            verdict = (f'Verdict{" (" + _e(s["window"]) + " window)" if s["window"] else ""} '
-                       f'<span class="mx-chip mx-v-{_e(s["verdict"])}">{_e(s["verdict"].replace("_", " ").lower())}</span>')
-
-        body.append(f'<div class="mx-windows">{verdict}<span class="mx-planned">1 h and 12 h windows are planned</span></div>')
+        body.append(f'<div class="mx-windows">Verdicts {"".join(_window_chip(w) for w in s["windows"])}</div>')
 
     else:
         body.append('<div class="mx-windows">No verdict: made outside the agent.</div>')
 
     return (f'<div class="mx-row mx-detail"><div class="mx-gut">{gutter}</div>'
             f'<div class="mx-detail-body">{"".join(body)}</div></div>')
+
+
+def _window_chip(w: dict) -> str:
+    """One verify window in a change's detail: `1 h improved`, or when it is due."""
+
+    if w["verdict"] == "pending":
+        due = f' · due {_e(_when(w["due"], False))}' if w["due"] else ""
+        chip = f'<span class="mx-chip mx-v-pending">pending{due}</span>'
+
+    else:
+        chip = f'<span class="mx-chip mx-v-{_e(w["verdict"])}">{_e(w["verdict"].replace("_", " ").lower())}</span>'
+
+    if w["regression"]:
+        chip += '<span class="mx-chip mx-v-WORSENED">regressed</span>'
+
+    reason = f'<span class="mx-planned">{_e(w["reason"])}</span>' if w["reason"] else ""
+
+    return f'<span class="mx-win">{_e(w["label"])} {chip}{reason}</span>'
 
 
 def _lane(m: dict, scenario: str) -> str:
@@ -945,6 +986,9 @@ def _ledger(m: dict) -> str:
 
         if s["source"] == "agent":
             chips += f'<span class="mx-chip mx-v-{_e(s["verdict"])}">{_e(s["verdict"].replace("_", " ").lower())}</span>'
+
+            if s["regression"]:
+                chips += '<span class="mx-chip mx-v-WORSENED">regressed</span>'
 
         inner = (f'<span class="mx-letter">{_e(s["letter"])}</span>'
                  f'<span class="mx-when">{_e(_when(s["start"], with_day))}–{_e(until)}</span>'
@@ -1309,6 +1353,7 @@ CSS = """
 .mx-note{margin:0;max-width:90ch;color:var(--mx-ink);opacity:.85}
 .mx-windows{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:12px;color:var(--mx-muted)}
 .mx-planned{font-size:11px;font-style:italic}
+.mx-win{display:inline-flex;gap:4px;align-items:center}
 .mx-ledger-head{padding:14px 16px 8px;border-top:1px solid var(--mx-line)}
 .mx-ledger-head p{margin:4px 0 0;color:var(--mx-muted);max-width:90ch}
 .mx-eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mx-muted)}

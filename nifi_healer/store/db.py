@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timezone
 
 import config
+from nifi_healer.kpi.outcomes import due_at
 
 SCHEMA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 
@@ -82,7 +83,57 @@ class Store:
         self.conn.row_factory = sqlite3.Row
 
         with open(SCHEMA_FILE) as handle:
-            self.conn.executescript(handle.read())
+            schema = handle.read()
+
+        with self.lock:
+            self._set_aside_single_window_outcomes()
+            self.conn.executescript(schema)
+            self._restore_single_window_outcomes()
+
+    # -- migrations -----------------------------------------------------
+
+    def _set_aside_single_window_outcomes(self) -> None:
+        """
+        Before the 1 h and 12 h verdicts, outcomes held one per action. That
+        table is set aside, once, after a copy of the whole file next to it.
+        """
+
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(outcomes)")}
+
+        if not columns or "window_seconds" in columns:
+            return
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        backup = sqlite3.connect(f"{self.path}.{stamp}.bak")
+
+        try:
+            self.conn.backup(backup)
+
+        finally:
+            backup.close()
+
+        self.conn.execute("ALTER TABLE outcomes RENAME TO outcomes_v1")
+
+    def _restore_single_window_outcomes(self) -> None:
+        """Its rows become the first window's verdicts (also after a restart midway)."""
+
+        if not self.conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                                 "AND name = 'outcomes_v1'").fetchone():
+            return
+
+        self.conn.execute("BEGIN")
+
+        try:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO outcomes (id, incident_id, action_id, window_seconds, verdict, "
+                "period, details_json, evaluated_at) SELECT id, incident_id, action_id, ?, verdict, "
+                "period, details_json, evaluated_at FROM outcomes_v1", (config.VERIFY_WINDOW_SECONDS,))
+            self.conn.execute("DROP TABLE outcomes_v1")
+            self.conn.execute("COMMIT")
+
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
 
     # -- plumbing -------------------------------------------------------
 
@@ -359,26 +410,36 @@ class Store:
 
         return [r["started_at"] for r in rows]
 
-    def actions_awaiting_outcome(self, due_before: float) -> list:
-        """Applied actions whose verify window has closed and that have no verdict yet."""
+    def windows_due(self, now: float) -> list:
+        """
+        [(action, window seconds)]: each applied action's verify windows
+        that have closed by `now` (outcomes.due_at) with no verdict yet.
+        """
 
-        return self._all(
-            "SELECT a.* FROM actions a LEFT JOIN outcomes o ON o.action_id = a.id "
-            "WHERE a.status = 'APPLIED' AND a.dry_run = 0 AND o.id IS NULL "
-            "AND a.finished_at IS NOT NULL AND a.finished_at <= ? ORDER BY a.finished_at",
-            (due_before,))
+        actions = self._all("SELECT * FROM actions WHERE status = 'APPLIED' AND dry_run = 0 "
+                            "AND finished_at IS NOT NULL ORDER BY finished_at")
+
+        with self.lock:
+            judged = {tuple(r) for r in self.conn.execute("SELECT action_id, window_seconds FROM outcomes")}
+
+        return [(a, window) for a in actions for window in config.VERIFY_WINDOWS
+                if (a["id"], window) not in judged
+                and due_at(a["finished_at"], window, a.get("started_at")) <= now]
 
     def add_outcome(self, incident_id: str, action_id: int, verdict: str, period: str,
-                    details: dict, now: float) -> int:
+                    details: dict, now: float, window: int | None = None) -> int:
         return self._insert("outcomes", {
             "incident_id": incident_id, "action_id": action_id, "verdict": verdict,
+            "window_seconds": window or config.VERIFY_WINDOW_SECONDS,
             "period": period, "details": details, "evaluated_at": now,
         })
 
     def outcomes(self, incident_id: str = "") -> list:
+        """Oldest action first, and each action's windows shortest first."""
+
         if incident_id:
-            return self._all("SELECT * FROM outcomes WHERE incident_id = ? ORDER BY id",
-                             (incident_id,))
+            return self._all("SELECT * FROM outcomes WHERE incident_id = ? "
+                             "ORDER BY action_id, window_seconds", (incident_id,))
 
         return self._all("SELECT * FROM outcomes ORDER BY evaluated_at DESC")
 

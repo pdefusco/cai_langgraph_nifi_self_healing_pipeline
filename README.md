@@ -173,7 +173,9 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   - **Submit edit** re-validates JSON steps you have changed.
   - **Reject** requires a reason.
 - **System → Fast-forward** moves the mock clock past the 5-minute settle and the 15-minute verify window. History
-  then shows the outcome verdict.
+  then shows the outcome verdict. Each fix is judged again 1 h and 12 h after it (the **Windows** column): a clear
+  first verdict closes the incident; an unclear one keeps it verifying until the hour; a later WORSENED on a
+  resolved incident is flagged as a regression.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.
@@ -288,6 +290,7 @@ up again, and so does an app restart.
 | `SELFHEAL_BREACH_DEBOUNCE` | 2 | consecutive breaching buckets before a signal |
 | `SELFHEAL_INCIDENT_COOLDOWN` | 900 | seconds before a process group can reopen an incident |
 | `SELFHEAL_VERIFY_SETTLE` / `_WINDOW` | 300 / 900 | outcome measurement after a change |
+| `SELFHEAL_VERIFY_LATER_WINDOWS` | 3600,43200 | later verdicts on each fix, in seconds |
 | `SELFHEAL_COOLDOWN`, `SELFHEAL_MAX_ACTIONS_PER_WINDOW`, `SELFHEAL_ACTION_WINDOW` | 1800, 3, 86400 | write rate limits per deployment |
 | `SELFHEAL_AGENT_WORKERS` | 2 | concurrent agent runs |
 | `SELFHEAL_AUTO_DIAGNOSE` | `true` | diagnose new incidents automatically (else use the Diagnose button) |

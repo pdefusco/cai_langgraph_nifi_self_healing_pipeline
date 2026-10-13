@@ -179,6 +179,14 @@ INCIDENT_COOLDOWN_SECONDS = _int("SELFHEAL_INCIDENT_COOLDOWN", 900)
 VERIFY_SETTLE_SECONDS = _int("SELFHEAL_VERIFY_SETTLE", 300)
 VERIFY_WINDOW_SECONDS = _int("SELFHEAL_VERIFY_WINDOW", 900)
 
+# Each fix is judged again over these longer windows, each from a chart
+# coarse enough to hold it (kpi/outcomes.py). The first window closes an
+# incident it is clear about; the next closes it either way; later ones
+# only flag a regression.
+VERIFY_WINDOWS = (VERIFY_WINDOW_SECONDS,) + tuple(sorted({
+    int(w) for w in _list("SELFHEAL_VERIFY_LATER_WINDOWS") or ("3600", "43200")
+    if w.isdigit() and int(w) > VERIFY_WINDOW_SECONDS}))
+
 AGENT_WORKERS = max(1, _int("SELFHEAL_AGENT_WORKERS", 2))
 AUTO_DIAGNOSE = _bool("SELFHEAL_AUTO_DIAGNOSE", True)
 

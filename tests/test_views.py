@@ -14,6 +14,7 @@ import pytest
 import config
 from nifi_healer import llm, provisioning
 from nifi_healer.agent import graph, nodes
+from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.ui import gradio_app, views
 
@@ -62,7 +63,8 @@ def test_fleet_views(agent):
 
 
 def test_history_shows_each_kpi_before_and_after(agent):
-    world, client, store, incidents, install = agent("p1-throughput")
+    # Two hours of history: the 1 h window's before side spans the 1.5 h before the change.
+    world, client, store, incidents, install = agent("p1-throughput", history=2 * 3600)
     incident = incidents["S01"]
     install(ScriptedLLM(proposal(S01_FIX)))
 
@@ -78,9 +80,19 @@ def test_history_shows_each_kpi_before_and_after(agent):
     row = next(r for r in views.history_rows(store) if r[0] == incident["id"])
     assert len(row) == len(views.HISTORY_HEADERS)
     assert row[-1].startswith("s01-backlog ") and "better" in row[-1]
+    assert row[5] == "15 min improved · 1 h pending · 12 h pending"
 
     detail = views.incident_detail(store, incident["id"])
     assert "| KPI | Decides |" in detail and "| s01-backlog · queued_count | primary |" in detail
+    assert "for action 1, 15 min window: **IMPROVED** (LAST_ONE_HOUR)" in detail
+
+    # The hour after it, from the 12 h chart; the incident was closed by the first window already.
+    action = store.actions(incident_id=incident["id"])[-1]
+    world.skip(outcomes.due_at(action["finished_at"], 3600, action["started_at"]) - client.now() + 60)
+    hour = Poller(client, store).evaluate_outcomes()
+    assert [(o["window_seconds"], o["verdict"]) for o in hour] == [(3600, "IMPROVED")]
+    assert store.incident(incident["id"])["status"] == "RESOLVED"
+    assert "for action 1, 1 h window: **IMPROVED** (LAST_TWELVE_HOURS)" in views.incident_detail(store, incident["id"])
     assert "**Group in/out per bucket:** in (S01 Source)" in detail and "out (S01 Consumer)" in detail
 
 
@@ -133,7 +145,8 @@ def test_review_approve_and_history(agent):
     assert incident["id"] not in [v for _, v in views.queue_choices(store)]
 
     row = next(r for r in views.history_rows(store) if r[0] == incident["id"])
-    assert row[3] == "VERIFYING" and "APPLIED" in row[6] and row[7] == "ops"
+    assert row[3] == "VERIFYING" and "APPLIED" in row[7] and row[8] == "ops"
+    assert row[5] == "15 min pending · 1 h pending · 12 h pending"
 
     detail = views.incident_detail(store, incident["id"])
     assert "**Review:** approve by ops" in detail and "cdp df change-flow-version-in-deployment" in detail

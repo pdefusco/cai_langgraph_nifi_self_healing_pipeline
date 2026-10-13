@@ -128,12 +128,16 @@ CREATE TABLE IF NOT EXISTS actions (
     finished_at         REAL
 );
 
+-- One verdict per action and verify window (config.VERIFY_WINDOWS):
+-- 15 min, 1 h and 12 h after the change, each from its own chart.
 CREATE TABLE IF NOT EXISTS outcomes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     incident_id         TEXT NOT NULL REFERENCES incidents (id),
-    action_id           INTEGER NOT NULL UNIQUE REFERENCES actions (id),
+    action_id           INTEGER NOT NULL REFERENCES actions (id),
+    window_seconds      INTEGER NOT NULL,
     verdict             TEXT NOT NULL,      -- IMPROVED | NO_CHANGE | WORSENED | INCONCLUSIVE
     period              TEXT,
     details_json        TEXT,
-    evaluated_at        REAL NOT NULL
+    evaluated_at        REAL NOT NULL,
+    UNIQUE (action_id, window_seconds)
 );

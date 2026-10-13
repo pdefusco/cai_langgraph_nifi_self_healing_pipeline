@@ -26,8 +26,8 @@ DEPLOYMENT_HEADERS = ["Pack", "State", "Flow", "CPU %", "Memory %", "Cores", "Ac
 GROUP_HEADERS = ["Pack", "Process group", "Status", "In", "Out", "Out / in", "Queued (watched)", "Incident"]
 FLEET_HEADERS = ["Pack", "Process group", "KPI", "Status", "Latest", "Threshold", "Trend /min", "Incident"]
 DIFF_HEADERS = ["Path", "Before", "After"]
-HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Opened", "Action", "Reviewed by",
-                   "Change"]
+HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Windows", "Opened", "Action",
+                   "Reviewed by", "Change"]
 OUTCOME_HEADERS = ["KPI", "Decides", "Before (mean · last)", "After (mean · last)", "Change (last)",
                    "Trend /min", "Verdict", "Why"]
 
@@ -675,11 +675,14 @@ def history_rows(store, limit: int = 200) -> list:
         actions = store.actions(incident_id=incident["id"])
         reviews = store.reviews(incident["id"])
         last = actions[-1] if actions else None
-        outcomes = store.outcomes(incident["id"])
-        shown = _deciding(outcomes[-1].get("details") or {}) if outcomes else None
+        found = store.outcomes(incident["id"])
+        applied = [a for a in actions if a["status"] == "APPLIED" and not a["dry_run"]]
+        mine = [o for o in found if applied and o["action_id"] == applied[-1]["id"]]
+        outcome = shown_outcome(mine or found)
+        shown = _deciding(outcome.get("details") or {}) if outcome else None
         rows.append([
             incident["id"], incident["pack"], incident["process_group"], incident["status"],
-            incident.get("verdict") or "", clock(incident["opened_at"]),
+            incident.get("verdict") or "", windows_text(mine) if applied else "", clock(incident["opened_at"]),
             f"{last['action_type']} ({last['status']})" if last else "",
             ", ".join(sorted({r["reviewer"] or "?" for r in reviews})),
             f"{_component(shown['kpi'])} "
@@ -688,6 +691,38 @@ def history_rows(store, limit: int = 200) -> list:
         ])
 
     return rows
+
+
+def window_label(seconds) -> str:
+    """900 -> `15 min`, 3600 -> `1 h`."""
+
+    seconds = int(seconds or 0)
+
+    return f"{seconds // 3600} h" if seconds >= 3600 and not seconds % 3600 else f"{seconds / 60:.0f} min"
+
+
+def shown_outcome(found: list) -> dict | None:
+    """Of one change's outcomes, the verdict it carries: its longest window judged, unless that one could not tell."""
+
+    ordered = sorted(found, key=lambda o: o.get("window_seconds") or 0)
+    clear = [o for o in ordered if o["verdict"] != "INCONCLUSIVE"]
+
+    return (clear or ordered or [None])[-1]
+
+
+def windows_text(found: list) -> str:
+    """One action's verify windows: `15 min improved · 1 h no change · 12 h pending`."""
+
+    judged = {o["window_seconds"]: o for o in found}
+    parts = []
+
+    for window in sorted(set(config.VERIFY_WINDOWS) | set(judged)):
+        o = judged.get(window)
+        verdict = o["verdict"].replace("_", " ").lower() if o else "pending"
+        regressed = " (regressed)" if o and (o.get("details") or {}).get("regression") else ""
+        parts.append(f"{window_label(window)} {verdict}{regressed}")
+
+    return " · ".join(parts)
 
 
 def history_choices(store, limit: int = 200) -> list:
@@ -730,11 +765,16 @@ def incident_detail(store, incident_id: str | None) -> str:
 
     for o in store.outcomes(incident["id"]):
         details = o.get("details") or {}
-        out += ["", f"**Outcome** for action {o['action_id']}: **{o['verdict']}** ({o.get('period')})"]
+        window = window_label(o.get("window_seconds"))
+        out += ["", f"**Outcome** for action {o['action_id']}, {window} window: **{o['verdict']}**"
+                    + (f" ({o['period']})" if o.get("period") else "")]
+
+        if details.get("regression"):
+            out.append("**Regression:** the incident was resolved by an earlier window; this one measured it worse.")
 
         if details.get("started_at"):
-            out.append(f"Before: the {_minutes(details.get('window_seconds'))} up to "
-                       f"{clock(details['started_at'])}. After: the {_minutes(details.get('window_seconds'))} "
+            out.append(f"Before: the {_minutes(details.get('before_seconds') or details.get('window_seconds'))} "
+                       f"up to {clock(details['started_at'])}. After: the {window} "
                        f"from {_minutes(details.get('settle_seconds'))} after it finished.")
 
         out += outcome_table(details)

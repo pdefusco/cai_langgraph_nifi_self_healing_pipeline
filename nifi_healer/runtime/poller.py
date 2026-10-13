@@ -33,10 +33,12 @@ mid-change (UPDATING, DEPLOYING, a half-applied version swap) or
 unreadable. `on_incident(incident)` is called for each new incident when
 AUTO_DIAGNOSE is on.
 
-Outcomes. An applied action is judged once VERIFY_SETTLE_SECONDS plus
-VERIFY_WINDOW_SECONDS have passed since it finished, from a single chart
-response split at the change (kpi/outcomes.py). A failed chart read is
-retried on the next pass rather than recorded as INCONCLUSIVE.
+Outcomes. An applied action is judged once per verify window
+(config.VERIFY_WINDOWS: 15 min, 1 h, 12 h) as each closes, every time
+from a single chart response split at the change (kpi/outcomes.py). A
+later change that could move the same KPIs cuts a window short
+(INCONCLUSIVE). A failed chart read is retried on the next pass rather
+than recorded as INCONCLUSIVE.
 
 The thread is started behind a module flag, not from a page-load hook:
 Gradio's demo.load runs per browser tab, which in the cai_langgraph
@@ -64,6 +66,10 @@ _BACKFILL_RETRY = 600  # wall seconds before a failed backfill is tried again
 
 # Fine to coarse, so the finer buckets claim their times first.
 BACKFILL_PERIODS = ("LAST_ONE_HOUR", "LAST_TWELVE_HOURS", "LAST_ONE_DAY")
+
+# Change kinds that cut a verify window short; KPI edits and the
+# deployment's creation change no data.
+_CUTTING_KINDS = ("flow_version", "parameters", "sizing", "other")
 
 
 def log(message: str) -> None:
@@ -406,30 +412,49 @@ class Poller:
 
     def evaluate_outcomes(self) -> list:
         now = self.client.now()
-        due = self.store.actions_awaiting_outcome(
-            now - config.VERIFY_SETTLE_SECONDS - config.VERIFY_WINDOW_SECONDS)
         judged = []
 
-        for action in due:
-            result = self.evaluate_action(action, now)
+        for action, window in self.store.windows_due(now):
+            result = self.evaluate_action(action, now, window)
 
             if result:
                 judged.append(result)
 
         return judged
 
-    def evaluate_action(self, action: dict, now: float) -> dict | None:
+    def evaluate_action(self, action: dict, now: float, window: int | None = None) -> dict | None:
+        """
+        One verify window's verdict on one applied action. The first window
+        closes the incident when it is clear (IMPROVED or WORSENED); the
+        second closes it either way. Later ones never change it: they flag
+        a regression when a resolved incident's KPIs got worse after all.
+        """
+
+        window = window or config.VERIFY_WINDOW_SECONDS
         incident = self.store.incident(action["incident_id"]) or {}
         entry = fleet.pack(action["pack"])
         kpis = [k for k in entry.get("kpis") or [] if k["scenario"] == incident.get("scenario")]
+        end = outcomes.due_at(action["finished_at"], window, action["started_at"])
+        cut = self._cut_by(action, incident, end) if kpis else None
+        span = outcomes.plan(window, action["started_at"], now)
+        period = ""
 
         if not kpis:
             outcome = {"verdict": outcomes.INCONCLUSIVE, "kpis": [], "side_effects": [],
                        "reason": f"no KPIs recorded for scenario {incident.get('scenario')!r}"}
-            period = ""
+
+        elif cut:
+            outcome = {"verdict": outcomes.INCONCLUSIVE, "kpis": [], "side_effects": [], "cut": cut,
+                       "reason": f"cut short by {cut['text']} "
+                                 f"{max(cut['t'] - action['finished_at'], 0) / 60:.0f} min after this change"}
+
+        elif span is None:
+            outcome = {"verdict": outcomes.INCONCLUSIVE, "kpis": [], "side_effects": [], "missed": True,
+                       "reason": "missed: no chart reaches back to the change any more (the app "
+                                 "was not judging this window when it closed)"}
 
         else:
-            period = outcomes.period_for(action["started_at"], now)
+            period = span["period"]
             read = self.client.metric_charts(action["deployment_crn"],
                                              entry.get("deployed_flow_crn", ""), time_period=period)
 
@@ -447,24 +472,81 @@ class Poller:
 
             signalled = {s.get("kpi") for s in incident.get("signals") or []}
             outcome = outcomes.evaluate(kpis, series, action["started_at"], action["finished_at"],
-                                        signalled)
+                                        signalled, span)
+
+        outcome["window_seconds"] = window
+        deciding = window in config.VERIFY_WINDOWS[:2]
+
+        # Resolved by an earlier window, then worse after all.
+        if window != config.VERIFY_WINDOWS[0] and incident.get("status") == "RESOLVED" \
+                and outcome["verdict"] == outcomes.WORSENED:
+            outcome["regression"] = True
 
         self.store.add_outcome(action["incident_id"], action["id"], outcome["verdict"], period,
-                               outcome, now)
+                               outcome, now, window)
         log(f"[{action['pack']}] action {action['id']} ({action['action_type']}) on "
-            f"{incident.get('id')}: {outcome['verdict']}")
+            f"{incident.get('id')}, {window // 60} min window: {outcome['verdict']}"
+            + (" (a regression of a resolved incident)" if outcome.get("regression") else ""))
 
-        waiting = [a for a in self.store.actions(incident_id=action["incident_id"])
-                   if a["status"] == "APPLIED" and not a["dry_run"] and a["id"] != action["id"]
-                   and not any(o["action_id"] == a["id"]
-                               for o in self.store.outcomes(action["incident_id"]))]
-
-        if incident and not waiting:
-            status = "RESOLVED" if outcome["verdict"] == outcomes.IMPROVED else "UNRESOLVED"
-            self.store.update_incident(incident["id"], now, status=status,
-                                       verdict=outcome["verdict"])
+        if deciding and incident.get("status") == "VERIFYING":
+            self._close_or_wait(incident, action, window, outcome["verdict"], now)
 
         return outcome
+
+    def _close_or_wait(self, incident: dict, action: dict, window: int, verdict: str, now: float) -> None:
+        """Close the incident on this window's verdict, unless it waits for the next window or another action."""
+
+        judged = {(o["action_id"], o["window_seconds"]) for o in self.store.outcomes(incident["id"])}
+        waiting = [a for a in self.store.actions(incident_id=incident["id"])
+                   if a["status"] == "APPLIED" and not a["dry_run"] and a["id"] != action["id"]
+                   and (a["id"], window) not in judged]
+
+        if waiting:
+            return
+
+        last = len(config.VERIFY_WINDOWS) == 1 or window == config.VERIFY_WINDOWS[1]
+
+        if last or verdict in (outcomes.IMPROVED, outcomes.WORSENED):
+            self.store.update_incident(incident["id"], now, verdict=verdict,
+                                       status="RESOLVED" if verdict == outcomes.IMPROVED else "UNRESOLVED")
+
+        else:
+            # Still VERIFYING, so the group opens no new incident while a
+            # backlog drains: the next window decides.
+            self.store.update_incident(incident["id"], now, verdict=verdict)
+
+    def _cut_by(self, action: dict, incident: dict, end: float) -> dict | None:
+        """
+        The first later change that could move this fix's KPIs before its
+        window ends at `end`: an operator's (its reach is unknown), or the
+        agent's on the same process group or on the deployment's size. The
+        agent's edits elsewhere in the flow restart only their own
+        components, so they do not cut it.
+        """
+
+        crn = action["deployment_crn"]
+        found = changes.attribute(self.store.changes(crn), self.store.actions(deployment_crn=crn))
+
+        for change in found:
+            other = change.get("action")
+
+            if not action["started_at"] < change["t"] < end or (other or {}).get("id") == action["id"]:
+                continue
+
+            kind = change["kind"].replace("_", " ")
+
+            if change["source"] == "operator" and change["kind"] in _CUTTING_KINDS:
+                return {"t": change["t"], "source": "operator", "kind": change["kind"],
+                        "text": f"an operator's {kind} change"}
+
+            if change["source"] == "agent" and other:
+                group = (self.store.incident(other.get("incident_id") or "") or {}).get("process_group")
+
+                if other.get("family") == "SIZING" or group == incident.get("process_group"):
+                    return {"t": change["t"], "source": "agent", "kind": change["kind"],
+                            "action_id": other["id"], "text": f"the agent's {other.get('action_type')}"}
+
+        return None
 
     # -- reading ----------------------------------------------------------------
 

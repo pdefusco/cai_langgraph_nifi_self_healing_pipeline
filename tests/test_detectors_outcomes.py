@@ -1,8 +1,12 @@
 """Detectors, the outcome verdicts and the incident lifecycle, on synthetic series."""
 
+import glob
+import sqlite3
+
 import pytest
 
 import config
+from nifi_healer import fleet
 from nifi_healer.kpi import detectors, metrics, outcomes
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.store.db import Store
@@ -226,10 +230,34 @@ def test_too_few_buckets_is_inconclusive(windows):
     assert result["verdict"] == outcomes.INCONCLUSIVE
 
 
-def test_period_for(windows):
-    assert outcomes.period_for(NOW - 1200, NOW) == "LAST_ONE_HOUR"
-    assert outcomes.period_for(NOW - 600, NOW) == "LAST_THIRTY_MINUTES"
-    assert outcomes.period_for(NOW - 5 * 3600, NOW) == "LAST_TWELVE_HOURS"
+def test_plan_and_due(windows):
+    assert outcomes.plan(900, NOW - 1200, NOW)["period"] == "LAST_ONE_HOUR"
+    assert outcomes.plan(900, NOW - 600, NOW)["period"] == "LAST_THIRTY_MINUTES"
+
+    hour = outcomes.plan(3600, NOW - 5400, NOW)
+    assert hour["period"] == "LAST_TWELVE_HOURS" and hour["settle"] == 1800 and hour["before"] == 5400
+    assert outcomes.plan(43200, NOW - 13 * 3600, NOW)["period"] == "LAST_ONE_DAY"
+
+    # Past the 1 h chart, no chart has two buckets in 15 minutes.
+    assert outcomes.plan(900, NOW - 5 * 3600, NOW) is None
+    assert outcomes.plan(43200, NOW - 30 * 3600, NOW) is None
+
+    assert outcomes.due_at(NOW, 900, NOW - 60) == NOW + 1200
+    assert outcomes.due_at(NOW, 3600) == NOW + 5400 and outcomes.due_at(NOW, 43200) == NOW + 46800
+
+
+def test_coarse_windows_drop_the_straddling_buckets(windows):
+    hour = outcomes.plan(3600, NOW - 5400, NOW)
+    data = series([10] * 25, step=1728.0)
+    started = data[20][0] - 100              # bucket 19 runs into the change
+    before, after = outcomes.windows(data, started, started + 60, hour)
+
+    assert [t for t, _ in before] == [data[17][0], data[18][0]]
+    assert after and after[0][0] >= started + 60 + 1800 and after[-1][0] <= started + 60 + 1800 + 3600
+
+    q = kpi()
+    result = outcomes.evaluate([q], {q["key"]: data}, started, started + 60, span=hour)
+    assert result["window_seconds"] == 3600 and result["settle_seconds"] == 1800
 
 
 # ---------------------------------------------------------------------
@@ -265,3 +293,164 @@ def test_incident_lifecycle(tmp_path, monkeypatch):
     store.update_incident(first[0]["id"], NOW + 60, status="REJECTED")
     assert poller.open_incidents("p1", entry, [signal], {}, NOW + 600) == []
     assert len(poller.open_incidents("p1", entry, [signal], {}, NOW + 1000)) == 1
+
+
+# ---------------------------------------------------------------------
+# Verify windows: 15 min, 1 h and 12 h after a change
+# ---------------------------------------------------------------------
+
+
+class _Charts(_Clock):
+    def __init__(self):
+        super().__init__()
+        self.periods = []
+
+    def metric_charts(self, deployment_crn, deployed_flow_crn, time_period=""):
+        self.periods.append(time_period)
+
+        return {"sources": {"flow": "ok"}, "charts": []}
+
+
+@pytest.fixture
+def verifying(tmp_path, monkeypatch, windows):
+    """(poller, store, clock, add, verdicts): add(group) makes a VERIFYING incident with a fix that finished at NOW."""
+
+    monkeypatch.setattr(config, "VERIFY_WINDOWS", (900, 3600, 43200))
+    entry = {"deployment_crn": "crn:d", "deployed_flow_crn": "crn:f", "kpis": [kpi()]}
+    monkeypatch.setattr(fleet, "pack", lambda name: entry)
+    verdicts = []
+    monkeypatch.setattr(outcomes, "evaluate", lambda *a, **k: {"verdict": verdicts.pop(0), "kpis": [],
+                                                               "side_effects": []})
+    store, clock = Store(str(tmp_path / "healer.db")), _Charts()
+
+    def add(group="S01 Slow Consumer", family="FLOW_EDIT"):
+        incident = store.create_incident("p1", "crn:d", "crn:f", "S01", group, [], "", "", NOW - 600)
+        store.update_incident(incident["id"], NOW, status="VERIFYING")
+        action = store.add_action(incident["id"], "p1", "crn:d", "SET_CONCURRENT_TASKS", False, "APPLIED",
+                                  family=family, started_at=NOW - 60, finished_at=NOW)
+
+        return incident["id"], action
+
+    return Poller(clock, store), store, clock, add, verdicts
+
+
+def _at(poller, clock, t):
+    clock.t = t
+
+    return [(o["window_seconds"], o["verdict"]) for o in [*poller.evaluate_outcomes()]]
+
+
+def test_an_unclear_first_window_waits_for_the_hour(verifying):
+    poller, store, clock, add, verdicts = verifying
+    incident_id, _ = add()
+    verdicts += ["NO_CHANGE", "NO_CHANGE", "WORSENED"]
+
+    assert _at(poller, clock, NOW + 1199) == []
+    assert _at(poller, clock, NOW + 1200) == [(900, "NO_CHANGE")]
+    found = store.incident(incident_id)
+    assert found["status"] == "VERIFYING" and found["verdict"] == "NO_CHANGE"
+    assert store.open_incident("crn:d", "S01 Slow Consumer")["id"] == incident_id    # no new incident meanwhile
+
+    assert _at(poller, clock, NOW + 5400) == [(3600, "NO_CHANGE")]
+    assert store.incident(incident_id)["status"] == "UNRESOLVED"
+
+    # The 12 h window never changes the status; only a resolved incident regresses.
+    assert _at(poller, clock, NOW + 46800) == [(43200, "WORSENED")]
+    assert store.incident(incident_id)["status"] == "UNRESOLVED"
+    assert not store.outcomes(incident_id)[-1]["details"].get("regression")
+    assert clock.periods == ["LAST_ONE_HOUR", "LAST_TWELVE_HOURS", "LAST_ONE_DAY"]
+    assert [o["window_seconds"] for o in store.outcomes(incident_id)] == [900, 3600, 43200]
+
+
+def test_a_clear_first_window_closes_and_a_later_one_flags_a_regression(verifying):
+    poller, store, clock, add, verdicts = verifying
+    incident_id, _ = add()
+    verdicts += ["IMPROVED", "WORSENED"]
+
+    _at(poller, clock, NOW + 1200)
+    assert store.incident(incident_id)["status"] == "RESOLVED"
+
+    _at(poller, clock, NOW + 5400)
+    found = store.incident(incident_id)
+    assert found["status"] == "RESOLVED" and found["verdict"] == "IMPROVED"
+    assert store.outcomes(incident_id)[-1]["details"]["regression"] is True
+
+
+def test_a_later_change_cuts_a_window_short(verifying):
+    poller, store, clock, add, verdicts = verifying
+    first, _ = add()
+    other, _ = add("S02 Slow Drain")
+    store.update_action(2, started_at=NOW + 290, finished_at=NOW + 300)     # S02's fix, 5 min later
+    store.add_changes("crn:d", "p1", [{"event_crn": "op/1", "t": NOW + 600, "kind": "parameters",
+                                       "name": "Parameters Updated"},
+                                      {"event_crn": "op/2", "t": NOW + 700, "kind": "kpis",
+                                       "name": "Alert Rules Updated"}])
+    verdicts += ["IMPROVED"] * 6
+
+    # The agent's edit to another group does not cut S01's window; the operator's change does.
+    _at(poller, clock, NOW + 1500)
+    cut = store.outcomes(first)[0]
+    assert cut["verdict"] == "INCONCLUSIVE" and cut["details"]["cut"]["source"] == "operator"
+    assert "an operator's parameters change 10 min after" in cut["details"]["reason"]
+    assert store.incident(first)["status"] == "VERIFYING"
+    assert store.outcomes(other)[0]["details"]["cut"]["source"] == "operator"
+
+    assert verdicts == ["IMPROVED"] * 6
+
+
+def test_the_agents_resize_or_edit_to_the_same_group_cuts_a_window(verifying):
+    poller, store, clock, add, verdicts = verifying
+    first, _ = add()
+    add("S03 Middle", family="SIZING")
+    add()                                   # a second fix to S01's group
+    store.update_action(2, started_at=NOW + 2000, finished_at=NOW + 2100)
+    store.update_action(3, started_at=NOW + 1500, finished_at=NOW + 1600)
+    verdicts += ["IMPROVED"] * 6
+
+    assert _at(poller, clock, NOW + 1200) == [(900, "IMPROVED")]          # the second fix lands after it
+    _at(poller, clock, NOW + 5400)
+    hour = store.outcomes(first)[-1]
+    assert hour["window_seconds"] == 3600 and hour["verdict"] == "INCONCLUSIVE"
+    assert hour["details"]["cut"] == {"t": NOW + 1600, "source": "agent", "kind": "flow_version",
+                                      "action_id": 3, "text": "the agent's SET_CONCURRENT_TASKS"}
+
+    # The resize (action 2) cuts the second fix's window.
+    assert store.outcomes(store.action(3)["incident_id"])[0]["details"]["cut"]["action_id"] == 2
+
+
+def test_a_window_no_chart_reaches_any_more_is_missed(verifying):
+    poller, store, clock, add, verdicts = verifying
+    incident_id, _ = add()
+
+    assert _at(poller, clock, NOW + 3 * 86400) == [(900, "INCONCLUSIVE"), (3600, "INCONCLUSIVE"),
+                                                  (43200, "INCONCLUSIVE")]
+    assert all(o["details"]["missed"] for o in store.outcomes(incident_id))
+    assert store.incident(incident_id)["status"] == "UNRESOLVED" and clock.periods == []
+
+
+def test_single_window_outcomes_migrate_once(tmp_path):
+    path = str(tmp_path / "healer.db")
+    old = sqlite3.connect(path)
+    old.executescript("""
+        CREATE TABLE outcomes (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL,
+            action_id INTEGER NOT NULL UNIQUE, verdict TEXT NOT NULL, period TEXT, details_json TEXT,
+            evaluated_at REAL NOT NULL);
+        INSERT INTO outcomes (incident_id, action_id, verdict, period, details_json, evaluated_at)
+            VALUES ('INC-1', 7, 'IMPROVED', 'LAST_ONE_HOUR', '{"window_seconds": 900}', 10);
+    """)
+    old.close()
+
+    store = Store(path)
+    assert [(o["action_id"], o["window_seconds"], o["verdict"]) for o in store.outcomes("INC-1")] == \
+        [(7, 900, "IMPROVED")]
+    backups = glob.glob(path + ".*.bak")
+    assert len(backups) == 1
+    assert sqlite3.connect(backups[0]).execute("SELECT count(*) FROM outcomes").fetchone() == (1,)
+
+    store.add_outcome("INC-1", 7, "NO_CHANGE", "LAST_TWELVE_HOURS", {}, 20, window=3600)
+    with pytest.raises(sqlite3.IntegrityError):
+        store.add_outcome("INC-1", 7, "NO_CHANGE", "LAST_ONE_HOUR", {}, 20, window=900)
+
+    Store(path)
+    assert len(glob.glob(path + ".*.bak")) == 1
+    assert [o["window_seconds"] for o in Store(path).outcomes("INC-1")] == [900, 3600]

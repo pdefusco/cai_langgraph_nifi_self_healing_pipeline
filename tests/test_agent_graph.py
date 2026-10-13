@@ -60,8 +60,8 @@ def agent(tenant, monkeypatch):
     graph.reset()
     monkeypatch.setattr(config, "ARMED", True)
 
-    def build(*names):
-        world, client, store = tenant(*names, history=3600)
+    def build(*names, history: float = 3600):
+        world, client, store = tenant(*names, history=history)
         opened = []
         Poller(client, store, on_incident=opened.append).poll_now()
 
