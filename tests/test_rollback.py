@@ -277,6 +277,8 @@ def test_a_rollback_goes_through_review_without_the_llm(agent):
 
     assert len(model.calls) == 1                                   # the fix's diagnosis only
     assert review and review["plan"]["ok"] and review["plan"]["rollback_family"] == "FLOW_EDIT"
+    assert store.incident(incident["id"])["status"] == "PENDING_REVIEW"
+    assert views.review(store, client, incident["id"])["can_approve"]
     assert store.proposals(incident["id"])[-1]["agent_version"] == "rollback"
 
     graph.resume(incident["id"], {"decision": "edit", "steps": S01_FIX, "reviewer": "test"})

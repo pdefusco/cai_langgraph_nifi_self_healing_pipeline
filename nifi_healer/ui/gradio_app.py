@@ -220,9 +220,22 @@ def show_review(incident_id):
             gr.Button(interactive=view["can_diagnose"]))
 
 
+def _panel(incident_id) -> tuple:
+    """
+    The panel and its key, the key read first: a run that moves on while
+    the panel renders then changes the key, and the next follow re-renders.
+    (Read after, it named the newer state the panel never showed: a
+    rollback reached review mid-render and its buttons stayed disabled.)
+    """
+
+    key = views.review_key(get_store(), incident_id)
+
+    return show_review(incident_id) + (key,)
+
+
 @_timed
 def select_review(incident_id):
-    return show_review(incident_id) + (views.review_key(get_store(), incident_id),)
+    return _panel(incident_id)
 
 
 @_timed
@@ -234,7 +247,7 @@ def follow_review(incident_id, seen):
     if key == seen:
         return (gr.skip(),) * (PANEL_OUTPUTS + 1)
 
-    return show_review(incident_id) + (key,)
+    return _panel(incident_id)
 
 
 def caller(request: gr.Request | None) -> tuple:
@@ -257,8 +270,9 @@ def who_is_reviewing(request: gr.Request):
 def _answer(message, incident_id):
     """A decision handler's outputs: the message, the panel, the queue and the panel's key."""
 
-    return ((message,) + show_review(incident_id) +
-            (_queue_at(incident_id), views.review_key(get_store(), incident_id)))
+    *panel, key = _panel(incident_id)
+
+    return (message, *panel, _queue_at(incident_id), key)
 
 
 def _shows_another(incident_id, shown) -> str:

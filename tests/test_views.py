@@ -460,6 +460,26 @@ def test_a_stale_queue_tick_leaves_the_pick_alone_and_decisions_check_the_panel(
     assert "validated" in out[0] and [r["decision"] for r in store.reviews(s01)] == ["edit"]
 
 
+def test_a_run_that_moves_on_while_the_panel_renders_is_followed(agent, monkeypatch):
+    # Live: a rollback reached review while its panel rendered; the panel kept DIAGNOSING and no Approve.
+    _, client, store, incidents, _ = agent("p1-throughput")
+    incident_id = incidents["S01"]["id"]
+    render = views.review
+
+    def moving_on(*args):
+        view = render(*args)
+        store.update_incident(incident_id, client.now(), status="DIAGNOSING")
+
+        return view
+
+    monkeypatch.setattr(views, "review", moving_on)
+    *_, key = gradio_app.select_review(incident_id)
+    monkeypatch.setattr(views, "review", render)
+
+    out = gradio_app.follow_review(incident_id, key)
+    assert "The agent is diagnosing" in out[1] and out[-1] == views.review_key(store, incident_id)
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 
