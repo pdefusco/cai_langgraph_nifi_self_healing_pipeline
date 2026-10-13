@@ -411,6 +411,11 @@ def test_blocks_build_and_handlers(agent):
                for o in gradio_app.follow_review(incidents["S01"]["id"], key))
     assert gradio_app.follow_review(incidents["S01"]["id"], "")[-1] == key
 
-    table, picker = gradio_app.refresh_history(None)
+    table, picker, detail = gradio_app.refresh_history(None)
     assert len(table) == len(incidents) and picker.value in {i["id"] for i in incidents.values()}
+    assert f"### {picker.value}" in detail
     assert "packs" in gradio_app._snapshot()
+
+    # Live: S17-9147's detail still said VERIFYING after Refresh showed it RESOLVED in the table.
+    store.update_incident(picker.value, time.time(), status="RESOLVED", verdict="IMPROVED")
+    assert "**RESOLVED** · verdict **IMPROVED**" in gradio_app.refresh_history(picker.value)[2]

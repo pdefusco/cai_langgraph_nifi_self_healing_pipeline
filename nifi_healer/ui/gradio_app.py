@@ -315,7 +315,9 @@ def refresh_history(selected):
     values = [value for _, value in choices]
     selected = selected if selected in values else (values[0] if values else None)
 
-    return views.history_rows(store), gr.Dropdown(choices=choices, value=selected)
+    # The detail too: an unchanged pick fires no .change, and its status may have moved on.
+    return (views.history_rows(store), gr.Dropdown(choices=choices, value=selected),
+            views.incident_detail(store, selected))
 
 
 @_timed
@@ -442,7 +444,7 @@ def build() -> gr.Blocks:
             history_detail = gr.Markdown()
 
             history_refresh.click(refresh_history, inputs=[history_pick],
-                                  outputs=[history_table, history_pick])
+                                  outputs=[history_table, history_pick, history_detail])
             history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
 
         with gr.Tab("System"):
@@ -472,7 +474,7 @@ def build() -> gr.Blocks:
         demo.load(who_is_reviewing, outputs=[reviewer])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
             select_review, inputs=[queue_pick], outputs=panel + [seen])
-        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick])
+        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail])
         demo.load(refresh_system, outputs=[system_md])
 
     return demo
