@@ -378,6 +378,15 @@ def recheck(incident_id, action_id, window, start, reviewer, request: gr.Request
                                     runner=poller_module.get()), incident_id)
 
 
+@_timed
+def propose_rollback(incident_id, action_id, reason, reviewer, request: gr.Request = None):
+    login, permission = caller(request)
+
+    return _corrected(_read_only(login, permission)
+                      or views.propose_rollback(incident_id, action_id, reason, (reviewer or "").strip() or login),
+                      incident_id)
+
+
 def _monitor_model(pack, span, change):
     entry = fleet.deployed_packs().get(pack or "")
 
@@ -581,9 +590,9 @@ def build() -> gr.Blocks:
             history_detail = gr.Markdown()
 
             # The measured verdicts stay as measured: a reviewer labels the fix
-            # (the scorecard counts the label), or re-measures a window, say
-            # from after another fault cleared.
-            with gr.Accordion("Correct the outcome", open=False):
+            # (the scorecard counts the label), re-measures a window, say from
+            # after another fault cleared, or proposes undoing the fix.
+            with gr.Accordion("Correct the outcome, or undo the fix", open=False):
                 fix_pick = gr.Dropdown(label="Applied fix", choices=[], allow_custom_value=True)
 
                 with gr.Row():
@@ -602,6 +611,12 @@ def build() -> gr.Blocks:
                                                        "2026-10-12 14:05")
 
                 recheck_btn = gr.Button("Re-check")
+
+                # Undo the fix: a rollback incident, approved or rejected in the Review Queue.
+                with gr.Row():
+                    rollback_reason = gr.Textbox(label="Why undo it (required)", scale=4)
+                    rollback_btn = gr.Button("Propose a rollback", scale=1)
+
                 correction_result = gr.Markdown()
 
             history_refresh.click(refresh_history, inputs=[history_pick],
@@ -614,6 +629,8 @@ def build() -> gr.Blocks:
                             outputs=corrected)
             recheck_btn.click(recheck, inputs=[history_pick, fix_pick, fix_window, fix_start, fix_reviewer],
                               outputs=corrected)
+            rollback_btn.click(propose_rollback, inputs=[history_pick, fix_pick, rollback_reason, fix_reviewer],
+                               outputs=corrected)
 
         with gr.Tab("Monitor"):
             with gr.Row():

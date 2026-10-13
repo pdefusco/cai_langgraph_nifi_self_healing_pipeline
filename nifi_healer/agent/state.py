@@ -20,7 +20,7 @@ class AgentState(TypedDict, total=False):
     plan: dict               # executor.public(executor.plan(...)): ok, problems, diff, commands, risk
     attempts: int            # LLM proposals made so far in this run
     feedback: list           # problems with the last proposal, for the next attempt
-    source: str              # "agent" | "review": who wrote the steps being validated
+    source: str              # "agent" | "review" | "rollback": who wrote the steps being validated
     review: dict             # {decision, reason, reviewer, steps}
     review_error: str        # why the last decision was not accepted
     result: dict             # the actions row executor.execute returned

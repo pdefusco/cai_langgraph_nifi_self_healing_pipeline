@@ -2,6 +2,8 @@
 The remediation graph, one thread per incident (thread_id = incident id).
 
     gather_context -> retrieve_playbooks -> diagnose_and_propose -> validate_proposal
+    (a rollback incident: propose_rollback -> validate_proposal; no LLM, no retry, and
+     its review is approve or reject)
         validate_proposal: invalid, agent-written, attempts left -> diagnose_and_propose
                            NO_ACTION                              -> record_no_action -> END
                            otherwise                              -> human_review
@@ -51,6 +53,7 @@ APPLY_WORKERS = 4
 
 def build(checkpointer=None):
     graph = StateGraph(AgentState)
+    graph.add_node("propose_rollback", nodes.propose_rollback)
     graph.add_node("gather_context", nodes.gather_context)
     graph.add_node("retrieve_playbooks", nodes.retrieve_playbooks)
     graph.add_node("diagnose_and_propose", nodes.diagnose_and_propose)
@@ -60,7 +63,9 @@ def build(checkpointer=None):
     graph.add_node("record_feedback", nodes.record_feedback)
     graph.add_node("record_no_action", nodes.record_no_action)
 
-    graph.add_edge(START, "gather_context")
+    graph.add_conditional_edges(START, nodes.entry,
+                                {"diagnose": "gather_context", "rollback": "propose_rollback"})
+    graph.add_edge("propose_rollback", "validate_proposal")
     graph.add_edge("gather_context", "retrieve_playbooks")
     graph.add_edge("retrieve_playbooks", "diagnose_and_propose")
     graph.add_conditional_edges("diagnose_and_propose", nodes.after_diagnosis,

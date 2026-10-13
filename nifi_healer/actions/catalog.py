@@ -18,6 +18,9 @@ Each family is one API path, and a proposal stays inside one:
     PARAMETER   update-flow-in-deployment --parameter-groups
     SIZING      update-deployment --cluster-size --static-node-count
     NONE        nothing
+    ROLLBACK    undo one applied action (action_id): re-point to the flow
+                version it replaced, or set its parameters or sizing back.
+                Never offered to the LLM; only a rollback incident has it.
 
 restart-deployment is not here on purpose: a restart does not drain a
 backlog (it measured worse), and it is the one lever that looks like it
@@ -33,6 +36,7 @@ FLOW_EDIT = "FLOW_EDIT"
 PARAMETER = "PARAMETER"
 SIZING = "SIZING"
 NONE = "NONE"
+ROLLBACK = "ROLLBACK"
 
 RISKS = ("low", "medium", "high")
 
@@ -69,6 +73,7 @@ class ActionType:
     optional: tuple
     risk: str
     description: str
+    hidden: bool = False     # not in the prompt: the app proposes it, never the LLM
 
 
 CATALOG = {a.name: a for a in (
@@ -111,11 +116,14 @@ CATALOG = {a.name: a for a in (
     ActionType("NO_ACTION", NONE, "none", (), (), "low",
                "Nothing should change: the flow is healthy, or no catalog action would help. "
                "Must be the only step."),
+    ActionType("ROLLBACK", ROLLBACK, "none", ("action_id",), (), "medium",
+               "Undo one applied action of this app's, by its id. Must be the only step.",
+               hidden=True),
 )}
 
 FIELDS = ("value", "property", "relationship", "dlq", "object_threshold", "size_threshold",
           "parameter", "cluster_size", "nodes", "backoff", "max_backoff", "retry_count",
-          "penalty", "yield_duration")
+          "penalty", "yield_duration", "action_id")
 
 
 def is_duration(text) -> bool:
@@ -169,7 +177,7 @@ def normalize(step: dict) -> dict:
         if value is None:
             continue
 
-        if name in ("object_threshold", "nodes", "retry_count") or (
+        if name in ("object_threshold", "nodes", "retry_count", "action_id") or (
                 name == "value" and kind == "SET_CONCURRENT_TASKS"):
             value = _int(value) if _int(value) is not None else value
 
@@ -189,7 +197,7 @@ def normalize(step: dict) -> dict:
     if kind == "SCALE_DEPLOYMENT":
         out["target"] = ""
 
-    if kind == "NO_ACTION":
+    if kind in ("NO_ACTION", "ROLLBACK"):
         out["target"] = ""
 
     return out
@@ -202,7 +210,9 @@ def check(step: dict) -> list:
     spec = CATALOG.get(kind)
 
     if spec is None:
-        return [f"unknown action {kind!r}; the catalog has {', '.join(CATALOG)}"]
+        offered = ", ".join(name for name, a in CATALOG.items() if not a.hidden)
+
+        return [f"unknown action {kind!r}; the catalog has {offered}"]
 
     problems = []
     label = f"{kind} {step.get('target')!r}" if step.get("target") else kind
@@ -313,6 +323,10 @@ def check(step: dict) -> list:
         if not isinstance(value, str) or len(value) > MAX_VALUE_LENGTH:
             bad(f"value must be a string of at most {MAX_VALUE_LENGTH} characters")
 
+    elif kind == "ROLLBACK":
+        if not isinstance(step.get("action_id"), int):
+            bad(f"action_id must be an action's id, got {step.get('action_id')!r}")
+
     elif kind == "SCALE_DEPLOYMENT":
         size, nodes = step.get("cluster_size"), step.get("nodes")
 
@@ -347,8 +361,9 @@ def check_steps(steps: list) -> list:
 
     kinds = [s.get("action") for s in steps]
 
-    if "NO_ACTION" in kinds and len(steps) > 1:
-        problems.append("NO_ACTION must be the only step")
+    for only in ("NO_ACTION", "ROLLBACK"):
+        if only in kinds and len(steps) > 1:
+            problems.append(f"{only} must be the only step")
 
     known = [s for s in steps if s.get("action") in CATALOG]
     families = sorted({CATALOG[s["action"]].family for s in known})
@@ -379,6 +394,9 @@ def describe_for_prompt() -> str:
     lines = []
 
     for spec in CATALOG.values():
+        if spec.hidden:
+            continue
+
         fields = [f"{n}" for n in spec.required] + [f"{n}?" for n in spec.optional]
         target = {"none": "\"\"", "deployment": "\"\""}.get(spec.target, f"<{spec.target} name>")
         lines.append(f"- {spec.name} [{spec.family}] target={target}"

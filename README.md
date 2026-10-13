@@ -180,6 +180,12 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   required) without touching the measured verdicts, or re-check a window from a later start to skip a stretch the
   fix could not show in. A re-check's verdict replaces the old one, which is kept, and the incident's status
   follows it.
+- **Rollbacks.** A fix measured WORSENED (its deciding window, or a later regression) gets a rollback proposal in
+  the Review Queue, unless a reviewer labelled it the right fix; **History → Propose a rollback** asks for one by
+  hand. A flow edit is undone by re-pointing the deployment at the version it replaced (nothing is imported), and
+  only while it still runs the fix's version; parameters and sizing are set back only while they still hold the
+  fix's values. The same guards and cooldown apply, and a human approves it. `SELFHEAL_PROPOSE_ROLLBACKS=false`
+  turns off the automatic proposals.
 - **Scorecard** shows how often the agent's first proposal is valid, picks the scenario's design fix, is approved as
   proposed, and works (a reviewer's label counts over the measured verdict), by agent version, scenario, fix or
   who chose it.

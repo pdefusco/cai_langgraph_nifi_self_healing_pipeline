@@ -42,6 +42,13 @@ than recorded as INCONCLUSIVE. A reviewer can re-check a window while a
 chart still reaches it (recheck), from a later start to skip a stretch
 the fix could not show in; the verdict it replaces is kept.
 
+Rollbacks. A fix whose deciding window measured WORSENED, or whose later
+window flags a regression, gets a rollback incident (actions/rollback.py)
+unless a reviewer labelled it the right fix; it goes to review like any
+other. While its process group is busy, or the deployment has moved on,
+the poller says so once and tries again until ROLLBACK_WITHIN_SECONDS
+after the verdict.
+
 The thread is started behind a module flag, not from a page-load hook:
 Gradio's demo.load runs per browser tab, which in the cai_langgraph
 articles started one poller per tab.
@@ -56,6 +63,7 @@ import config
 from flows.builder.lib import iter_processors
 from flows.builder.processors import kind_of
 from nifi_healer import fleet
+from nifi_healer.actions import rollback
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
 from nifi_healer.kpi import changes, detectors, metrics, outcomes, rollup
 from nifi_healer.store.db import Store, get_store
@@ -76,6 +84,10 @@ _CUTTING_KINDS = ("flow_version", "parameters", "sizing", "other")
 
 def log(message: str) -> None:
     print(f"[poller] {message}", flush=True)
+
+
+def window_label(seconds: int) -> str:
+    return f"{seconds // 3600} h" if seconds >= 3600 and not seconds % 3600 else f"{seconds // 60} min"
 
 
 def settled(verdicts: dict) -> tuple:
@@ -122,6 +134,7 @@ class Poller:
         self._kinds = {}  # flow version crn -> {processor name: kind}; a version never changes
         self._backfilled = set()
         self.judging = threading.Lock()   # the poller's verdicts and a reviewer's re-check, one at a time
+        self._not_rolled_back = {}        # action id -> why no rollback was proposed, as last logged
 
     # -- lifecycle --------------------------------------------------------
 
@@ -447,7 +460,77 @@ class Poller:
                 if result:
                     judged.append(result)
 
+        if config.PROPOSE_ROLLBACKS:
+            self.propose_rollbacks(now)
+
         return judged
+
+    def propose_rollbacks(self, now: float) -> list:
+        """Rollback incidents for the fixes judged worse within ROLLBACK_WITHIN_SECONDS; see the module notes."""
+
+        since = now - config.ROLLBACK_WITHIN_SECONDS
+        recent = {}
+
+        for found in self.store.outcomes():          # newest first
+            if found["evaluated_at"] < since:
+                break
+
+            recent.setdefault(found["action_id"], found["incident_id"])
+
+        opened = []
+
+        for action_id, incident_id in recent.items():
+            if rollback.is_rollback(self.store.incident(incident_id)) or self.store.rollbacks_of(action_id):
+                continue
+
+            reason = self._worse(incident_id, action_id)
+            label = self.store.labels(incident_id).get(action_id)
+
+            if not reason or (label and label["label"] == "RIGHT_FIX"):
+                continue
+
+            action = self.store.action(action_id)
+            why = rollback.blocked(self.store, action)
+
+            if why:
+                if self._not_rolled_back.get(action_id) != why:
+                    self._not_rolled_back[action_id] = why
+                    log(f"[{action['pack']}] action {action_id}: {reason}; no rollback proposed yet: {why}")
+
+                continue
+
+            incident = rollback.open_for(self.store, action, reason, now)
+            opened.append(incident)
+            log(f"[{action['pack']}] opened {incident['id']}: {incident['summary']}")
+
+            if self.on_incident and config.AUTO_DIAGNOSE:
+                try:
+                    self.on_incident(incident)
+
+                except Exception as exc:
+                    self._error(f"on_incident {incident['id']}: {exc}")
+
+        return opened
+
+    def _worse(self, incident_id: str, action_id: int) -> str:
+        """Why the action measured worse, "" unless it did: its deciding windows, or a later regression."""
+
+        rows = [o for o in self.store.outcomes(incident_id) if o["action_id"] == action_id]
+        verdicts = {o["window_seconds"]: o["verdict"] for o in rows}
+        status, verdict = settled(verdicts)
+
+        if status and verdict == outcomes.WORSENED:
+            window = next(w for w in config.VERIFY_WINDOWS if verdicts.get(w) == outcomes.WORSENED)
+
+            return f"its {window_label(window)} verify window measured WORSENED"
+
+        late = next((o for o in rows if (o.get("details") or {}).get("regression")), None)
+
+        if late:
+            return (f"its {window_label(late['window_seconds'])} verify window measured WORSENED "
+                    "after it had resolved the incident")
+
+        return ""
 
     def evaluate_action(self, action: dict, now: float, window: int | None = None) -> dict | None:
         """

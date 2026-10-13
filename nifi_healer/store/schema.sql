@@ -75,7 +75,11 @@ CREATE TABLE IF NOT EXISTS incidents (
     opened_at           REAL NOT NULL,
     updated_at          REAL NOT NULL,
     last_signal_at      REAL,
-    closed_at           REAL
+    closed_at           REAL,
+    -- NULL for a fault the agent diagnoses; 'rollback' for a proposal to
+    -- undo one applied action (rollback_of_action_id), which skips the LLM.
+    kind                TEXT,
+    rollback_of_action_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS incidents_by_group

@@ -187,6 +187,12 @@ VERIFY_WINDOWS = (VERIFY_WINDOW_SECONDS,) + tuple(sorted({
     int(w) for w in _list("SELFHEAL_VERIFY_LATER_WINDOWS") or ("3600", "43200")
     if w.isdigit() and int(w) > VERIFY_WINDOW_SECONDS}))
 
+# A fix measured WORSENED (its deciding window, or a later regression)
+# gets a rollback proposal, for review like any fix; the poller keeps
+# trying this long after the verdict while its process group is busy.
+PROPOSE_ROLLBACKS = _bool("SELFHEAL_PROPOSE_ROLLBACKS", True)
+ROLLBACK_WITHIN_SECONDS = _int("SELFHEAL_ROLLBACK_WITHIN", 3600)
+
 AGENT_WORKERS = max(1, _int("SELFHEAL_AGENT_WORKERS", 2))
 AUTO_DIAGNOSE = _bool("SELFHEAL_AUTO_DIAGNOSE", True)
 

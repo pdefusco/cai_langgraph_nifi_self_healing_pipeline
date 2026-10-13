@@ -15,6 +15,10 @@ Each case answers, for one incident:
              is one (RIGHT_FIX, WRONG_FIX, UNCLEAR), else the deciding
              verify windows' verdict. A dry run has none.
   regressed  a later window measured a resolved incident worse.
+  rolled back  a rollback of its fix was applied.
+
+A rollback incident is not a case: the agent proposed nothing in it. It
+shows as its fix's `rolled_back`.
 
 The agent is judged by its own last proposal; an edited fix's result is
 the reviewer's as much as the agent's, so `origin` tells them apart.
@@ -128,8 +132,15 @@ def cases(record: dict) -> list:
             rows.setdefault(row["incident_id"], []).append(row)
 
     out = []
+    applied_in = {iid for iid, rows in by["actions"].items()
+                  if any(a["status"] == "APPLIED" and not a["dry_run"] for a in rows)}
+    rolled_back = {i["rollback_of_action_id"] for i in record.get("incidents") or []
+                   if i.get("kind") == "rollback" and i["id"] in applied_in}
 
     for incident in record.get("incidents") or []:
+        if incident.get("kind") == "rollback":
+            continue
+
         iid = incident["id"]
         scenario = packs.SCENARIOS.get(incident.get("scenario") or "")
         mine = _agents(by["proposals"].get(iid, []))
@@ -178,6 +189,7 @@ def cases(record: dict) -> list:
             "applied": bool(applied), "apply_failed": bool(last and last["status"] == "FAILED"),
             "result": result, "result_from": source,
             "regressed": any((o.get("details") or {}).get("regression") for o in by["outcomes"].get(iid, [])),
+            "rolled_back": any(a["id"] in rolled_back for a in applied),
             "control": bool(scenario and scenario.family == "NONE"),
         })
 
@@ -217,6 +229,7 @@ def summarize(group: list) -> dict:
         "worked": _rate(sum(c["result"] == WORKED for c in judged), len(judged)),
         "judged": len(judged),
         "regressed": sum(c["regressed"] for c in group),
+        "rolled_back": sum(c.get("rolled_back", False) for c in group),
         "to_resolve": statistics.median(fixed) if fixed else None,
     }
 

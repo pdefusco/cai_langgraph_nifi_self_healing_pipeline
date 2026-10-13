@@ -89,8 +89,18 @@ class Store:
             self._set_aside_single_window_outcomes()
             self.conn.executescript(schema)
             self._restore_single_window_outcomes()
+            self._add_incident_columns()
 
     # -- migrations -----------------------------------------------------
+
+    def _add_incident_columns(self) -> None:
+        """Columns added to incidents after it was first created: NULL in older rows."""
+
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(incidents)")}
+
+        for name, kind in (("kind", "TEXT"), ("rollback_of_action_id", "INTEGER")):
+            if name not in have:
+                self.conn.execute(f"ALTER TABLE incidents ADD COLUMN {name} {kind}")
 
     def _set_aside_single_window_outcomes(self) -> None:
         """
@@ -308,7 +318,8 @@ class Store:
 
     def create_incident(self, pack: str, deployment_crn: str, deployed_flow_crn: str,
                         scenario: str, process_group: str, signals: list, summary: str,
-                        expected_flow_version_crn: str, now: float) -> dict:
+                        expected_flow_version_crn: str, now: float, kind: str | None = None,
+                        rollback_of_action_id: int | None = None) -> dict:
         stamp = datetime.fromtimestamp(now, timezone.utc).strftime("%Y%m%d-%H%M%S")
         incident_id = f"INC-{stamp}-{scenario or 'PG'}-{uuid.uuid4().hex[:4]}"
         self._insert("incidents", {
@@ -317,9 +328,16 @@ class Store:
             "process_group": process_group, "status": "NEW", "summary": summary,
             "signals": signals, "expected_flow_version_crn": expected_flow_version_crn,
             "opened_at": now, "updated_at": now, "last_signal_at": now,
+            "kind": kind, "rollback_of_action_id": rollback_of_action_id,
         })
 
         return self.incident(incident_id)
+
+    def rollbacks_of(self, action_id: int) -> list:
+        """The rollback incidents proposed for one action, oldest first."""
+
+        return self._all("SELECT * FROM incidents WHERE rollback_of_action_id = ? ORDER BY opened_at",
+                         (action_id,))
 
     def incident(self, incident_id: str) -> dict | None:
         return self._one("SELECT * FROM incidents WHERE id = ?", (incident_id,))

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import config
 from nifi_healer import llm
-from nifi_healer.actions import executor
+from nifi_healer.actions import executor, rollback
 from nifi_healer.agent import graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi import rollup
@@ -745,6 +745,11 @@ def incident_detail(store, incident_id: str | None) -> str:
            + (f", closed {clock(incident['closed_at'])}" if incident.get("closed_at") else ""),
            "", f"> {incident.get('summary') or ''}"]
 
+    if rollback.is_rollback(incident):
+        undone = store.action(incident["rollback_of_action_id"]) or {}
+        out += ["", f"**Rollback** of action {incident['rollback_of_action_id']} "
+                    f"({undone.get('action_type') or '?'}) of {undone.get('incident_id') or '?'}."]
+
     for p in store.proposals(incident["id"]):
         out += ["", f"**Proposal {p['id']}** ({p['status']}, attempt {p.get('attempt')}, "
                     f"`{p.get('agent_version') or ''}`)",
@@ -772,6 +777,9 @@ def incident_detail(store, incident_id: str | None) -> str:
             label = labels[a["id"]]
             out.append(f"**Reviewer's call:** {LABELS.get(label['label'], label['label'])} "
                        f"(by {label['reviewer'] or '?'} at {clock(label['created_at'])}): {label['reason']}")
+
+        for undo in store.rollbacks_of(a["id"]):
+            out.append(f"**Rollback proposed:** {undo['id']} ({undo['status']}), {clock(undo['opened_at'])}")
 
     superseded = store.superseded_outcomes(incident["id"])
 
@@ -1046,3 +1054,28 @@ def system(snapshot: dict, client) -> str:
         rows.append(("Mock clock", f"{config.MOCK_SPEED:g}x wall time, tenant time {clock(snapshot['now'])}"))
 
     return "| | |\n|---|---|\n" + "\n".join(f"| {k} | {v} |" for k, v in rows)
+
+
+def propose_rollback(incident_id: str | None, action_id, reason: str, reviewer: str = "") -> str:
+    """A reviewer's rollback proposal for an applied fix: a rollback incident, reviewed like any other."""
+
+    store = get_store()
+    action, problem = _applied(store, incident_id, action_id)
+
+    if problem:
+        return problem
+
+    if not (reason or "").strip():
+        return "A reason is required: why this fix should be undone."
+
+    why = rollback.blocked(store, action, manual=True)
+
+    if why:
+        return why
+
+    by = (reviewer or "").strip() or "a reviewer"
+    incident = rollback.open_for(store, action, f"{by} asked: {reason.strip()}", get_client().now())
+    graph.submit(incident)
+
+    return (f"Opened {incident['id']} to roll back action {action['id']}. It goes to the Review Queue, "
+            "to approve or reject like any fix.")

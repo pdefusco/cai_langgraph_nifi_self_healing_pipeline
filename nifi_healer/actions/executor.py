@@ -16,6 +16,9 @@ the deployment to settle and records one row in `actions`.
                 -> df change-flow-version-in-deployment
     PARAMETER   dfworkload update-flow-in-deployment --parameter-groups
     SIZING      dfworkload update-deployment --cluster-size --static-node-count
+    ROLLBACK    one of the above, back to before an applied action
+                (actions/rollback.py); a flow edit is undone by deploying
+                the version it replaced, so nothing is imported
 
 Writes are dry runs unless SELFHEAL_ARMED is set. A dry run records the
 argv it would have run and closes the incident as DRY_RUN.
@@ -39,7 +42,7 @@ import json
 import os
 
 import config
-from nifi_healer.actions import catalog
+from nifi_healer.actions import catalog, rollback
 from nifi_healer.cdp import guardrails
 from nifi_healer.cdp.client import Client, command_line
 from nifi_healer.flow import edits
@@ -78,7 +81,7 @@ def _comments(incident: dict, steps: list) -> str:
 # ---------------------------------------------------------------------
 
 
-def plan(client: Client, incident: dict, steps: list) -> dict:
+def plan(client: Client, incident: dict, steps: list, store=None) -> dict:
     steps = [catalog.normalize(s) for s in steps or []]
     report = {
         "ok": False,
@@ -104,6 +107,13 @@ def plan(client: Client, incident: dict, steps: list) -> dict:
 
         elif report["family"] == catalog.SIZING:
             _plan_sizing(client, incident, steps, report)
+
+        elif report["family"] == catalog.ROLLBACK:
+            if store is None:
+                from nifi_healer.store.db import get_store
+                store = get_store()
+
+            _plan_rollback(client, store, incident, steps[0]["action_id"], report)
 
     except (Refused, guardrails.NotAllowed, edits.EditError) as exc:
         report["problems"].append(str(exc))
@@ -241,7 +251,10 @@ def _plan_flow_edit(client: Client, incident: dict, steps: list, report: dict) -
     ]
 
 
-def _plan_parameters(client: Client, incident: dict, steps: list, report: dict) -> None:
+def _plan_parameters(client: Client, incident: dict, steps: list, report: dict,
+                     expected: dict | None = None) -> None:
+    """`expected`, {(context, name): value}: refuse unless each value still is that (a rollback's guard)."""
+
     deployment, flow = incident["deployment_crn"], incident["deployed_flow_crn"]
     configuration = client.flow_configuration(deployment, flow)
 
@@ -278,6 +291,10 @@ def _plan_parameters(client: Client, incident: dict, steps: list, report: dict) 
             raise Refused(f"{name} is not referenced in {incident['process_group']!r}; "
                           "a proposal may only change its own process group's parameters")
 
+        if expected is not None and parameter.get("value") != expected.get((context, name)):
+            raise Refused(f"{context}.{name} is no longer the value the action set; someone changed it "
+                          "since, so it is not set back")
+
         if parameter.get("value") == value:
             raise Refused(f"{name} is already {value!r}")
 
@@ -297,7 +314,10 @@ def _plan_parameters(client: Client, incident: dict, steps: list, report: dict) 
     report["commands"] = [command_line(client.argv("dfworkload", args))]
 
 
-def _plan_sizing(client: Client, incident: dict, steps: list, report: dict) -> None:
+def _plan_sizing(client: Client, incident: dict, steps: list, report: dict,
+                 expected: tuple | None = None) -> None:
+    """`expected`, (cluster size, nodes): refuse unless the deployment still is that (a rollback's guard)."""
+
     deployment = incident["deployment_crn"]
     sizing = client.deployment_configuration(deployment)
 
@@ -306,6 +326,10 @@ def _plan_sizing(client: Client, incident: dict, steps: list, report: dict) -> N
 
     step = steps[-1]
     size, nodes = (sizing.get("clusterSize") or {}).get("name"), sizing.get("staticNodeCount")
+
+    if expected is not None and (size, nodes) != tuple(expected):
+        raise Refused(f"the deployment is now {size} x{nodes}, not the {expected[0]} x{expected[1]} the action "
+                      "set; someone changed it since, so it is not set back")
 
     if (size, nodes) == (step["cluster_size"], step["nodes"]):
         raise Refused(f"the deployment is already {size} x{nodes}")
@@ -324,6 +348,89 @@ def _plan_sizing(client: Client, incident: dict, steps: list, report: dict) -> N
     report["commands"] = [command_line(client.argv("dfworkload", args))]
 
 
+def _plan_rollback(client: Client, store, incident: dict, action_id: int, report: dict) -> None:
+    """
+    Undo one applied action: the plan of its own family, back to the
+    "before" of the diff it was approved with, refused when what it set
+    has been changed since (by anyone).
+    """
+
+    if not rollback.is_rollback(incident) or incident.get("rollback_of_action_id") != action_id:
+        raise Refused(f"ROLLBACK of action {action_id} is only planned for that action's rollback incident")
+
+    original = store.action(action_id)
+    why = rollback.unfit(store, original)
+
+    if why:
+        raise Refused(why)
+
+    if original["deployment_crn"] != incident["deployment_crn"]:
+        raise Refused(f"action {action_id} changed another deployment")
+
+    ran = rollback.proposal_of(store, original)
+    steps = [catalog.normalize(s) for s in ran.get("action") or []]
+    diff = (ran.get("validation") or {}).get("diff") or []
+    report["rollback_family"] = family = original["family"]
+    report["risk"] = catalog.risk_of(steps) if steps else "high"
+    label = f"action {action_id} ({original['action_type']}, {original['incident_id']})"
+
+    if family == catalog.FLOW_EDIT:
+        _plan_version_rollback(client, incident, original, diff, report)
+
+    elif family == catalog.PARAMETER:
+        before = {d["path"]: d for d in diff}
+        back, expected = [], {}
+
+        for step in steps:
+            context, name = step["target"], step["parameter"]
+            entry = before.get(f"parameters[{context}].{name}")
+
+            if entry is None:
+                raise Refused(f"{label} recorded no earlier value of {context}.{name}")
+
+            if entry.get("before") is None:
+                raise Refused(f"{context}.{name} had no value before {label}; set it by hand")
+
+            back.append(dict(step, value=entry["before"]))
+            expected[(context, name)] = entry.get("after")
+
+        _plan_parameters(client, incident, back, report, expected=expected)
+
+    elif family == catalog.SIZING:
+        sizes = {d["path"]: d for d in diff}
+        size, nodes = sizes.get("deployment.clusterSize"), sizes.get("deployment.staticNodeCount")
+
+        if not size or not nodes or size.get("before") is None or nodes.get("before") is None:
+            raise Refused(f"{label} recorded no earlier sizing")
+
+        _plan_sizing(client, incident, [{"cluster_size": size["before"], "nodes": nodes["before"]}], report,
+                     expected=(size.get("after"), nodes.get("after")))
+
+    report["changes"] = [f"roll back {label}: {c}" for c in report["changes"]]
+
+
+def _plan_version_rollback(client: Client, incident: dict, original: dict, diff: list, report: dict) -> None:
+    pack, deployment, flow = incident["pack"], incident["deployment_crn"], incident["deployed_flow_crn"]
+    back, deployed = original["from_flow_version_crn"], original["to_flow_version_crn"]
+    facts = _deployed(client, incident)
+
+    if facts["flow_version_crn"] != deployed:
+        raise Refused(
+            f"the deployment now runs v{facts['flow_version']} ({facts['flow_version_crn']}), not the version "
+            f"action {original['id']} deployed ({deployed}); going back would undo that later change too")
+
+    # The version to go back to must still be one of this pack's own.
+    version = guardrails.assert_flow_version_allowed(client, pack, back)
+    listen = bool(guardrails.expected_for(pack).get("has_listen_components"))
+
+    report["base_flow_version_crn"] = deployed
+    report["changes"] = [f"flow version: v{facts['flow_version']} -> v{version.get('version')}"]
+    report["diff"] = [{"path": d["path"], "before": d.get("after"), "after": d.get("before")} for d in diff]
+    report["commands"] = [command_line(client.argv("df", guardrails.change_flow_version_args(
+        deployment, flow, back, listen)))]
+    report["_to_version"] = back
+
+
 # ---------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------
@@ -339,13 +446,19 @@ def execute(client: Client, store, incident: dict, proposal: dict, dry_run: bool
     dry_run = (not config.ARMED) if dry_run is None else bool(dry_run)
     steps = [catalog.normalize(s) for s in proposal.get("action") or []]
     pack, deployment, flow = incident["pack"], incident["deployment_crn"], incident["deployed_flow_crn"]
+    family = catalog.family_of(steps)
+
+    # A rollback is recorded as a change of the family it undoes, which is
+    # what the Monitor tab and the verify windows match events against.
+    if family == catalog.ROLLBACK:
+        family = (store.action(steps[0].get("action_id")) or {}).get("family") or family
     started = client.now()
     # Read before this action's own APPLYING row exists, or it would rate-limit itself.
     performed = store.performed_action_times(deployment)
     action_id = store.add_action(
         incident["id"], pack, deployment, "+".join(s["action"] for s in steps) or "NONE",
         dry_run=dry_run, status="APPLYING", proposal_id=proposal.get("id"),
-        family=catalog.family_of(steps),
+        family=family,
         from_flow_version_crn=incident.get("expected_flow_version_crn") or "", started_at=started)
     store.update_incident(incident["id"], started, status="APPLYING")
     audit = {"argv": [], "result": []}
@@ -415,7 +528,7 @@ def _execute(client: Client, store, incident: dict, steps: list, proposal: dict,
     if catalog.family_of(steps) == catalog.FLOW_EDIT:
         incident = rebased(client, store, incident)
 
-    report = plan(client, incident, steps)
+    report = plan(client, incident, steps, store)
 
     if not report["ok"]:
         raise Refused("; ".join(report["problems"]))
@@ -434,6 +547,23 @@ def _execute(client: Client, store, incident: dict, steps: list, proposal: dict,
 
     if family == catalog.NONE:
         return ""
+
+    if report.get("_to_version"):
+        # A flow edit rolled back: the version it replaced is already in the catalog.
+        back = report["_to_version"]
+        _record(audit, guardrails.change_flow_version(client, pack, deployment, flow, back, dry_run=dry_run))
+
+        if dry_run:
+            return ""
+
+        wait()
+        facts = client.flow_facts(deployment, flow)
+
+        if facts.get("flow_version_crn") != back:
+            raise Failed(f"the deployment runs {facts.get('flow_version_crn')} ({facts.get('state')}), "
+                         f"not {back}")
+
+        return back
 
     if family != catalog.FLOW_EDIT:
         for plane, args in report["_writes"]:

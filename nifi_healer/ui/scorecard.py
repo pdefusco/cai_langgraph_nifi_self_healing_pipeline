@@ -83,7 +83,8 @@ def _tiles(s: dict) -> str:
         _tile("Approved as proposed", pct(s["approved"]), _of(s["review"][sc.APPROVED], decided, "decided")),
         _tile("Fix worked", pct(s["worked"]),
               _of(worked, s["judged"], "judged") + (f" · {s['labelled']} by a reviewer" if s["labelled"] else "")),
-        _tile("Regressions", str(s["regressed"]), "worse in a later window"),
+        _tile("Regressions", str(s["regressed"]), "worse in a later window"
+              + (f" · {s['rolled_back']} fix(es) rolled back" if s["rolled_back"] else "")),
         _tile("Time to resolve", duration(s["to_resolve"]), "median, opened to resolved"),
     )) + "</div>"
 
@@ -140,6 +141,7 @@ def _case(c: dict, now: float) -> str:
         result = _chip("mx-v-WORSENED", "apply failed")
 
     flags = (_chip("mx-v-WORSENED", "regressed") if c["regressed"] else "") + \
+        (_chip("mx-v-WORSENED", "rolled back") if c.get("rolled_back") else "") + \
         (_chip("", "healthy control") if c["control"] else "")
     first = "" if c["valid_first"] is None else "valid" if c["valid_first"] else \
         f"valid on try {c['repairs'] + 1}" if c["valid"] else "never valid"

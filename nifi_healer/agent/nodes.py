@@ -1,6 +1,8 @@
 """
 The graph's nodes. Each takes the state and returns the fields it changed.
 
+    entry                 a rollback incident skips the diagnosis
+    propose_rollback      ROLLBACK of the one action it undoes, without the LLM
     gather_context        the deployed flow's inventory, sizing, version
     retrieve_playbooks    playbook sections for the signals and the parameters used
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
@@ -22,7 +24,7 @@ from pydantic import ValidationError
 
 import config
 from nifi_healer import llm
-from nifi_healer.actions import catalog, executor
+from nifi_healer.actions import catalog, executor, rollback
 from nifi_healer.agent import prompts
 from nifi_healer.agent.schemas import Proposal
 from nifi_healer.cdp.client import get_client
@@ -52,6 +54,33 @@ def _status(incident_id: str, status: str) -> None:
 # ---------------------------------------------------------------------
 # Context
 # ---------------------------------------------------------------------
+
+
+def entry(state: dict) -> str:
+    return "rollback" if rollback.is_rollback(get_store().incident(state["incident_id"])) else "diagnose"
+
+
+def propose_rollback(state: dict) -> dict:
+    """The rollback incident's one proposal: undo its action. Nothing to diagnose, so no LLM."""
+
+    store = get_store()
+    incident = store.incident(state["incident_id"])
+    _status(incident["id"], "DIAGNOSING")
+    action_id = incident["rollback_of_action_id"]
+    undone = store.action(action_id) or {}
+    proposal = {
+        "diagnosis": incident.get("summary") or "",
+        "root_cause_component": "",
+        "steps": [{"action": "ROLLBACK", "action_id": action_id}],
+        "rationale": f"Undo action {action_id} ({undone.get('action_type')}) of {undone.get('incident_id')}: "
+                     "set back what it changed, as it was before it was applied.",
+        "expected_effect": "the KPIs return to where they were before that action",
+        "citations": [],
+        "confidence": 1.0,
+    }
+
+    return {"incident": incident, "context": {}, "playbooks": [], "proposal": proposal, "attempts": 1,
+            "feedback": [], "source": "rollback", "agent_version": "rollback", "error": "", "review_error": ""}
 
 
 def gather_context(state: dict) -> dict:
@@ -191,7 +220,7 @@ def validate_proposal(state: dict) -> dict:
                   "family": "", "steps": [], "risk": "high", "changes": [], "diff": [], "commands": []}
 
     else:
-        report = executor.public(executor.plan(client, incident, proposal.get("steps") or []))
+        report = executor.public(executor.plan(client, incident, proposal.get("steps") or [], store))
 
     known = {h["id"] for h in state.get("playbooks") or []}
     cited = list(proposal.get("citations") or [])
@@ -227,7 +256,7 @@ def after_validation(state: dict) -> str:
     if report["ok"]:
         return "no_action" if report["family"] == catalog.NONE else "review"
 
-    if state.get("source") != "review" and state.get("attempts", 0) < MAX_ATTEMPTS:
+    if state.get("source") == "agent" and state.get("attempts", 0) < MAX_ATTEMPTS:
         return "retry"
 
     return "review"
@@ -268,6 +297,10 @@ def human_review(state: dict) -> dict:
         return {"review_error": "a rejection needs a reason (it is what the agent learns from)"}
 
     steps = answer.get("steps")
+
+    if decision in ("edit", "rediagnose") and rollback.is_rollback(state.get("incident")):
+        return {"review_error": "a rollback is approved or rejected as proposed; to change something else, "
+                                "reject it and diagnose the incident it came from"}
 
     if decision == "edit" and not isinstance(steps, list):
         return {"review_error": "an edit needs the new steps, as a list"}
