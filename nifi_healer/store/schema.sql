@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS kpi_samples (
     PRIMARY KEY (deployment_crn, kpi_key, t)
 );
 
+-- The Monitor tab reads a time window of every KPI of a deployment, and
+-- its first sample: by time, not by key, or each read scans all history.
+CREATE INDEX IF NOT EXISTS kpi_samples_by_time
+    ON kpi_samples (deployment_crn, t);
+
 -- What changed on a deployment and when, from its CDF event log
 -- (list-deployment-events): flow version, parameters, sizing, KPIs.
 -- Whoever made it, the agent or an operator; the Monitor tab tells them
