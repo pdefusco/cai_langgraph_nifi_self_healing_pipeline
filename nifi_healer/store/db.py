@@ -443,6 +443,64 @@ class Store:
 
         return self._all("SELECT * FROM outcomes ORDER BY evaluated_at DESC")
 
+    def update_outcome(self, outcome_id: int, **fields) -> None:
+        self._update("outcomes", "id", outcome_id, fields)
+
+    def supersede_outcome(self, incident_id: str, action_id: int, window: int, verdict: str,
+                          period: str, details: dict, now: float) -> int:
+        """A re-check's verdict for one window: the one it replaces is kept in superseded_outcomes."""
+
+        with self.lock:
+            self.conn.execute("BEGIN")
+
+            try:
+                old = self.conn.execute("SELECT * FROM outcomes WHERE action_id = ? AND window_seconds = ?",
+                                        (action_id, window)).fetchone()
+
+                if old:
+                    self.conn.execute(
+                        "INSERT INTO superseded_outcomes (outcome_id, incident_id, action_id, window_seconds, "
+                        "verdict, period, details_json, evaluated_at, superseded_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (old["id"], old["incident_id"], old["action_id"], old["window_seconds"], old["verdict"],
+                         old["period"], old["details_json"], old["evaluated_at"], now))
+                    self.conn.execute("UPDATE outcomes SET verdict = ?, period = ?, details_json = ?, "
+                                      "evaluated_at = ? WHERE id = ?",
+                                      (verdict, period, _encode(details), now, old["id"]))
+                    found = old["id"]
+
+                else:
+                    found = self.conn.execute(
+                        "INSERT INTO outcomes (incident_id, action_id, window_seconds, verdict, period, "
+                        "details_json, evaluated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (incident_id, action_id, window, verdict, period, _encode(details), now)).lastrowid
+
+                self.conn.execute("COMMIT")
+
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
+
+        return found
+
+    def superseded_outcomes(self, incident_id: str) -> list:
+        return self._all("SELECT * FROM superseded_outcomes WHERE incident_id = ? "
+                         "ORDER BY action_id, window_seconds, superseded_at", (incident_id,))
+
+    def add_label(self, incident_id: str, action_id: int, label: str, reason: str, reviewer: str,
+                  now: float) -> int:
+        return self._insert("action_labels", {"incident_id": incident_id, "action_id": action_id,
+                                              "label": label, "reason": reason, "reviewer": reviewer,
+                                              "created_at": now})
+
+    def labels(self, incident_id: str = "") -> dict:
+        """{action id: its latest label row}, of one incident or all."""
+
+        rows = self._all("SELECT * FROM action_labels WHERE incident_id = ? ORDER BY id", (incident_id,)) \
+            if incident_id else self._all("SELECT * FROM action_labels ORDER BY id")
+
+        return {r["action_id"]: r for r in rows}
+
 
 _STORE = {"store": None}
 _STORE_LOCK = threading.Lock()

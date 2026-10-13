@@ -253,6 +253,7 @@ def _agent_segment(store, change: dict, by_crn: dict, flow, used: set, cache: di
     if incident_id not in cache:
         cache[incident_id] = {"proposals": {p["id"]: p for p in store.proposals(incident_id)},
                               "outcomes": _by_action(store.outcomes(incident_id)),
+                              "labels": store.labels(incident_id) if incident_id else {},
                               "incident": store.incident(incident_id) or {}}
 
     found = cache[incident_id]
@@ -283,6 +284,7 @@ def _agent_segment(store, change: dict, by_crn: dict, flow, used: set, cache: di
         "verdict": (outcome or {}).get("verdict") or "pending",
         "window": views.window_label(outcome["window_seconds"]) if outcome else "",
         "windows": windows, "regression": any(w["regression"] for w in windows),
+        "label": (found["labels"].get(action.get("id")) or {}).get("label") or "",
     }
 
 
@@ -317,7 +319,8 @@ def _windows(action: dict, judged: dict) -> list:
 def _operator_segment(change: dict, versions: list, flow, used: set) -> dict:
     kind, t = change["kind"], change["t"]
     out = {"source": "operator", "who": "Operator", "flow": flow, "note": "", "result": "",
-           "incident": "", "verdict": "", "window": "", "windows": [], "regression": False}
+           "incident": "", "verdict": "", "window": "", "windows": [], "regression": False,
+           "label": ""}
 
     if kind == "flow_version":
         seen = [r for r in versions if r["crn"] not in used and r.get("first_seen_at") is not None
@@ -351,7 +354,7 @@ def _segments(store, pack: str, found: list, origin: float) -> tuple:
     used, cache, minor = set(), {}, []
     segments = [{"start": origin, "kind": "created", "source": "", "who": "", "flow": flow,
                  "short": "as provisioned", "what": "", "note": "", "result": "", "incident": "",
-                 "verdict": "", "window": "", "windows": [], "regression": False}]
+                 "verdict": "", "window": "", "windows": [], "regression": False, "label": ""}]
 
     for change in found:
         if change["kind"] == "created":
@@ -867,13 +870,26 @@ def _detail(m: dict) -> str:
         body.append(f'<p class="mx-note mx-result">{_e(s["result"])}</p>')
 
     if s["source"] == "agent":
-        body.append(f'<div class="mx-windows">Verdicts {"".join(_window_chip(w) for w in s["windows"])}</div>')
+        body.append(f'<div class="mx-windows">Verdicts {"".join(_window_chip(w) for w in s["windows"])}'
+                    f'{_label_chip(s["label"])}</div>')
 
     else:
         body.append('<div class="mx-windows">No verdict: made outside the agent.</div>')
 
     return (f'<div class="mx-row mx-detail"><div class="mx-gut">{gutter}</div>'
             f'<div class="mx-detail-body">{"".join(body)}</div></div>')
+
+
+# A reviewer's call on a fix, in the colour of the verdict it agrees with.
+_LABEL_CLASS = {"RIGHT_FIX": "IMPROVED", "WRONG_FIX": "WORSENED", "UNCLEAR": "INCONCLUSIVE"}
+
+
+def _label_chip(label: str) -> str:
+    if not label:
+        return ""
+
+    return (f'<span class="mx-chip mx-v-{_LABEL_CLASS.get(label, "pending")}">'
+            f'reviewer: {_e(views.LABELS.get(label, label))}</span>')
 
 
 def _window_chip(w: dict) -> str:
@@ -989,6 +1005,8 @@ def _ledger(m: dict) -> str:
 
             if s["regression"]:
                 chips += '<span class="mx-chip mx-v-WORSENED">regressed</span>'
+
+            chips += _label_chip(s["label"])
 
         inner = (f'<span class="mx-letter">{_e(s["letter"])}</span>'
                  f'<span class="mx-when">{_e(_when(s["start"], with_day))}–{_e(until)}</span>'

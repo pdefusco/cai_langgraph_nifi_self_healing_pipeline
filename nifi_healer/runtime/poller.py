@@ -38,7 +38,9 @@ Outcomes. An applied action is judged once per verify window
 from a single chart response split at the change (kpi/outcomes.py). A
 later change that could move the same KPIs cuts a window short
 (INCONCLUSIVE). A failed chart read is retried on the next pass rather
-than recorded as INCONCLUSIVE.
+than recorded as INCONCLUSIVE. A reviewer can re-check a window while a
+chart still reaches it (recheck), from a later start to skip a stretch
+the fix could not show in; the verdict it replaces is kept.
 
 The thread is started behind a module flag, not from a page-load hook:
 Gradio's demo.load runs per browser tab, which in the cai_langgraph
@@ -76,6 +78,29 @@ def log(message: str) -> None:
     print(f"[poller] {message}", flush=True)
 
 
+def settled(verdicts: dict) -> tuple:
+    """
+    (status, verdict) from one action's deciding windows, {window seconds:
+    verdict}: the first window when it is clear (IMPROVED or WORSENED),
+    else the second. (None, the first's verdict) while the second is yet
+    to come, and (None, None) before any.
+    """
+
+    first, *later = config.VERIFY_WINDOWS
+    verdict = verdicts.get(first)
+
+    if verdict is None:
+        return None, None
+
+    if verdict not in (outcomes.IMPROVED, outcomes.WORSENED) and later:
+        if later[0] not in verdicts:
+            return None, verdict
+
+        verdict = verdicts[later[0]]
+
+    return ("RESOLVED" if verdict == outcomes.IMPROVED else "UNRESOLVED"), verdict
+
+
 class Poller:
     def __init__(self, client: Client | None = None, store: Store | None = None,
                  on_incident=None):
@@ -96,6 +121,7 @@ class Poller:
         self._fleet_at = 0.0
         self._kinds = {}  # flow version crn -> {processor name: kind}; a version never changes
         self._backfilled = set()
+        self.judging = threading.Lock()   # the poller's verdicts and a reviewer's re-check, one at a time
 
     # -- lifecycle --------------------------------------------------------
 
@@ -414,11 +440,12 @@ class Poller:
         now = self.client.now()
         judged = []
 
-        for action, window in self.store.windows_due(now):
-            result = self.evaluate_action(action, now, window)
+        with self.judging:
+            for action, window in self.store.windows_due(now):
+                result = self.evaluate_action(action, now, window)
 
-            if result:
-                judged.append(result)
+                if result:
+                    judged.append(result)
 
         return judged
 
@@ -432,10 +459,9 @@ class Poller:
 
         window = window or config.VERIFY_WINDOW_SECONDS
         incident = self.store.incident(action["incident_id"]) or {}
-        entry = fleet.pack(action["pack"])
-        kpis = [k for k in entry.get("kpis") or [] if k["scenario"] == incident.get("scenario")]
+        kpis = self._kpis(action, incident)
         end = outcomes.due_at(action["finished_at"], window, action["started_at"])
-        cut = self._cut_by(action, incident, end) if kpis else None
+        cut = next(iter(self._cuts(action, incident, end)), None) if kpis else None
         span = outcomes.plan(window, action["started_at"], now)
         period = ""
 
@@ -454,28 +480,14 @@ class Poller:
                                  "was not judging this window when it closed)"}
 
         else:
-            period = span["period"]
-            read = self.client.metric_charts(action["deployment_crn"],
-                                             entry.get("deployed_flow_crn", ""), time_period=period)
+            outcome = self._measure(action, incident, kpis, span, action["finished_at"])
 
-            if not any(s.startswith("ok") for s in read["sources"].values()):
-                self._error(f"outcome for action {action['id']}: no chart surface could be read "
-                            f"({read['sources']}); retrying next pass")
+            if outcome is None:
                 return None
 
-            series = {}
-
-            for kpi in kpis:
-                chart = metrics.find_chart(read["charts"], kpi["kind"], kpi["component"],
-                                           kpi["metric"], kpi.get("chart"))
-                series[kpi["key"]] = metrics.points(chart)
-
-            signalled = {s.get("kpi") for s in incident.get("signals") or []}
-            outcome = outcomes.evaluate(kpis, series, action["started_at"], action["finished_at"],
-                                        signalled, span)
+            period = span["period"]
 
         outcome["window_seconds"] = window
-        deciding = window in config.VERIFY_WINDOWS[:2]
 
         # Resolved by an earlier window, then worse after all.
         if window != config.VERIFY_WINDOWS[0] and incident.get("status") == "RESOLVED" \
@@ -488,15 +500,123 @@ class Poller:
             f"{incident.get('id')}, {window // 60} min window: {outcome['verdict']}"
             + (" (a regression of a resolved incident)" if outcome.get("regression") else ""))
 
-        if deciding and incident.get("status") == "VERIFYING":
-            self._close_or_wait(incident, action, window, outcome["verdict"], now)
+        if window in config.VERIFY_WINDOWS[:2] and incident.get("status") == "VERIFYING":
+            self._close_or_wait(incident, action, window, now)
 
         return outcome
 
-    def _close_or_wait(self, incident: dict, action: dict, window: int, verdict: str, now: float) -> None:
-        """Close the incident on this window's verdict, unless it waits for the next window or another action."""
+    def recheck(self, action_id: int, window: int, start: float | None = None,
+                reviewer: str = "") -> tuple:
+        """
+        A reviewer's re-measure of one verify window, from `start` (when the
+        change finished, or later, to skip a stretch the fix could not show
+        in: another fault, a broken flow). (outcome, "") once recorded: it
+        supersedes the window's verdict, which is kept, and the incident's
+        status follows its deciding windows again. (None, why not) when the
+        window cannot be measured now; nothing changes then.
+        """
 
-        judged = {(o["action_id"], o["window_seconds"]) for o in self.store.outcomes(incident["id"])}
+        now = self.client.now()
+        action = self.store.action(action_id)
+
+        if not action or action["status"] != "APPLIED" or action["dry_run"] or not action.get("finished_at"):
+            return None, f"Action {action_id} was not applied to the tenant, so there is nothing to measure."
+
+        if window not in config.VERIFY_WINDOWS:
+            return None, f"{window} s is not a verify window ({', '.join(str(w) for w in config.VERIFY_WINDOWS)})."
+
+        start = action["finished_at"] if start is None else start
+
+        if start < action["finished_at"]:
+            return None, "A measurement can start no earlier than the change finished."
+
+        incident = self.store.incident(action["incident_id"]) or {}
+        kpis = self._kpis(action, incident)
+
+        if not kpis:
+            return None, f"No KPIs are recorded for scenario {incident.get('scenario')!r}."
+
+        span = outcomes.plan(window, action["started_at"], now)
+
+        if span is None:
+            # The finer charts are shorter: a 15 min window can be read for
+            # about 40 min after the change, the 1 h for about ten hours.
+            return None, (f"No chart fine enough for the {window // 60} min window reaches back to this change "
+                          "any more, so it cannot be measured; a longer window may still be.")
+
+        end = start + span["settle"] + window
+
+        if end > now:
+            return None, (f"That window closes {(end - now) / 60:.0f} min from now "
+                          f"({span['settle'] / 60:.0f} min settle, then {window // 60} min); re-check after that.")
+
+        cuts = self._cuts(action, incident, end)
+        cut = next((c for c in cuts if c["t"] > start), None)
+
+        if cut:
+            return None, (f"{cut['text'][0].upper()}{cut['text'][1:]} {(cut['t'] - start) / 60:.0f} min after "
+                          "that start would cut the window short. Start after it to measure both changes together.")
+
+        with self.judging:
+            outcome = self._measure(action, incident, kpis, span, start)
+
+            if outcome is None:
+                return None, "No chart surface could be read; try again."
+
+            was = next((o for o in self.store.outcomes(incident["id"])
+                        if o["action_id"] == action_id and o["window_seconds"] == window), None)
+            outcome.update(window_seconds=window, recheck={
+                "from": start, "by": reviewer, "at": now, "was": was["verdict"] if was else None,
+                "skipped": [c["text"] for c in cuts if c["t"] <= start]})
+            self.store.supersede_outcome(incident["id"], action_id, window, outcome["verdict"], span["period"],
+                                         outcome, now)
+            log(f"[{action['pack']}] action {action_id} on {incident['id']}, {window // 60} min window "
+                f"re-checked from {(start - action['finished_at']) / 60:.0f} min after the change: "
+                f"{outcome['verdict']}" + (f" (was {was['verdict']})" if was else ""))
+            self._restate(self.store.incident(incident["id"]), action, window, now)
+
+        return outcome, ""
+
+    def _kpis(self, action: dict, incident: dict) -> list:
+        entry = fleet.pack(action["pack"])
+
+        return [k for k in entry.get("kpis") or [] if k["scenario"] == incident.get("scenario")]
+
+    def _measure(self, action: dict, incident: dict, kpis: list, span: dict, start: float) -> dict | None:
+        """
+        The verdict from one read of span's chart, with the after window
+        from `start`. None when no chart surface could be read (retried).
+        """
+
+        entry = fleet.pack(action["pack"])
+        read = self.client.metric_charts(action["deployment_crn"], entry.get("deployed_flow_crn", ""),
+                                         time_period=span["period"])
+
+        if not any(s.startswith("ok") for s in read["sources"].values()):
+            self._error(f"outcome for action {action['id']}: no chart surface could be read "
+                        f"({read['sources']}); retrying next pass")
+            return None
+
+        series = {}
+
+        for kpi in kpis:
+            chart = metrics.find_chart(read["charts"], kpi["kind"], kpi["component"],
+                                       kpi["metric"], kpi.get("chart"))
+            series[kpi["key"]] = metrics.points(chart)
+
+        signalled = {s.get("kpi") for s in incident.get("signals") or []}
+        outcome = outcomes.evaluate(kpis, series, action["started_at"], start, signalled, span)
+
+        if start != action["finished_at"]:
+            outcome.update(finished_at=action["finished_at"], measured_from=start)
+
+        return outcome
+
+    def _close_or_wait(self, incident: dict, action: dict, window: int, now: float) -> None:
+        """Close the incident on its deciding windows, unless it waits for the next window or another action."""
+
+        found = self.store.outcomes(incident["id"])
+        judged = {(o["action_id"], o["window_seconds"]) for o in found}
         waiting = [a for a in self.store.actions(incident_id=incident["id"])
                    if a["status"] == "APPLIED" and not a["dry_run"] and a["id"] != action["id"]
                    and (a["id"], window) not in judged]
@@ -504,28 +624,61 @@ class Poller:
         if waiting:
             return
 
-        last = len(config.VERIFY_WINDOWS) == 1 or window == config.VERIFY_WINDOWS[1]
+        status, verdict = settled({o["window_seconds"]: o["verdict"] for o in found
+                                   if o["action_id"] == action["id"]})
 
-        if last or verdict in (outcomes.IMPROVED, outcomes.WORSENED):
-            self.store.update_incident(incident["id"], now, verdict=verdict,
-                                       status="RESOLVED" if verdict == outcomes.IMPROVED else "UNRESOLVED")
+        # Still VERIFYING without a status, so the group opens no new
+        # incident while a backlog drains: the next window decides.
+        self.store.update_incident(incident["id"], now, verdict=verdict, **({"status": status} if status else {}))
 
-        else:
-            # Still VERIFYING, so the group opens no new incident while a
-            # backlog drains: the next window decides.
-            self.store.update_incident(incident["id"], now, verdict=verdict)
-
-    def _cut_by(self, action: dict, incident: dict, end: float) -> dict | None:
+    def _restate(self, incident: dict, action: dict, window: int, now: float) -> None:
         """
-        The first later change that could move this fix's KPIs before its
-        window ends at `end`: an operator's (its reach is unknown), or the
-        agent's on the same process group or on the deployment's size. The
-        agent's edits elsewhere in the flow restart only their own
-        components, so they do not cut it.
+        After a re-check: an incident still verifying closes or waits as
+        usual; a closed one takes the status its last fix's deciding windows
+        now give it (keeping when it closed), and every later window's
+        regression flag follows that status.
+        """
+
+        if incident["status"] == "VERIFYING":
+            if window in config.VERIFY_WINDOWS[:2]:
+                self._close_or_wait(incident, action, window, now)
+
+            return
+
+        if incident["status"] not in ("RESOLVED", "UNRESOLVED"):
+            return
+
+        applied = [a for a in self.store.actions(incident_id=incident["id"])
+                   if a["status"] == "APPLIED" and not a["dry_run"]]
+        found = self.store.outcomes(incident["id"])
+        status, verdict = settled({o["window_seconds"]: o["verdict"] for o in found
+                                   if applied and o["action_id"] == applied[-1]["id"]})
+
+        if status and (status, verdict) != (incident["status"], incident.get("verdict")):
+            incident = self.store.update_incident(incident["id"], now, status=status, verdict=verdict,
+                                                  closed_at=incident["closed_at"])
+            log(f"[{incident['pack']}] {incident['id']} is now {status} ({verdict}) after a re-check")
+
+        for o in found:
+            details = o.get("details") or {}
+            regression = o["window_seconds"] != config.VERIFY_WINDOWS[0] and incident["status"] == "RESOLVED" \
+                and o["verdict"] == outcomes.WORSENED
+
+            if bool(details.get("regression")) != regression:
+                self.store.update_outcome(o["id"], details={**details, "regression": regression})
+
+    def _cuts(self, action: dict, incident: dict, end: float) -> list:
+        """
+        The later changes, oldest first, that could move this fix's KPIs
+        before its window ends at `end`: an operator's (its reach is
+        unknown), or the agent's on the same process group or on the
+        deployment's size. The agent's edits elsewhere in the flow restart
+        only their own components, so they do not cut it.
         """
 
         crn = action["deployment_crn"]
         found = changes.attribute(self.store.changes(crn), self.store.actions(deployment_crn=crn))
+        out = []
 
         for change in found:
             other = change.get("action")
@@ -536,17 +689,17 @@ class Poller:
             kind = change["kind"].replace("_", " ")
 
             if change["source"] == "operator" and change["kind"] in _CUTTING_KINDS:
-                return {"t": change["t"], "source": "operator", "kind": change["kind"],
-                        "text": f"an operator's {kind} change"}
+                out.append({"t": change["t"], "source": "operator", "kind": change["kind"],
+                            "text": f"an operator's {kind} change"})
 
-            if change["source"] == "agent" and other:
+            elif change["source"] == "agent" and other:
                 group = (self.store.incident(other.get("incident_id") or "") or {}).get("process_group")
 
                 if other.get("family") == "SIZING" or group == incident.get("process_group"):
-                    return {"t": change["t"], "source": "agent", "kind": change["kind"],
-                            "action_id": other["id"], "text": f"the agent's {other.get('action_type')}"}
+                    out.append({"t": change["t"], "source": "agent", "kind": change["kind"],
+                                "action_id": other["id"], "text": f"the agent's {other.get('action_type')}"})
 
-        return None
+        return sorted(out, key=lambda c: c["t"])
 
     # -- reading ----------------------------------------------------------------
 

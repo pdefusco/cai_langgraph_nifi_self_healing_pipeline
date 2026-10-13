@@ -680,9 +680,12 @@ def history_rows(store, limit: int = 200) -> list:
         mine = [o for o in found if applied and o["action_id"] == applied[-1]["id"]]
         outcome = shown_outcome(mine or found)
         shown = _deciding(outcome.get("details") or {}) if outcome else None
+        label = store.labels(incident["id"]).get(applied[-1]["id"]) if applied else None
+        verdict = " · ".join(x for x in (incident.get("verdict") or "", LABELS.get((label or {}).get("label"), ""))
+                             if x)
         rows.append([
             incident["id"], incident["pack"], incident["process_group"], incident["status"],
-            incident.get("verdict") or "", windows_text(mine) if applied else "", clock(incident["opened_at"]),
+            verdict, windows_text(mine) if applied else "", clock(incident["opened_at"]),
             f"{last['action_type']} ({last['status']})" if last else "",
             ", ".join(sorted({r["reviewer"] or "?" for r in reviews})),
             f"{_component(shown['kpi'])} "
@@ -756,12 +759,21 @@ def incident_detail(store, incident_id: str | None) -> str:
         out.append(f"- **Review:** {r['decision']} by {r['reviewer'] or '?'} at {clock(r['created_at'])}"
                    + (f": {r['reason']}" if r.get("reason") else ""))
 
+    labels = store.labels(incident["id"])
+
     for a in store.actions(incident_id=incident["id"]):
         commands = "\n".join("cdp " + " ".join(str(x) for x in argv) for argv in a.get("argv") or [])
         out += ["", f"**Action {a['id']}** {a['action_type']} → **{a['status']}**"
                     + (" (dry run)" if a["dry_run"] else "")
                     + (f": {a['error']}" if a.get("error") else ""),
                 f"```shell\n{commands or '(no commands)'}\n```"]
+
+        if a["id"] in labels:
+            label = labels[a["id"]]
+            out.append(f"**Reviewer's call:** {LABELS.get(label['label'], label['label'])} "
+                       f"(by {label['reviewer'] or '?'} at {clock(label['created_at'])}): {label['reason']}")
+
+    superseded = store.superseded_outcomes(incident["id"])
 
     for o in store.outcomes(incident["id"]):
         details = o.get("details") or {}
@@ -772,10 +784,21 @@ def incident_detail(store, incident_id: str | None) -> str:
         if details.get("regression"):
             out.append("**Regression:** the incident was resolved by an earlier window; this one measured it worse.")
 
+        if details.get("recheck"):
+            again = details["recheck"]
+            out.append(f"**Re-checked** by {again.get('by') or '?'} at {clock(again.get('at'))}"
+                       + (f", measuring from {clock(again['from'])}" if details.get("measured_from") else "")
+                       + (f"; it was {again['was']}" if again.get("was") else "") + ".")
+
+            if again.get("skipped"):
+                out.append("Skipped over: " + "; ".join(again["skipped"]) + ".")
+
         if details.get("started_at"):
+            after = (f"from {_minutes(details.get('settle_seconds'))} after {clock(details['measured_from'])}"
+                     if details.get("measured_from") else
+                     f"from {_minutes(details.get('settle_seconds'))} after it finished")
             out.append(f"Before: the {_minutes(details.get('before_seconds') or details.get('window_seconds'))} "
-                       f"up to {clock(details['started_at'])}. After: the {window} "
-                       f"from {_minutes(details.get('settle_seconds'))} after it finished.")
+                       f"up to {clock(details['started_at'])}. After: the {window} {after}.")
 
         out += outcome_table(details)
 
@@ -788,7 +811,151 @@ def incident_detail(store, incident_id: str | None) -> str:
         if details.get("reason"):
             out.append(f"- {details['reason']}")
 
+        for old in (x for x in superseded if x["outcome_id"] == o["id"]):
+            out.append(f"- Superseded: {old['verdict']}"
+                       + (f" ({old['period']})" if old.get("period") else "")
+                       + f", evaluated {clock(old['evaluated_at'])}"
+                       + (f": {old['details']['reason']}" if (old.get("details") or {}).get("reason") else ""))
+
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------
+# Correcting an outcome: the reviewer's call, and re-checks
+# ---------------------------------------------------------------------
+
+LABELS = {"RIGHT_FIX": "right fix", "WRONG_FIX": "wrong fix", "UNCLEAR": "can't tell"}
+
+
+def label_choices() -> list:
+    return [(text, key) for key, text in LABELS.items()]
+
+
+def window_choices() -> list:
+    return [(window_label(w), w) for w in config.VERIFY_WINDOWS]
+
+
+def correction_choices(store, incident_id: str | None) -> list:
+    """The incident's fixes applied to the tenant, newest first: [(text, action id)]."""
+
+    if not incident_id:
+        return []
+
+    applied = [a for a in store.actions(incident_id=incident_id) if a["status"] == "APPLIED" and not a["dry_run"]]
+
+    return [(f"Action {a['id']} · {a['action_type']} · {clock(a['finished_at'])}", a["id"])
+            for a in reversed(applied)]
+
+
+def _applied(store, incident_id, action_id) -> tuple:
+    """(action, "") when action_id is a fix of this incident applied to the tenant, else (None, why not)."""
+
+    if not incident_id:
+        return None, "Select an incident first."
+
+    try:
+        action = store.action(int(action_id))
+
+    except (TypeError, ValueError):
+        action = None
+
+    if not action or action["incident_id"] != incident_id:
+        return None, f"Pick one of {incident_id}'s applied actions."
+
+    if action["status"] != "APPLIED" or action["dry_run"]:
+        return None, f"Action {action['id']} was not applied to the tenant ({action['status']}), so it has no outcome."
+
+    return action, ""
+
+
+def label_fix(incident_id: str | None, action_id, label: str, reason: str, reviewer: str = "") -> str:
+    """Record the reviewer's call on an applied fix; the measured verdicts stay as they are."""
+
+    store = get_store()
+    action, problem = _applied(store, incident_id, action_id)
+
+    if problem:
+        return problem
+
+    if label not in LABELS:
+        return f"Choose one of: {', '.join(LABELS.values())}."
+
+    if not (reason or "").strip():
+        return "A reason is required: what the measurement missed, or why the fix was right or wrong."
+
+    store.add_label(incident_id, action["id"], label, reason.strip(), (reviewer or "").strip(), get_client().now())
+
+    return f"Recorded action {action['id']} as **{LABELS[label]}**. Its measured verdicts are unchanged."
+
+
+def parse_start(text: str, finished_at: float) -> float | None:
+    """
+    When a re-check measures from: blank for when the change finished;
+    `+N` minutes after it; `HH:MM` UTC, the first such time at or after
+    it; or `YYYY-MM-DD HH:MM` UTC. ValueError otherwise.
+    """
+
+    text = (text or "").strip()
+
+    if not text:
+        return None
+
+    if text.startswith("+"):
+        return finished_at + float(text[1:].strip().removesuffix("min").strip()) * 60
+
+    # A minute is as fine as these go: the minute the change finished in
+    # means when it finished.
+    for form in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+        try:
+            found = datetime.strptime(text, form).replace(tzinfo=timezone.utc).timestamp()
+
+            return max(found, finished_at) if found > finished_at - 60 else found
+
+        except ValueError:
+            pass
+
+    at = datetime.strptime(text, "%H:%M")
+    day = datetime.fromtimestamp(finished_at, timezone.utc)
+    found = day.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0).timestamp()
+
+    return max(found, finished_at) if found > finished_at - 60 else found + 86400
+
+
+def recheck(incident_id: str | None, action_id, window, start_text: str, reviewer: str = "",
+            runner=None) -> str:
+    """Re-measure one window of an applied fix through the poller (runner); its old verdict is kept."""
+
+    store = get_store()
+    action, problem = _applied(store, incident_id, action_id)
+
+    if problem:
+        return problem
+
+    if runner is None:
+        return "The poller is not running, so nothing can be measured."
+
+    try:
+        start = parse_start(start_text, action["finished_at"])
+
+    except ValueError:
+        return "Measure from: leave it blank, or give `+N` minutes, `HH:MM` or `YYYY-MM-DD HH:MM` (UTC)."
+
+    try:
+        window = int(window)
+
+    except (TypeError, ValueError):
+        return "Pick a window."
+
+    outcome, why_not = runner.recheck(action["id"], window, start, (reviewer or "").strip())
+
+    if outcome is None:
+        return why_not
+
+    was = (outcome.get("recheck") or {}).get("was")
+    status = (store.incident(incident_id) or {}).get("status")
+
+    return (f"Re-checked the {window_label(window)} window of action {action['id']}: **{outcome['verdict']}**"
+            + (f" (was {was})" if was else "") + f". The incident is {status}.")
 
 
 def _minutes(seconds) -> str:

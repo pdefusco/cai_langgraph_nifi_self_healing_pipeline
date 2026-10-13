@@ -329,6 +329,55 @@ def show_incident(incident_id):
     return views.incident_detail(get_store(), incident_id)
 
 
+@_timed
+def pick_fix(incident_id, current):
+    """The incident's applied fixes to correct, keeping the pick while it is still one of them."""
+
+    choices = views.correction_choices(get_store(), incident_id)
+    values = [value for _, value in choices]
+
+    return gr.Dropdown(choices=choices, value=current if current in values else (values[0] if values else None))
+
+
+def _corrected(message, incident_id):
+    """A correction's outputs: the message, the history table and the incident's detail."""
+
+    store = get_store()
+
+    return message, views.history_rows(store), views.incident_detail(store, incident_id)
+
+
+def _read_only(login, permission) -> str:
+    if permission.upper() == "RO":
+        return (f"{login or 'You'} can only view this project, so nothing was recorded; "
+                "a project collaborator with write access corrects outcomes.")
+
+    return ""
+
+
+@_timed
+def label_fix(incident_id, action_id, label, reason, reviewer, request: gr.Request = None):
+    login, permission = caller(request)
+
+    return _corrected(_read_only(login, permission)
+                      or views.label_fix(incident_id, action_id, label, reason, (reviewer or "").strip() or login),
+                      incident_id)
+
+
+@_timed
+def recheck(incident_id, action_id, window, start, reviewer, request: gr.Request = None,
+            progress=gr.Progress()):
+    login, permission = caller(request)
+
+    if refused := _read_only(login, permission):
+        return _corrected(refused, incident_id)
+
+    progress(0, desc="Reading the chart")
+
+    return _corrected(views.recheck(incident_id, action_id, window, start, (reviewer or "").strip() or login,
+                                    runner=poller_module.get()), incident_id)
+
+
 def _monitor_model(pack, span, change):
     entry = fleet.deployed_packs().get(pack or "")
 
@@ -523,9 +572,40 @@ def build() -> gr.Blocks:
             history_pick = gr.Dropdown(label="Incident", choices=[], allow_custom_value=True)
             history_detail = gr.Markdown()
 
+            # The measured verdicts stay as measured: a reviewer labels the fix
+            # (the scorecard counts the label), or re-measures a window, say
+            # from after another fault cleared.
+            with gr.Accordion("Correct the outcome", open=False):
+                fix_pick = gr.Dropdown(label="Applied fix", choices=[], allow_custom_value=True)
+
+                with gr.Row():
+                    fix_label = gr.Radio(views.label_choices(), label="Your call on the fix", scale=2)
+                    fix_reason = gr.Textbox(label="Reason (required)", scale=3)
+                    fix_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank",
+                                              scale=1)
+
+                label_btn = gr.Button("Save label")
+
+                with gr.Row():
+                    fix_window = gr.Dropdown(views.window_choices(), value=config.VERIFY_WINDOWS[0],
+                                             label="Window to re-check", scale=1)
+                    fix_start = gr.Textbox(label="Measure from (UTC)", scale=2,
+                                           placeholder="blank: when the fix finished · +30 · 14:05 · "
+                                                       "2026-10-12 14:05")
+
+                recheck_btn = gr.Button("Re-check")
+                correction_result = gr.Markdown()
+
             history_refresh.click(refresh_history, inputs=[history_pick],
-                                  outputs=[history_table, history_pick, history_detail])
+                                  outputs=[history_table, history_pick, history_detail]).then(
+                pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
             history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
+            history_pick.change(pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
+            corrected = [correction_result, history_table, history_detail]
+            label_btn.click(label_fix, inputs=[history_pick, fix_pick, fix_label, fix_reason, fix_reviewer],
+                            outputs=corrected)
+            recheck_btn.click(recheck, inputs=[history_pick, fix_pick, fix_window, fix_start, fix_reviewer],
+                              outputs=corrected)
 
         with gr.Tab("Monitor"):
             with gr.Row():
@@ -586,9 +666,11 @@ def build() -> gr.Blocks:
         # between refreshes (and for API callers). Handlers check the ids.
         demo.load(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick])
         demo.load(who_is_reviewing, outputs=[reviewer])
+        demo.load(who_is_reviewing, outputs=[fix_reviewer])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
             select_review, inputs=[queue_pick], outputs=panel + [seen])
-        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail])
+        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail]).then(
+            pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
         demo.load(refresh_system, outputs=[system_md])
         demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
             show_fleet, **fleet_out)

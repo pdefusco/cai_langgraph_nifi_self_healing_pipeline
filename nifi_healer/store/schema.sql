@@ -141,3 +141,30 @@ CREATE TABLE IF NOT EXISTS outcomes (
     evaluated_at        REAL NOT NULL,
     UNIQUE (action_id, window_seconds)
 );
+
+-- A verdict a reviewer's re-check replaced, as it was.
+CREATE TABLE IF NOT EXISTS superseded_outcomes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id          INTEGER NOT NULL REFERENCES outcomes (id),
+    incident_id         TEXT NOT NULL REFERENCES incidents (id),
+    action_id           INTEGER NOT NULL REFERENCES actions (id),
+    window_seconds      INTEGER NOT NULL,
+    verdict             TEXT NOT NULL,
+    period              TEXT,
+    details_json        TEXT,
+    evaluated_at        REAL NOT NULL,
+    superseded_at       REAL NOT NULL
+);
+
+-- A reviewer's call on an applied fix, apart from what was measured (a
+-- right fix can measure NO_CHANGE when another fault hides it). The
+-- verdicts above stay as measured; an action's latest label is its call.
+CREATE TABLE IF NOT EXISTS action_labels (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident_id         TEXT NOT NULL REFERENCES incidents (id),
+    action_id           INTEGER NOT NULL REFERENCES actions (id),
+    label               TEXT NOT NULL,      -- RIGHT_FIX | WRONG_FIX | UNCLEAR
+    reason              TEXT NOT NULL,
+    reviewer            TEXT,
+    created_at          REAL NOT NULL
+);

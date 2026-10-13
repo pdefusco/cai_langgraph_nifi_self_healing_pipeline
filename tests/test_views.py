@@ -482,3 +482,67 @@ def test_blocks_build_and_handlers(agent):
     # Live: S17-9147's detail still said VERIFYING after Refresh showed it RESOLVED in the table.
     store.update_incident(picker.value, time.time(), status="RESOLVED", verdict="IMPROVED")
     assert "**RESOLVED** · verdict **IMPROVED**" in gradio_app.refresh_history(picker.value)[2]
+
+
+def test_a_reviewer_labels_a_fix_and_rechecks_a_window(agent, monkeypatch):
+    world, client, store, incidents, install = agent("p1-throughput", history=2 * 3600)
+    incident_id = incidents["S01"]["id"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    graph.start(incident_id)
+    graph.resume(incident_id, {"decision": "approve", "reviewer": "test"})
+    world.skip(config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS + 120)
+    poller = Poller(client, store)
+    assert [o["verdict"] for o in poller.evaluate_outcomes()] == ["IMPROVED"]
+    action = store.actions(incident_id=incident_id)[-1]
+    assert views.correction_choices(store, incident_id) == [
+        (f"Action {action['id']} · SET_CONCURRENT_TASKS · {views.clock(action['finished_at'])}", action["id"])]
+
+    # The reviewer's call sits beside what was measured, and needs a reason.
+    assert "reason is required" in views.label_fix(incident_id, action["id"], "WRONG_FIX", "  ")
+    assert "applied actions" in views.label_fix(incident_id, 999, "WRONG_FIX", "x")
+    assert "Choose one of" in views.label_fix(incident_id, action["id"], "MAYBE", "x")
+    assert "**wrong fix**" in views.label_fix(incident_id, action["id"], "WRONG_FIX",
+                                              "the backlog drained on its own", "ops")
+    row = next(r for r in views.history_rows(store) if r[0] == incident_id)
+    assert row[4] == "IMPROVED · wrong fix" and store.incident(incident_id)["verdict"] == "IMPROVED"
+    assert "**Reviewer's call:** wrong fix (by ops" in views.incident_detail(store, incident_id)
+
+    class Request:
+        def __init__(self, **headers):
+            self.headers = headers
+
+    viewer = Request(**{"remote-user": "guest", "remote-user-perm": "RO"})
+    owner = Request(**{"remote-user": "pdefusco", "remote-user-perm": "RW"})
+    out = gradio_app.label_fix(incident_id, action["id"], "RIGHT_FIX", "it was", "", request=viewer)
+    assert "can only view" in out[0] and len(out) == 3
+    assert store.labels(incident_id)[action["id"]]["label"] == "WRONG_FIX"
+    gradio_app.label_fix(incident_id, action["id"], "RIGHT_FIX", "it was after all", "", request=owner)
+    assert store.labels(incident_id)[action["id"]]["reviewer"] == "pdefusco"
+
+    # A re-check from two minutes after the fix, through the poller; the old verdict is kept.
+    assert "not running" in views.recheck(incident_id, action["id"], 900, "", runner=None)
+    assert "Measure from:" in views.recheck(incident_id, action["id"], 900, "soon", runner=poller)
+    world.skip(600)
+    monkeypatch.setattr(gradio_app.poller_module, "get", lambda: poller)
+    assert "can only view" in gradio_app.recheck(incident_id, action["id"], 900, "+2", "", request=viewer)[0]
+    assert store.superseded_outcomes(incident_id) == []
+
+    message, _, detail = gradio_app.recheck(incident_id, action["id"], 900, "+2", "", request=owner)
+    assert "Re-checked the 15 min window" in message and "(was IMPROVED)" in message
+    assert "**Re-checked** by pdefusco" in detail and "it was IMPROVED" in detail
+    assert f"after {views.clock(action['finished_at'] + 120)}" in detail and "- Superseded: IMPROVED" in detail
+    assert [o["verdict"] for o in store.superseded_outcomes(incident_id)] == ["IMPROVED"]
+
+
+def test_measure_from_reads_minutes_and_utc_times():
+    finished = 1_760_000_000.0          # 2025-10-09 08:53:20 UTC
+
+    assert views.parse_start("", finished) is None
+    assert views.parse_start("+30", finished) == finished + 1800
+    assert views.parse_start("09:10", finished) == finished + 1000
+    assert views.parse_start("08:53", finished) == finished          # the minute it finished in
+    assert views.parse_start("08:00", finished) == finished - 3200 + 86400
+    assert views.parse_start("2025-10-09 09:10", finished) == finished + 1000
+
+    with pytest.raises(ValueError):
+        views.parse_start("soon", finished)

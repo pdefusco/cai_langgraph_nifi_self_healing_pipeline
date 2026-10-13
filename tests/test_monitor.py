@@ -148,6 +148,13 @@ def test_monitor_model_and_render(agent):
     assert '15 min <span class="mx-chip mx-v-IMPROVED">improved</span>' in html
     assert '1 h <span class="mx-chip mx-v-pending">pending · due ' in html and "12 h " in html
     assert [w["label"] for w in agent_seg["windows"]] == ["15 min", "1 h", "12 h"]
+    assert agent_seg["label"] == "" and "reviewer:" not in html
+
+    # A reviewer's call on the fix, beside the measured verdict.
+    action = store.actions(incident_id=incident["id"])[-1]
+    store.add_label(incident["id"], action["id"], "WRONG_FIX", "drained on its own", "ops", now)
+    html = monitor.render(monitor.model(store, "p1-throughput", entry, now, selected="1"))
+    assert html.count('<span class="mx-chip mx-v-WORSENED">reviewer: wrong fix</span>') == 2   # ledger + detail
 
     # Every bucket's value for the crosshair, one per bucket.
     values = re.search(r'class="mx-val" data-v="([^"]*)"', html).group(1).split("|")

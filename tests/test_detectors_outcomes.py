@@ -454,3 +454,67 @@ def test_single_window_outcomes_migrate_once(tmp_path):
     Store(path)
     assert len(glob.glob(path + ".*.bak")) == 1
     assert [o["window_seconds"] for o in Store(path).outcomes("INC-1")] == [900, 3600]
+
+
+def test_a_recheck_from_a_later_start_supersedes_the_verdict_and_restates_the_incident(verifying, monkeypatch):
+    # Live: a right fix measured NO_CHANGE while another fault held the backlog up.
+    poller, store, clock, add, verdicts = verifying
+    incident_id, action = add()
+    for window, verdict in ((900, "NO_CHANGE"), (3600, "NO_CHANGE"), (43200, "WORSENED")):
+        store.add_outcome(incident_id, action, verdict, "", {"verdict": verdict}, NOW + 5400, window)
+    closed = store.update_incident(incident_id, NOW + 5400, status="UNRESOLVED", verdict="NO_CHANGE")
+
+    store.add_changes("crn:d", "p1", [{"event_crn": "op/1", "t": NOW + 600, "kind": "parameters",
+                                       "name": "Parameters Updated"}])
+    starts = []
+    monkeypatch.setattr(outcomes, "evaluate", lambda kpis, series, started, start, *a, **k: (
+        starts.append(start) or {"verdict": "IMPROVED", "kpis": [], "side_effects": []}))
+    clock.t = NOW + 7000
+    assert "closes" in poller.recheck(action, 3600, NOW + 2000, "alice")[1]     # at NOW + 7400
+    outcome, why = poller.recheck(action, 3600, NOW + 700, "alice")
+
+    assert why == "" and outcome["verdict"] == "IMPROVED" and starts == [NOW + 700]
+    assert outcome["measured_from"] == NOW + 700 and outcome["finished_at"] == NOW
+    assert outcome["recheck"] == {"from": NOW + 700, "by": "alice", "at": NOW + 7000, "was": "NO_CHANGE",
+                                  "skipped": ["an operator's parameters change"]}
+    assert clock.periods == ["LAST_TWELVE_HOURS"]
+
+    found = {o["window_seconds"]: o for o in store.outcomes(incident_id)}
+    assert found[3600]["verdict"] == "IMPROVED" and found[3600]["period"] == "LAST_TWELVE_HOURS"
+    assert len(found) == 3
+    old = store.superseded_outcomes(incident_id)
+    assert [(o["window_seconds"], o["verdict"]) for o in old] == [(3600, "NO_CHANGE")]
+    assert old[0]["outcome_id"] == found[3600]["id"]
+
+    # The deciding windows now say IMPROVED; when it closed stays, and the 12 h WORSENED is a regression.
+    restated = store.incident(incident_id)
+    assert restated["status"] == "RESOLVED" and restated["verdict"] == "IMPROVED"
+    assert restated["closed_at"] == closed["closed_at"]
+    assert found[43200]["details"]["regression"] is True
+
+
+def test_a_recheck_refuses_what_it_cannot_measure(verifying):
+    poller, store, clock, add, verdicts = verifying
+    incident_id, action = add()
+    verdicts += ["IMPROVED"] * 3
+    _at(poller, clock, NOW + 1200)
+
+    clock.t = NOW + 1300
+    assert "closes 7 min from now" in poller.recheck(action, 900, NOW + 500)[1]
+    assert "no earlier than the change finished" in poller.recheck(action, 900, NOW - 10)[1]
+    assert "not a verify window" in poller.recheck(action, 600)[1]
+
+    store.add_changes("crn:d", "p1", [{"event_crn": "op/1", "t": NOW + 600, "kind": "parameters",
+                                       "name": "Parameters Updated"}])
+    clock.t = NOW + 2000
+    assert "operator's parameters change 10 min after that start would cut" in poller.recheck(action, 900)[1]
+
+    clock.t = NOW + 5000
+    assert "No chart fine enough for the 15 min window" in poller.recheck(action, 900, NOW + 700)[1]
+
+    dry = store.add_action(incident_id, "p1", "crn:d", "SET_CONCURRENT_TASKS", True, "DRY_RUN",
+                           started_at=NOW, finished_at=NOW)
+    assert "not applied" in poller.recheck(dry, 900)[1]
+
+    # Nothing was recorded by any of them.
+    assert store.superseded_outcomes(incident_id) == [] and verdicts == ["IMPROVED"] * 2

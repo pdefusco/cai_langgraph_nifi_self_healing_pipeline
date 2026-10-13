@@ -176,6 +176,10 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   then shows the outcome verdict. Each fix is judged again 1 h and 12 h after it (the **Windows** column): a clear
   first verdict closes the incident; an unclear one keeps it verifying until the hour; a later WORSENED on a
   resolved incident is flagged as a regression.
+- **History → Correct the outcome** lets a reviewer label a fix (right fix, wrong fix, can't tell; a reason is
+  required) without touching the measured verdicts, or re-check a window from a later start to skip a stretch the
+  fix could not show in. A re-check's verdict replaces the old one, which is kept, and the incident's status
+  follows it.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.
