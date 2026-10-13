@@ -15,6 +15,7 @@ class AgentState(TypedDict, total=False):
     incident: dict           # the incidents row when the run started
     context: dict            # {inventory, sizing, flow_version, flow_version_crn, state, error}
     playbooks: list          # retriever hits: {id, collection, heading, text, similarity}
+    memory: list             # past cases (rag/memory.recall): {id, headline, text, similarity}
     proposal: dict           # schemas.Proposal as a dict; steps may be a reviewer's edit
     proposal_id: int
     plan: dict               # executor.public(executor.plan(...)): ok, problems, diff, commands, risk

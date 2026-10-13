@@ -242,6 +242,12 @@ EMBEDDING_PROVIDER = os.environ.get(
 
 RAG_TOP_K = _int("SELFHEAL_RAG_TOP_K", 5)
 
+# Past cases (rag/memory.py) shown with the playbooks: what was tried on
+# similar incidents, what the reviewer did and what it measured. Off for
+# a baseline replay (eval/replay.py --no-memory).
+MEMORY = _bool("SELFHEAL_MEMORY", True)
+MEMORY_TOP_K = _int("SELFHEAL_MEMORY_TOP_K", 3)
+
 # ---------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------

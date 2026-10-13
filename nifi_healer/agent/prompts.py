@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 
+import config
 from nifi_healer.actions import catalog
 
 SYSTEM = """You are the remediation planner for Apache NiFi 2.6 flows running in Cloudera DataFlow (CDF) on AWS.
@@ -29,7 +30,10 @@ Rules:
   in front of a slow consumer only lets the backlog grow; fix the consumer.
 - Propose NO_ACTION when the flow is healthy, the signal is a transient, or no catalog action would help.
   A false positive is worse than no proposal.
-- Cite the playbook section ids you relied on, exactly as given.
+- Weigh the past cases as evidence. Prefer what worked on the same kind of fault; do not repeat a fix that was
+  rejected or did not help unless the evidence now differs. A reviewer's change shows the value they wanted. A case
+  on another process group is a hint, not a recipe.
+- Cite the playbook section ids and case ids you relied on, exactly as given.
 
 Action catalog:
 {catalog}
@@ -40,7 +44,7 @@ Reply with only a JSON object, no prose and no code fence:
   "root_cause_component": "the processor, connection or parameter at fault",
   "steps": [{{"action": "SET_CONCURRENT_TASKS", "target": "<processor name>", "value": 4}}],
   "rationale": "why these steps fix the root cause, and why the obvious alternatives would not",
-  "citations": ["<playbook section id>"],
+  "citations": ["<playbook section id or case id>"],
   "confidence": 0.0,
   "expected_effect": "which KPI should move, in which direction, within how long"
 }}"""
@@ -58,6 +62,9 @@ Flow inventory (current settings):
 
 Playbook sections:
 {playbooks}
+
+Past cases on similar incidents (what was tried, what the reviewer did, what it measured):
+{memory}
 {feedback}"""
 
 FEEDBACK = """
@@ -73,7 +80,8 @@ PROMPT_VERSION = hashlib.sha256(
 
 
 def agent_version(model_id: str) -> str:
-    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}"
+    # Without its past cases the same prompt is a different agent (the replay's baseline).
+    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory")
 
 
 def system_prompt() -> str:
@@ -93,7 +101,8 @@ def _playbook_block(hit: dict) -> str:
     return f"[{hit['id']}] {hit.get('heading') or hit.get('title') or ''}\n{hit.get('text', '').strip()}"
 
 
-def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None) -> str:
+def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None,
+                memory: list | None = None) -> str:
     sizing = context.get("sizing") or {}
 
     return USER.format(
@@ -105,6 +114,7 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),
         inventory=context.get("inventory") or "(unavailable)",
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
+        memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
         feedback=FEEDBACK.format(problems="\n".join(f"- {p}" for p in feedback)) if feedback else "",
     )
 

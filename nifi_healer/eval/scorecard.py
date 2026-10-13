@@ -53,6 +53,7 @@ GROUPINGS = {
     "Fix chosen": lambda c: c["action"] or "(no proposal)",
     "Who chose the fix": lambda c: c["origin"],
     "Replay run": lambda c: c.get("run") or "(not a replay)",
+    "Replay round": lambda c: f"round {c['round']}" if c.get("round") else "(not a replay)",
 }
 
 
