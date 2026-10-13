@@ -30,6 +30,25 @@ def test_match_counts_the_lever_not_its_value():
     assert sc.match([{"action": "NO_ACTION"}], None) == sc.UNKNOWN
 
 
+def test_match_takes_a_list_of_relationships_in_any_order():
+    s10 = packs.SCENARIOS["S10"]
+    route, *rest = (dict(s) for s in s10.expected)
+    assert isinstance(route["relationship"], list)                  # the live crash: a list can't be hashed
+
+    assert sc.match([dict(route, relationship=route["relationship"][::-1]), *rest], s10) == sc.EXPECTED
+    assert sc.match([dict(route, relationship=route["relationship"][:1]), *rest], s10) == sc.OTHER
+    assert sc.match([dict(route, relationship=route["relationship"][0])], s10) == sc.OTHER
+    fix = [route, *rest]
+
+    # Every scenario's own design label matches itself.
+    for scenario in packs.SCENARIOS.values():
+        if scenario.expected:
+            assert sc.match([dict(s) for s in scenario.expected], scenario) == sc.EXPECTED, scenario.id
+
+    record = {"incidents": [_incident(9, "S10", "PENDING_REVIEW")], "proposals": [_proposal(11, 9, fix)]}
+    assert sc.cases(record)[0]["match"] == sc.EXPECTED
+
+
 def _incident(n, scenario, status, opened=1000.0, closed=None):
     return {"id": f"inc-20261013-0000-{n}", "scenario": scenario, "process_group": "", "status": status,
             "opened_at": opened, "closed_at": closed}

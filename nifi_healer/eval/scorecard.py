@@ -23,6 +23,7 @@ the reviewer's as much as the agent's, so `origin` tells them apart.
 import statistics
 
 from flows import packs
+from nifi_healer.actions import catalog
 from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import settled
 
@@ -51,7 +52,17 @@ GROUPINGS = {
 
 
 def step_key(step: dict) -> tuple:
-    return tuple(step.get(f) or "" for f in _IDENTITY)
+    """A step's identity; a relationship may be one or a list of them, in any order."""
+
+    def part(field):
+        if field == "relationship":
+            return tuple(catalog.relationships_of(step))
+
+        value = step.get(field)
+
+        return "" if value in (None, "") else str(value)
+
+    return tuple(part(f) for f in _IDENTITY)
 
 
 def match(steps: list, scenario) -> str:
@@ -159,7 +170,7 @@ def cases(record: dict) -> list:
             "proposed": bool(mine), "valid_first": _valid(mine[0]) if mine else None,
             "valid": bool(pick and _valid(pick)),
             "repairs": max(len(mine) - 1, 0),
-            "steps": steps, "action": "+".join(dict.fromkeys(s.get("action", "") for s in steps)) or
+            "steps": steps, "action": "+".join(dict.fromkeys(str(s.get("action") or "") for s in steps)) or
                                     ("NO_ACTION" if pick and _valid(pick) else ""),
             "match": match(steps, scenario) if pick else UNKNOWN,
             "review": review, "origin": "reviewer's edit" if edited else "agent as proposed",
