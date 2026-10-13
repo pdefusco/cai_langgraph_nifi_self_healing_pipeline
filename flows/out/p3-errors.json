@@ -529,9 +529,9 @@
               "y": 200.0
             },
             "properties": {
+              "Connection Timeout": "60 secs",
               "HTTP Method": "POST",
               "HTTP URL": "http://10.255.255.1:8080/orders",
-              "Socket Connect Timeout": "60 secs",
               "Socket Read Timeout": "15 secs"
             },
             "propertyDescriptors": {},

@@ -11,6 +11,12 @@ is uploaded. Idempotent: a flow already in the catalog under our name is
 recorded, not imported twice. Its *first* version is the baseline every
 reset returns to.
 
+    python provision/01_import_flows.py --pack p5-parameters --new-baseline
+
+--new-baseline is for a builder fix to a faulty flow itself: it imports
+the rebuilt definition as a new version of the existing flow and records
+that as the baseline; `06_reset_pack.py --flow-only` then deploys it.
+
 --canary is the cheapest real test of the generated JSON. It imports one
 pack under a throwaway name, reads it back with get-flow-version,
 compares what came back with what was sent (processor types, bundle
@@ -117,7 +123,13 @@ def main() -> int:
     _common.add_pack_argument(parser)
     parser.add_argument("--canary", action="store_true",
                         help="import one pack under a throwaway name, read it back, delete it")
+    parser.add_argument("--new-baseline", action="store_true",
+                        help="import the rebuilt definition as a new version and make it the baseline "
+                             "(needs --pack; then 06_reset_pack deploys it)")
     args = parser.parse_args()
+
+    if args.new_baseline and not args.pack:
+        parser.error("--new-baseline needs --pack")
 
     _common.banner("01 import flows")
     client = _common.Tenant().client
@@ -127,7 +139,7 @@ def main() -> int:
 
     for name in _common.selected(args):
         build_or_exit(name)
-        provisioning.import_flow(client, name)
+        provisioning.import_flow(client, name, new_baseline=args.new_baseline)
 
     return 0
 

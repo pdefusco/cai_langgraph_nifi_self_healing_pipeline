@@ -92,15 +92,18 @@ PROCESSORS = {
         type=_standard("InvokeHTTP"),
         artifact=STANDARD,
         relationships=("Original", "Response", "Retry", "No Retry", "Failure"),
+        # The connect timeout's key is "Connection Timeout" (the docs title it
+        # "Socket Connect Timeout"). InvokeHTTP sends dynamic properties as
+        # request headers, so a wrong key fails every request on its space.
         properties={
             "HTTP Method": False,
-            "HTTP URL": False,
-            "Socket Connect Timeout": False,
+            "HTTP URL": True,
+            "Connection Timeout": False,
             "Socket Read Timeout": False,
         },
         dynamic=True,
         input_required=False,
-        editable=("Socket Connect Timeout", "Socket Read Timeout"),
+        editable=("Connection Timeout", "Socket Read Timeout"),
     ),
     "ListenHTTP": Spec(
         name="ListenHTTP",

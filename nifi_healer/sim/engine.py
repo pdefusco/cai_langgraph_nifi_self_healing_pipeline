@@ -443,7 +443,7 @@ class Simulation:
             latency = CHEAP_LATENCY         # connection refused, at once
 
         else:
-            latency = parse_duration(proc.properties.get("Socket Connect Timeout"), 5.0)
+            latency = parse_duration(proc.properties.get("Connection Timeout"), 5.0)
 
         n = min(avail, self._schedule_limit(proc, spread, latency), self._out_room(proc, avg))
         count, size = self._take_inputs(proc, n)

@@ -9,8 +9,10 @@ run again.
 Undoes whatever the agent (or anyone) changed, one step at a time and
 only where the deployment differs from the baseline:
 
-  1. flow version: back to the first catalog version, the faulty one
+  1. flow version: back to the baseline catalog version, the faulty one
      (df change-flow-version-in-deployment, ONLY_RESTART_AFFECTED_COMPONENTS)
+     --flow-only stops here, e.g. to deploy a baseline 01 --new-baseline
+     imported, without undoing a parameter fix
   2. parameters: back to the scenario values
      (dfworkload update-flow-in-deployment --parameter-groups)
   3. sizing: back to the pack's cluster size and node count
@@ -37,6 +39,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     _common.add_pack_argument(parser, required=True)
     parser.add_argument("--dry-run", action="store_true", help="print the commands, change nothing")
+    parser.add_argument("--flow-only", action="store_true",
+                        help="only the flow version; leave parameters and sizing as they are")
     args = parser.parse_args()
 
     _common.banner("06 reset pack")
@@ -55,7 +59,8 @@ def main() -> int:
 
         print(f"[{name}]")
         records = provisioning.reset_pack(tenant.client, name, dry_run=dry_run,
-                                          wait=tenant.settle_wait(entry["deployment_crn"]))
+                                          wait=tenant.settle_wait(entry["deployment_crn"]),
+                                          flow_only=args.flow_only)
 
         if records and not dry_run:
             print(f"  {len(records)} step(s) applied")

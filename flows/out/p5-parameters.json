@@ -238,9 +238,9 @@
               "y": 200.0
             },
             "properties": {
+              "Connection Timeout": "30 secs",
               "HTTP Method": "POST",
               "HTTP URL": "#{s17.target.url}",
-              "Socket Connect Timeout": "30 secs",
               "Socket Read Timeout": "15 secs"
             },
             "propertyDescriptors": {},

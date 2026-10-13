@@ -66,11 +66,37 @@ def _flow_by_name(client: Client, name: str) -> dict | None:
     return next((f for f in client.list_flow_definitions(name) if f.get("name") == name), None)
 
 
-def import_flow(client: Client, pack_name: str) -> dict:
+def _version_crn(result: dict) -> str:
+    return result.get("crn") or (result.get("flowVersion") or {}).get("crn") or ""
+
+
+def import_flow(client: Client, pack_name: str, new_baseline: bool = False) -> dict:
+    """
+    Import the pack's definition, or record the one already in the catalog.
+    new_baseline imports the current definition as a new version of the
+    existing flow and makes it the baseline resets return to: for a builder
+    fix to the faulty flow itself. Each run imports another version.
+    """
+
     name = packs.flow_name(pack_name)
     existing = _flow_by_name(client, name)
 
-    if existing:
+    if existing and new_baseline:
+        crn = existing["crn"]
+        result = require(client.df(
+            "import-flow-definition-version",
+            "--flow-crn", crn,
+            "--file", definition_file(pack_name),
+            "--comments", "baseline: the faulty version every reset returns to (rebuilt)",
+        ), f"import a new baseline of {name}")
+        baseline = _version_crn(result)
+
+        if not baseline:
+            raise SystemExit(f"{name}: the import returned no flow version CRN: {result}")
+
+        log(f"  [import] {name} new baseline v{result.get('version')} -> {baseline}")
+
+    elif existing:
         crn = existing["crn"]
         recorded = fleet.pack(pack_name)
         baseline = recorded.get("baseline_flow_version_crn") if recorded.get("flow_crn") == crn else None
@@ -386,11 +412,12 @@ def _wait_for_flow(client: Client, deployment: str, flow: str) -> str:
     return facts["state"]
 
 
-def reset_steps(client: Client, pack_name: str) -> list:
+def reset_steps(client: Client, pack_name: str, flow_only: bool = False) -> list:
     """
     [(label, plane, args)] that return the pack to its baseline: the
-    first flow version, the scenario parameter values, and the pack's
-    sizing. Only what differs from the baseline is included.
+    baseline flow version, the scenario parameter values, and the pack's
+    sizing. Only what differs from the baseline is included; flow_only
+    leaves parameters and sizing as they are.
     """
 
     pack = packs.PACKS[pack_name]
@@ -409,6 +436,9 @@ def reset_steps(client: Client, pack_name: str) -> list:
 
     if facts["flow_version_crn"] != baseline:
         steps.append((f"flow version v{facts['flow_version']} -> baseline", "df", "version", baseline))
+
+    if flow_only:
+        return steps
 
     if pack.parameters:
         configuration = require(client.flow_configuration(deployment, flow),
@@ -439,7 +469,8 @@ def reset_steps(client: Client, pack_name: str) -> list:
     return steps
 
 
-def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None) -> list:
+def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None,
+               flow_only: bool = False) -> list:
     """
     Apply `reset_steps`, each through the guardrails, waiting between
     them because each write needs a settled deployment. Returns the
@@ -454,7 +485,7 @@ def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None) 
     wait = wait or (lambda: _wait_for_flow(client, deployment, flow))
     records = []
 
-    for label, plane, kind, value in reset_steps(client, pack_name):
+    for label, plane, kind, value in reset_steps(client, pack_name, flow_only):
         log(f"  [reset] {label}")
 
         # Configuration versions are read immediately before each write.

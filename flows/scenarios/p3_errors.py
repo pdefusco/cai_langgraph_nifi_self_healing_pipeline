@@ -73,7 +73,7 @@ S10 = Scenario(
         action("ROUTE_RELATIONSHIP_TO_DLQ", "S10 Partner Call",
                relationship=["Failure", "No Retry", "Retry"], dlq="S10 DLQ"),
         action("SET_PROCESSOR_PROPERTY", "S10 Partner Call",
-               property="Socket Connect Timeout", value="5 secs"),
+               property="Connection Timeout", value="5 secs"),
         action("SET_CONCURRENT_TASKS", "S10 Partner Call", value=4),
     ),
     acceptable=(),

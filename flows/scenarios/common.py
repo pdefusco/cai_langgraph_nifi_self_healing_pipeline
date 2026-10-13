@@ -88,6 +88,6 @@ def invoke_http(pg: ProcessGroup, key: str, name: str, url: str, *,
     return pg.processor(key, name, "InvokeHTTP", {
         "HTTP Method": "POST",
         "HTTP URL": url,
-        "Socket Connect Timeout": connect_timeout,
+        "Connection Timeout": connect_timeout,
         "Socket Read Timeout": read_timeout,
     }, **options)

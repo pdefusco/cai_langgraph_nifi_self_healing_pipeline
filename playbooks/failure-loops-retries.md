@@ -36,8 +36,10 @@ flow, so the remediation contains the damage:
 
 1. Route Failure, No Retry and Retry to the DLQ so failed requests leave the
    loop and can be replayed later.
-2. Lower Socket Connect Timeout (for example to 5 secs) so each failed call
-   frees its thread quickly.
+2. Lower the connect timeout (for example to 5 secs) so each failed call
+   frees its thread quickly. Its property key is `Connection Timeout`, not
+   "Socket Connect Timeout": InvokeHTTP sends a key it does not know as a
+   request header, and one with a space fails every request at once.
 3. Raise Concurrent Tasks moderately (for example 4) so the healthy requests
    still get through while some calls wait.
 
