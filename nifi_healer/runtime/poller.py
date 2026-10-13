@@ -12,6 +12,12 @@ Two tiers, each on its own interval and per pack:
                                  deployment, list-deployment-active-alerts
   B  every POLL_KPI_SECONDS      the three chart surfaces (metric_charts),
                                  then the detectors, then incidents
+  C  every POLL_EVENTS_SECONDS   list-deployment-events: what changed and
+                                 when, for the Monitor tab
+
+Once per process and pack, history is backfilled from the longer chart
+periods (an hour, 12 hours, a day), filling only the gaps between the
+buckets already stored: the app may have been down, or the pack new.
 
 Reads run on a small pool (POLL_WORKERS), never two of the same pack and
 tier at once, so one slow CLI call delays one pack instead of the fleet.
@@ -47,13 +53,17 @@ from flows.builder.lib import iter_processors
 from flows.builder.processors import kind_of
 from nifi_healer import fleet
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
-from nifi_healer.kpi import detectors, metrics, outcomes, rollup
+from nifi_healer.kpi import changes, detectors, metrics, outcomes, rollup
 from nifi_healer.store.db import Store, get_store
 
 BUSY_STATES = ("UPDATING", "DEPLOYING", "UNKNOWN", "TERMINATING")
 
 _TICK = 0.25          # wall seconds between scheduling passes
 _FLEET_EVERY = 2.0    # wall seconds between fleet file reads
+_BACKFILL_RETRY = 600  # wall seconds before a failed backfill is tried again
+
+# Fine to coarse, so the finer buckets claim their times first.
+BACKFILL_PERIODS = ("LAST_ONE_HOUR", "LAST_TWELVE_HOURS", "LAST_ONE_DAY")
 
 
 def log(message: str) -> None:
@@ -79,6 +89,7 @@ class Poller:
         self._fleet = {}
         self._fleet_at = 0.0
         self._kinds = {}  # flow version crn -> {processor name: kind}; a version never changes
+        self._backfilled = set()
 
     # -- lifecycle --------------------------------------------------------
 
@@ -153,6 +164,14 @@ class Poller:
 
                     if self._due(("kpis", name), config.POLL_KPI_SECONDS):
                         self._submit(("kpis", name), self.poll_kpis, name, entry)
+
+                    if self._due(("events", name), config.POLL_EVENTS_SECONDS):
+                        self._submit(("events", name), self.poll_events, name, entry)
+
+                    # After the pack's first chart read, so a restart shows the fleet first.
+                    if (name not in self._backfilled and "kpi_at" in self.cache.get(name, {})
+                            and self._due(("backfill", name), _BACKFILL_RETRY)):
+                        self._submit(("backfill", name), self.backfill, name, entry)
 
                 if self._due(("outcomes", ""), config.POLL_KPI_SECONDS):
                     self._submit(("outcomes", ""), self.evaluate_outcomes)
@@ -258,6 +277,53 @@ class Poller:
             self.open_incidents(name, entry, found["signals"], flow, now)
 
         return view
+
+    # -- tier C and history -------------------------------------------------
+
+    def poll_events(self, name: str, entry: dict) -> int:
+        """Record the deployment's changes; returns how many were new."""
+
+        found = changes.from_events(self.client.deployment_events(entry["deployment_crn"]))
+        added = self.store.add_changes(entry["deployment_crn"], name, found)
+
+        if added:
+            log(f"[{name}] {added} new change(s) in the event log")
+
+        return added
+
+    def backfill(self, name: str, entry: dict) -> int:
+        """
+        Fill the stored history from the longer chart periods. A period
+        that fails to read leaves the pack to be tried again later.
+        Returns the number of samples added.
+        """
+
+        crn, added = entry["deployment_crn"], 0
+
+        for period in BACKFILL_PERIODS:
+            read = self.client.metric_charts(crn, entry.get("deployed_flow_crn", ""), time_period=period)
+
+            if any(str(v).startswith("error") for v in read["sources"].values()):
+                log(f"[{name}] backfill: {period} unreadable; trying again later")
+
+                return added
+
+            series = {kpi["key"]: metrics.points(metrics.find_chart(
+                read["charts"], kpi["kind"], kpi["component"], kpi["metric"], kpi.get("chart")))
+                for kpi in entry.get("kpis") or []}
+            series.update({f"system:{short}": points
+                           for short, points in metrics.system_series(read["charts"]).items()})
+
+            for key, points in series.items():
+                if len(points) > 1:
+                    gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
+                    added += self.store.fill_samples(crn, [(key, t, v) for t, v in points],
+                                                     gaps[len(gaps) // 2])
+
+        self._backfilled.add(name)
+        log(f"[{name}] backfill: {added} sample(s) added")
+
+        return added
 
     def processor_kinds(self, flow: dict) -> dict:
         """

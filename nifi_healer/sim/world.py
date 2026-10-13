@@ -299,6 +299,7 @@ class World:
         at = change["apply_at"]
 
         if kind == "deploy":
+            self._event(deployment, "Deployment Successful", at)
             self.sims[crn] = Simulation(
                 self._definition(deployment["flow_version_crn"]),
                 parameters_of(deployment["parameter_groups"]),
@@ -307,18 +308,26 @@ class World:
 
         elif kind == "version":
             deployment["flow_version_crn"] = change["flow_version_crn"]
+            self._event(deployment, "Change Flow Version Completed", at)
 
             if change.get("empty_queues"):
                 for queue in self.sims[crn].queues.values():
                     queue.clear()
 
         elif kind == "configuration":
+            if deployment["parameters_dirty"]:
+                self._event(deployment, "Parameters Updated", at)
+
+            if deployment["kpis_dirty"]:
+                self._event(deployment, "Alert Rules Updated", at)
+
             deployment["kpis_dirty"] = False
             deployment["parameters_dirty"] = False
 
         elif kind == "sizing":
             deployment["cluster_size"] = change["cluster_size"]
             deployment["nodes"] = change["nodes"]
+            self._event(deployment, "Cluster Size Updated", at)
 
         deployment["updated"] = at
 
@@ -328,6 +337,13 @@ class World:
                 parameters_of(deployment["parameter_groups"]),
                 deployment["cluster_size"], deployment["nodes"],
             )
+
+    @staticmethod
+    def _event(deployment: dict, name: str, at: float) -> None:
+        """A status event, as list-deployment-events reports it: what changed, not the values."""
+
+        events = deployment.setdefault("events", [])
+        events.append({"crn": f"{deployment['crn']}/event/{len(events) + 1}", "name": name, "t": at})
 
     def settle(self, deployment_crn: str) -> None:
         """Apply every pending change now. Mock bootstrap and tests only."""
@@ -371,6 +387,9 @@ class World:
             sim.advance(self.now())
             self.sims[deployment_crn] = sim
             deployment["created"] = min(deployment["created"], start)
+
+            for event in deployment.get("events") or []:
+                event["t"] = min(event["t"], start)
 
             for kpi in deployment["kpis"]:
                 kpi["_created"] = min(kpi.get("_created", start), start)
@@ -547,6 +566,7 @@ class World:
                 deployment["kpis"] = self._checked_kpis(deployment, kpis,
                                                         FLOW_SCOPES + DEPLOYMENT_SCOPES)
 
+            self._event(deployment, "Deployment Initiated", now)
             self.data["deployments"][crn] = deployment
 
             return deployment
@@ -579,6 +599,7 @@ class World:
                       "flow_version_crn": version["crn"], "strategy": strategy,
                       "empty_queues": strategy == "STOP_AND_EMPTY_QUEUES"}
             deployment["pending"].append(change)
+            self._event(deployment, "Change Flow Version Initiated", self.now())
 
             return change
 

@@ -25,12 +25,13 @@ import traceback
 import gradio as gr
 
 import config
+from nifi_healer import fleet
 from nifi_healer.agent import graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
 from nifi_healer.store.db import get_store
-from nifi_healer.ui import views
+from nifi_healer.ui import monitor, views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
@@ -328,6 +329,49 @@ def show_incident(incident_id):
     return views.incident_detail(get_store(), incident_id)
 
 
+def _monitor_model(pack, span, change):
+    entry = fleet.deployed_packs().get(pack or "")
+
+    if not entry:
+        return None
+
+    return monitor.model(get_store(), pack, entry, get_client().now(), span or monitor.DEFAULT_RANGE, change)
+
+
+@_timed
+def refresh_monitor(pack, span, change):
+    """The timer's and the page load's: the deployments, the chart and its changes."""
+
+    packs = _new_choices(monitor.deployment_choices(), pack)
+    pack = packs.get("value", pack)
+    m = _monitor_model(pack, span, change)
+
+    return packs, monitor.render(m), _new_choices(monitor.change_choices(m) if m else [], change)
+
+
+@_timed
+def pick_deployment(pack, span):
+    """Another deployment: its newest change is selected."""
+
+    m = _monitor_model(pack, span, None)
+    choices = monitor.change_choices(m) if m else []
+
+    return monitor.render(m), gr.update(choices=choices, value=choices[0][1] if choices else None)
+
+
+@_timed
+def show_monitor(pack, span, change):
+    return monitor.render(_monitor_model(pack, span, change))
+
+
+def pick_change(evt: gr.EventData):
+    """A change marker or ledger column clicked in the chart."""
+
+    pick = (getattr(evt, "_data", None) or {}).get("pick")
+
+    return gr.update(value=str(pick)) if pick is not None else gr.skip()
+
+
 @_timed
 def refresh_system():
     return views.system(_snapshot(), get_client())
@@ -456,6 +500,23 @@ def build() -> gr.Blocks:
                                   outputs=[history_table, history_pick, history_detail])
             history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
 
+        with gr.Tab("Monitor"):
+            with gr.Row():
+                mon_pack = gr.Dropdown(label="Deployment", choices=[], scale=2, allow_custom_value=True)
+                mon_range = gr.Radio(list(monitor.RANGES), value=monitor.DEFAULT_RANGE, label="Range", scale=2)
+                mon_change = gr.Dropdown(label="Change", choices=[], scale=3, allow_custom_value=True)
+
+            mon_html = gr.HTML(js_on_load=monitor.JS)
+            mon_timer = gr.Timer(30.0)
+            mon_inputs = [mon_pack, mon_range, mon_change]
+
+            mon_timer.tick(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change],
+                           show_progress="hidden")
+            mon_pack.input(pick_deployment, inputs=[mon_pack, mon_range], outputs=[mon_html, mon_change])
+            mon_range.change(show_monitor, inputs=mon_inputs, outputs=[mon_html])
+            mon_change.change(show_monitor, inputs=mon_inputs, outputs=[mon_html], show_progress="hidden")
+            mon_html.click(pick_change, outputs=[mon_change])
+
         with gr.Tab("System"):
             system_md = gr.Markdown()
 
@@ -485,6 +546,7 @@ def build() -> gr.Blocks:
             select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail])
         demo.load(refresh_system, outputs=[system_md])
+        demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change])
 
     return demo
 
@@ -493,4 +555,4 @@ def main() -> None:
     startup()
     build().queue(default_concurrency_limit=4).launch(
         server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
-        theme=gr.themes.Soft())
+        theme=gr.themes.Soft(), css=monitor.CSS)

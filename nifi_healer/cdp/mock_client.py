@@ -581,6 +581,20 @@ class MockClient(Client):
 
             return {"eventSummaries": events}
 
+    def _df_list_deployment_events(self, options: dict) -> dict:
+        (crn,) = self._required(options, "deployment-crn")
+
+        with self.world.reading():
+            deployment = self.world.deployment(crn)
+            events = sorted(deployment.get("events") or [], key=lambda e: -e["t"])
+            limit = int(options.get("max-items") or 20)
+
+            return {"eventSummaries": [
+                {"crn": event["crn"], "name": event["name"], "severity": "INFO",
+                 "firstOccurrence": _ms(event["t"]), "eventType": "STATUS_UPDATE"}
+                for event in events[:limit]
+            ]}
+
     # -- dfworkload -----------------------------------------------------
 
     def _dfworkload_list_nifi_versions(self, options: dict) -> dict:

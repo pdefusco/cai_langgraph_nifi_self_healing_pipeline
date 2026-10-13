@@ -41,6 +41,20 @@ CREATE TABLE IF NOT EXISTS kpi_samples (
     PRIMARY KEY (deployment_crn, kpi_key, t)
 );
 
+-- What changed on a deployment and when, from its CDF event log
+-- (list-deployment-events): flow version, parameters, sizing, KPIs.
+-- Whoever made it, the agent or an operator; the Monitor tab tells them
+-- apart by the agent's own actions. Who is not stored.
+CREATE TABLE IF NOT EXISTS changes (
+    deployment_crn      TEXT NOT NULL,
+    event_crn           TEXT NOT NULL,
+    pack                TEXT,
+    t                   REAL NOT NULL,
+    kind                TEXT NOT NULL,      -- created | flow_version | parameters | sizing | kpis | other
+    name                TEXT,
+    PRIMARY KEY (deployment_crn, event_crn)
+);
+
 CREATE TABLE IF NOT EXISTS incidents (
     id                  TEXT PRIMARY KEY,
     pack                TEXT NOT NULL,

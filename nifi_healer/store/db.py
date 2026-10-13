@@ -15,6 +15,7 @@ Rows come back as plain dicts, with each `*_json` column also decoded
 into the same name without the suffix (`signals_json` -> `signals`).
 """
 
+import bisect
 import json
 import os
 import sqlite3
@@ -172,6 +173,85 @@ class Store:
                 "AND t >= ? ORDER BY t", (deployment_crn, kpi_key, since)).fetchall()
 
         return [(r["t"], r["value"]) for r in rows]
+
+    def fill_samples(self, deployment_crn: str, samples: list, spacing: float) -> int:
+        """
+        Add older history: each (kpi_key, t, value) whose key has no sample
+        within spacing/2 of t. A coarse chart fills the gaps between
+        polls without doubling the buckets already stored. Returns the
+        number added.
+        """
+
+        by_key = {}
+
+        for key, t, value in samples:
+            by_key.setdefault(key, []).append((t, value))
+
+        added = []
+
+        with self.lock:
+            for key, points in by_key.items():
+                low = min(t for t, _ in points) - spacing
+                high = max(t for t, _ in points) + spacing
+                have = [r["t"] for r in self.conn.execute(
+                    "SELECT t FROM kpi_samples WHERE deployment_crn = ? AND kpi_key = ? "
+                    "AND t BETWEEN ? AND ? ORDER BY t", (deployment_crn, key, low, high))]
+
+                for t, value in points:
+                    at = bisect.bisect_left(have, t)
+                    near = [have[i] for i in (at - 1, at) if 0 <= i < len(have)]
+
+                    if all(abs(t - n) >= spacing / 2 for n in near):
+                        added.append((deployment_crn, key, t, value))
+
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO kpi_samples (deployment_crn, kpi_key, t, value) "
+                "VALUES (?, ?, ?, ?)", added)
+
+        return len(added)
+
+    def history(self, deployment_crn: str, since: float, step: float) -> dict:
+        """
+        Every KPI's samples since `since`, averaged onto a grid of `step`
+        seconds: {kpi_key: {bucket index: mean}}. Bucket i covers
+        [since + i*step, since + (i+1)*step).
+        """
+
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT kpi_key, CAST((t - ?) / ? AS INTEGER) AS b, AVG(value) AS v "
+                "FROM kpi_samples WHERE deployment_crn = ? AND t >= ? AND value IS NOT NULL "
+                "GROUP BY kpi_key, b", (since, step, deployment_crn, since)).fetchall()
+
+        grid = {}
+
+        for row in rows:
+            grid.setdefault(row["kpi_key"], {})[row["b"]] = row["v"]
+
+        return grid
+
+    def first_sample_at(self, deployment_crn: str) -> float | None:
+        row = self._one("SELECT MIN(t) AS t FROM kpi_samples WHERE deployment_crn = ?",
+                        (deployment_crn,))
+
+        return row["t"] if row else None
+
+    def add_changes(self, deployment_crn: str, pack: str, changes: list) -> int:
+        """changes: [{event_crn, t, kind, name}]; an event already stored is kept."""
+
+        with self.lock:
+            before = self.conn.total_changes
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO changes (deployment_crn, event_crn, pack, t, kind, name) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(deployment_crn, c["event_crn"], pack, c["t"], c["kind"], c.get("name"))
+                 for c in changes])
+
+            return self.conn.total_changes - before
+
+    def changes(self, deployment_crn: str, since: float = 0.0) -> list:
+        return self._all("SELECT * FROM changes WHERE deployment_crn = ? AND t >= ? ORDER BY t",
+                         (deployment_crn, since))
 
     # -- incidents -------------------------------------------------------
 

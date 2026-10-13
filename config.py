@@ -150,6 +150,10 @@ ACTION_WINDOW_SECONDS = _int("SELFHEAL_ACTION_WINDOW", 86400)
 POLL_HEALTH_SECONDS = max(1, _int("SELFHEAL_POLL_HEALTH_SECONDS", 2 if MOCK else 10))
 POLL_KPI_SECONDS = max(1, _int("SELFHEAL_POLL_KPI_SECONDS", 3 if MOCK else 30))
 
+# The deployment event log (what changed, for the Monitor tab). Changes
+# are rare; the log is read whole (the newest 200 events) each time.
+POLL_EVENTS_SECONDS = max(1, _int("SELFHEAL_POLL_EVENTS_SECONDS", 5 if MOCK else 60))
+
 # Packs polled at once. Each live read is a 1-3 s subprocess, and tier B
 # is three of them per pack.
 POLL_WORKERS = max(1, _int("SELFHEAL_POLL_WORKERS", 4))

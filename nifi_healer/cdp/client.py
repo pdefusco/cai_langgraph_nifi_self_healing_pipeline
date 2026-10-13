@@ -362,6 +362,21 @@ class Client:
 
         return result.get("eventSummaries") or []
 
+    def deployment_events(self, deployment_crn: str, max_items: int = 200) -> list:
+        """
+        The deployment's event log, the flow's events included, newest
+        first: {crn, name, eventType, firstOccurrence (ms), ...}. An event
+        names what changed ("Parameters Updated") but not the values.
+        """
+
+        result = self.df("list-deployment-events", "--deployment-crn", deployment_crn,
+                         "--max-items", max_items)
+
+        if "error" in result:
+            return []
+
+        return result.get("eventSummaries") or []
+
     # -- flow catalog -------------------------------------------------
 
     def get_flow_version(self, flow_version_crn: str) -> dict:
