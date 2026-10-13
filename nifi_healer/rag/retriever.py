@@ -1,14 +1,17 @@
 """
 Playbook sections for an incident.
 
-    hits = search(query_for(signals, context), symptoms=hint_symptoms(signals))
+    hits = for_incident(signals, context, parameters=inventory["parameters"])
     hits[0]  # {id, collection, title, heading, text, score, symptoms, actions}
 
 The query is embedded with input_type "query" (llm.embedder().query).
 Candidates come from both collections; a section tagged with a symptom
 the signals suggest gets a small boost, and at least one platform rule
-is always kept, since those apply to every remediation. Collections are
-(re)built on first use if the playbooks or the embedder changed.
+is always kept, since those apply to every remediation. A section that
+names a parameter the process group uses (a runbook row with its correct
+value) is kept too: the signals of a wrong value look like a backlog or
+an outage, and similarity alone ranks those playbooks first. Collections
+are (re)built on first use if the playbooks or the embedder changed.
 
 `id` ("back-pressure#runaway-producer-on-a-0-sec-schedule") is what a
 proposal cites.
@@ -53,13 +56,14 @@ def invalidate() -> None:
 # ---------------------------------------------------------------------
 
 
-def hint_symptoms(signals: list) -> list:
+def hint_symptoms(signals: list, parameters: list = ()) -> list:
     """
     Playbook symptom tags the signals point at, most likely first. A hint
-    for ranking only: the LLM still decides what the evidence means.
+    for ranking only: the LLM still decides what the evidence means. A
+    process group that uses parameters may be running a wrong value.
     """
 
-    hints = []
+    hints = ["misconfiguration"] if parameters else []
 
     def add(*names):
         for name in names:
@@ -93,13 +97,17 @@ def hint_symptoms(signals: list) -> list:
     return hints
 
 
-def query_for(signals: list, context: str = "") -> str:
+def query_for(signals: list, context: str = "", parameters: list = ()) -> str:
     """The retrieval question: what the signals say, plus any flow context."""
 
     lines = [s.get("summary", "") for s in signals if s.get("summary")]
 
     if context:
         lines.append(context)
+
+    if parameters:
+        lines.append("Parameters it uses: " + ", ".join(
+            p["name"] if p.get("sensitive") else f"{p['name']} = {p.get('value')}" for p in parameters))
 
     return "\n".join(lines) or "NiFi flow health check"
 
@@ -109,7 +117,7 @@ def query_for(signals: list, context: str = "") -> str:
 # ---------------------------------------------------------------------
 
 
-def _hits(name: str, vector: list, n: int) -> list:
+def _hits(name: str, vector: list, n: int, contains: str = "") -> list:
     found = ingest.collection(name)
 
     if found is None or not n:
@@ -121,6 +129,7 @@ def _hits(name: str, vector: list, n: int) -> list:
         return []
 
     result = found.query(query_embeddings=[vector], n_results=min(n, count),
+                         where_document={"$contains": contains} if contains else None,
                          include=["documents", "metadatas", "distances"])
     hits = []
 
@@ -135,14 +144,28 @@ def _hits(name: str, vector: list, n: int) -> list:
     return hits
 
 
-def search(query: str, k: int = 0, symptoms: list = (), min_practices: int = 1) -> list:
-    """The top k sections, best first, with at least `min_practices` platform rules."""
+def search(query: str, k: int = 0, symptoms: list = (), min_practices: int = 1, terms: list = ()) -> list:
+    """
+    The top k sections, best first, with at least `min_practices` platform
+    rules and the best section naming each of `terms` verbatim (up to k/2).
+    """
 
     ensure()
     k = k or config.RAG_TOP_K
     vector = llm.embedder().query(query)
     wanted = set(symptoms)
     candidates = _hits(ingest.PLAYBOOKS, vector, k * 2) + _hits(ingest.BEST_PRACTICES, vector, k)
+    named = []
+
+    for term in terms:
+        for hit in _hits(ingest.PLAYBOOKS, vector, 1, contains=term):
+            if hit["id"] not in named:
+                named.append(hit["id"])
+
+            if hit["id"] not in {h["id"] for h in candidates}:
+                candidates.append(hit)
+
+    named = set(named[:max(1, k // 2)])
 
     for hit in candidates:
         # Platform rules are tagged with every symptom; only a specific
@@ -152,16 +175,24 @@ def search(query: str, k: int = 0, symptoms: list = (), min_practices: int = 1) 
 
     ranked = sorted(candidates, key=lambda h: -h["score"])
     chosen = ranked[:k]
-    practices = [h for h in chosen if h["collection"] == ingest.BEST_PRACTICES]
-    spare = [h for h in ranked[k:] if h["collection"] == ingest.BEST_PRACTICES]
 
-    while len(practices) < min_practices and spare:
-        # Swap the weakest playbook section for the best unused rule.
-        playbooks = [h for h in chosen if h["collection"] == ingest.PLAYBOOKS]
+    def make_room():
+        # Drop the weakest playbook section that nothing requires.
+        playbooks = [h for h in chosen if h["collection"] == ingest.PLAYBOOKS and h["id"] not in named]
 
         if len(chosen) >= k and playbooks:
             chosen.remove(playbooks[-1])
 
+    for hit in ranked[k:]:
+        if hit["id"] in named:
+            make_room()
+            chosen.append(hit)
+
+    practices = [h for h in chosen if h["collection"] == ingest.BEST_PRACTICES]
+    spare = [h for h in ranked[k:] if h["collection"] == ingest.BEST_PRACTICES]
+
+    while len(practices) < min_practices and spare:
+        make_room()
         best = spare.pop(0)
         chosen.append(best)
         practices.append(best)
@@ -169,5 +200,8 @@ def search(query: str, k: int = 0, symptoms: list = (), min_practices: int = 1) 
     return chosen
 
 
-def for_incident(signals: list, context: str = "", k: int = 0) -> list:
-    return search(query_for(signals, context), k=k, symptoms=hint_symptoms(signals))
+def for_incident(signals: list, context: str = "", k: int = 0, parameters: list = ()) -> list:
+    """`parameters`: the inventory's parameters the process group references."""
+
+    return search(query_for(signals, context, parameters), k=k, symptoms=hint_symptoms(signals, parameters),
+                  terms=[p["name"] for p in parameters if p.get("name")])

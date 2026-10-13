@@ -218,10 +218,16 @@ def test_review_rules_edit_and_reject(agent):
 def test_parameter_fix_through_the_graph(agent):
     _, client, store, incidents, install = agent("p5-parameters")
     incident = incidents["S17"]
-    install(ScriptedLLM(proposal(packs.SCENARIOS["S17"].expected, diagnosis="wrong endpoint")))
+    model = install(ScriptedLLM(proposal(packs.SCENARIOS["S17"].expected, diagnosis="wrong endpoint")))
 
     graph.start(incident["id"])
     assert graph.pending(incident["id"])["plan"]["family"] == "PARAMETER"
+
+    # Live: S17's backlog signals retrieved only backlog and latency playbooks, never the
+    # runbook row with the correct URL, and the agent changed the port but kept the dead host.
+    cited = [h["id"] for h in graph.pending(incident["id"])["playbooks"]]
+    assert "parameter-misconfiguration#runbook-correct-values-for-the-nfh-p5-parameters-context" in cited
+    assert "`http://localhost:9876/ingest`" in model.calls[0][1].content
 
     state = graph.resume(incident["id"], {"decision": "approve"})
     assert state["result"]["status"] == "APPLIED"

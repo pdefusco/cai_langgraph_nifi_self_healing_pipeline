@@ -2,10 +2,10 @@
 The graph's nodes. Each takes the state and returns the fields it changed.
 
     gather_context        the deployed flow's inventory, sizing, version
-    retrieve_playbooks    playbook sections for the signals
+    retrieve_playbooks    playbook sections for the signals and the parameters used
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv
-    human_review          interrupt(): approve | reject | edit
+    human_review          interrupt(): approve | reject | edit | rediagnose
     apply_remediation     executor.execute (dry run unless SELFHEAL_ARMED)
     record_feedback       a rejection, with its reason
     record_no_action      the agent says leave it alone
@@ -59,7 +59,7 @@ def gather_context(state: dict) -> dict:
     incident = store.incident(state["incident_id"])
     _status(incident["id"], "DIAGNOSING")
     deployment, flow = incident["deployment_crn"], incident["deployed_flow_crn"]
-    context = {"inventory": "", "sizing": {}, "error": ""}
+    context = {"inventory": "", "parameters": [], "sizing": {}, "error": ""}
 
     facts = client.flow_facts(deployment, flow)
     context.update(flow_version=facts.get("flow_version"), flow_version_crn=facts.get("flow_version_crn"),
@@ -79,7 +79,8 @@ def gather_context(state: dict) -> dict:
         configuration = client.flow_configuration(deployment, flow)
         groups = (configuration.get("parameterGroups") if "error" not in configuration else None) \
             or groups_from_definition(definition)
-        context["inventory"] = render(inventory(definition, incident["process_group"], groups))
+        found = inventory(definition, incident["process_group"], groups)
+        context.update(inventory=render(found), parameters=found["parameters"])
 
     sizing = client.deployment_configuration(deployment)
 
@@ -96,7 +97,8 @@ def retrieve_playbooks(state: dict) -> dict:
 
     try:
         hits = retriever.for_incident(incident.get("signals") or [],
-                                      context=f"{incident['process_group']}: {incident.get('summary') or ''}")
+                                      context=f"{incident['process_group']}: {incident.get('summary') or ''}",
+                                      parameters=(state.get("context") or {}).get("parameters") or [])
 
     except Exception as exc:  # retrieval is evidence, not a precondition
         log(f"{incident['id']}: playbook search failed: {exc}")

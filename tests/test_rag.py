@@ -79,6 +79,24 @@ def test_search_keeps_a_platform_rule(chroma):
     assert len({h["id"] for h in hits}) == 3
 
 
+def test_a_section_naming_a_parameter_in_use_is_kept(chroma):
+    query = "Flow Files Queued on s17-requests is 594, above 50"
+    runbook = "parameter-misconfiguration#runbook-correct-values-for-the-nfh-p5-parameters-context"
+
+    assert runbook not in [h["id"] for h in retriever.search(query, k=3)]
+
+    hits = retriever.search(query, k=3, terms=["s17.target.url", "not.in.any.playbook"])
+    assert runbook in [h["id"] for h in hits] and len(hits) == 3
+    assert any(h["collection"] == ingest.BEST_PRACTICES for h in hits)
+
+    used = [{"context": "nfh-p5-parameters", "name": "s17.target.url", "value": "http://10.255.255.1:8080/ingest"},
+            {"context": "nfh-p5-parameters", "name": "s17.token", "value": "********", "sensitive": True}]
+    asked = retriever.query_for([], "S17 Wrong Endpoint Parameter", used)
+    assert "s17.target.url = http://10.255.255.1:8080/ingest" in asked and "s17.token" in asked
+    assert "********" not in asked
+    assert retriever.hint_symptoms([], used) == ["misconfiguration"]
+
+
 def test_hint_symptoms():
     imbalance = {"type": "flow_imbalance", "metric": "flowfiles_in"}
     failures = {"type": "kpi_breach", "metric": "queued_count", "component": "s10-failures",
