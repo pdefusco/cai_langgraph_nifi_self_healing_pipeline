@@ -153,6 +153,8 @@ S12 = Scenario(
                max_backoff="1 min"),
     ),
     traps=("Adding tasks does nothing while the processor is yielded; all tasks wait together.",),
+    # The service auto-terminates its success; what reaches it is what gets through.
+    edges=(("S12 Source",), ("S12 Transient Service",)),
 )
 
 

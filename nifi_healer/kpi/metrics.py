@@ -245,6 +245,25 @@ def find_chart(charts: list, kind: str, component: str, logical: str,
     return None
 
 
+# The deployment's own charts: list-deployment-system-metrics returns
+# them with no KPI configured. CPU and memory are percentages (the API
+# says RATIO); cores is the deployment's allocation.
+SYSTEM_CHARTS = {"cpu": "CPU Utilization", "memory": "Memory Utilization", "cores": "Core Allocation"}
+
+
+def system_series(charts: list) -> dict:
+    """{"cpu" | "memory" | "cores": [(t, value)]}, [] for a chart not returned."""
+
+    found = {}
+
+    for short, label in SYSTEM_CHARTS.items():
+        chart = next((c for c in charts if _norm(c.get("name")) == _norm(label)
+                      and _norm_type(c.get("componentType")) in ("SYSTEM", "", "DEPLOYMENT")), None)
+        found[short] = points(chart)
+
+    return found
+
+
 def points(chart: dict | None) -> list:
     """[(epoch seconds, value)], oldest first, buckets with no value dropped."""
 

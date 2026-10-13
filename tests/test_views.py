@@ -42,6 +42,56 @@ def test_fleet_views(agent):
     assert len(frame) and set(frame["series"]) >= {"threshold"}
     assert views.kpi_frame(snapshot, None).empty
 
+    # The deployment row reads the charts every deployment has, without a KPI configured.
+    deployments = views.deployment_rows(snapshot, store)
+    assert len(deployments) == 1 and len(deployments[0]) == len(views.DEPLOYMENT_HEADERS)
+    assert deployments[0][3] != "—" and deployments[0][4] != "—" and deployments[0][5] == "2"
+    assert deployments[0][8] == str(len(incidents))
+
+    groups = views.group_rows(snapshot, store)
+    assert len(groups) == 4 and all(len(r) == len(views.GROUP_HEADERS) for r in groups)
+    assert all(r[3] != "—" and r[4] != "—" for r in groups)
+    assert any(r[1].startswith("S01") and r[2] == "BREACHING" and incidents["S01"]["id"] in r[7] for r in groups)
+
+    # The roll-up's chart-only KPIs are in the group rows, not the KPI table.
+    assert not any("S01 Source · flowfiles_out" in r[2] for r in rows)
+
+    assert "p1-throughput|group:S01" in [v for _, v in choices]
+    frame = views.kpi_frame(snapshot, "p1-throughput|group:S01")
+    assert set(frame["series"]) == {"in (S01 Source)", "out (S01 Consumer)"}
+
+
+def test_history_shows_each_kpi_before_and_after(agent):
+    world, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+
+    graph.start(incident["id"])
+    graph.resume(incident["id"], {"decision": "approve", "reviewer": "test"})
+    world.skip(config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS + 120)
+    assert [o["verdict"] for o in Poller(client, store).evaluate_outcomes()] == ["IMPROVED"]
+
+    group = store.outcomes(incident["id"])[-1]["details"]["group"]
+    assert group["edges"] == {"in": ["S01 Source"], "out": ["S01 Consumer"]}
+    assert group["ratio_after"] > group["ratio_before"]
+
+    row = next(r for r in views.history_rows(store) if r[0] == incident["id"])
+    assert len(row) == len(views.HISTORY_HEADERS)
+    assert row[-1].startswith("s01-backlog ") and "better" in row[-1]
+
+    detail = views.incident_detail(store, incident["id"])
+    assert "| KPI | Decides |" in detail and "| s01-backlog · queued_count | primary |" in detail
+    assert "**Group in/out per bucket:** in (S01 Source)" in detail and "out (S01 Consumer)" in detail
+
+
+def test_change_reads_in_the_good_direction():
+    assert views.change(417, 0) == "417 → 0 (−100%, better)"
+    assert views.change(0, 427, "up") == "0 → 427 (from 0)"
+    assert views.change(10, 20, "up").endswith("(+100%, better)")
+    assert views.change(10, 20).endswith("(+100%, worse)")
+    assert views.change(10, 10) == "10 → 10 (no change)"
+    assert views.change(None, 3) == "—"
+
 
 def applied(incident_id: str) -> None:
     """Wait for an approval being applied in the background."""

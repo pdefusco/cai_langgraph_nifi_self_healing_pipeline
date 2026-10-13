@@ -63,6 +63,8 @@ S17 = Scenario(
         "Editing HTTP URL in the flow replaces the parameter reference and forks the configuration.",
     ),
     parameters={"s17.target.url": WRONG_URL},
+    # Delivery crosses HTTP, not a connection: the partner's side is what arrives.
+    edges=(("S17 Source",), ("S17 Received",)),
 )
 
 

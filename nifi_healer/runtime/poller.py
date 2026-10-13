@@ -47,7 +47,7 @@ from flows.builder.lib import iter_processors
 from flows.builder.processors import kind_of
 from nifi_healer import fleet
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
-from nifi_healer.kpi import detectors, metrics, outcomes
+from nifi_healer.kpi import detectors, metrics, outcomes, rollup
 from nifi_healer.store.db import Store, get_store
 
 BUSY_STATES = ("UPDATING", "DEPLOYING", "UNKNOWN", "TERMINATING")
@@ -226,6 +226,8 @@ class Poller:
             if latest:
                 samples.append((kpi["key"], latest[0], latest[1]))
 
+        system = metrics.system_series(read["charts"])
+        samples += [(f"system:{short}",) + points[-1] for short, points in system.items() if points]
         self.store.add_samples(crn, samples)
         series = {}
 
@@ -234,8 +236,16 @@ class Poller:
                                        kpi["metric"], kpi.get("chart"))
             series[kpi["key"]] = metrics.points(chart)
 
+        groups = {}
+
+        for kpi in entry.get("kpis") or []:
+            groups.setdefault(kpi["scenario"], []).append(kpi)
+
+        groups = {scenario: rollup.group_flow(kpis, series) for scenario, kpis in groups.items()}
+
         with self.lock:
-            view.update(kpis=found["kpis"], signals=found["signals"], series=series,
+            view.update(kpis=found["kpis"], signals=found["signals"], series=series, groups=groups,
+                        system={short: metrics.summarize(points) for short, points in system.items()},
                         unmatched_alerts=found["unmatched_alerts"], sources=read["sources"],
                         kpi_at=now, kpi_wall=time.time())
 

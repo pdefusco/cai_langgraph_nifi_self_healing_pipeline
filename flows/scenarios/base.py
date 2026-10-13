@@ -36,6 +36,7 @@ class Kpi:
     alert: bool = True       # False: chart only, read by detectors
     good: str = "down"       # which direction is better: down | up
     primary: bool = True     # primary KPIs decide the outcome verdict
+    rollup: bool = False     # True: only feeds the group's in/out roll-up
 
     def __post_init__(self):
         if self.kind not in ("connection", "processor", "system"):
@@ -43,6 +44,9 @@ class Kpi:
 
         if self.alert and self.above is None and self.below is None:
             raise ValueError(f"{self.scenario}: an alerting KPI needs a threshold")
+
+        if self.rollup and (self.alert or self.primary):
+            raise ValueError(f"{self.scenario}: a roll-up KPI neither alerts nor decides")
 
         if self.good not in ("down", "up"):
             raise ValueError(f"{self.scenario}: good must be 'down' or 'up'")
@@ -65,10 +69,61 @@ class Scenario:
     acceptable: tuple = ()
     traps: tuple = ()
     parameters: dict = field(default_factory=dict)
+    edges: tuple = ()        # (entry names, exit names), when the topology misleads
 
     @property
     def group_name(self) -> str:
         return f"{self.id} {self.title}"
+
+    def flow_edges(self) -> dict:
+        """
+        {"in": entry processor names, "out": exit processor names}.
+
+        An entry takes nothing from another processor and sends to one; an
+        exit sends to no other processor (a self-loop is not a way out),
+        including a DLQ nothing is routed to yet. What leaves through
+        auto-terminated relationships is not counted.
+        """
+
+        if self.edges:
+            return {"in": list(self.edges[0]), "out": list(self.edges[1])}
+
+        if self.id not in _EDGES:
+            from flows.builder.lib import ProcessGroup
+
+            group = ProcessGroup(self.id, self.group_name)
+            self.build(group)
+            names = {p["identifier"]: p["name"] for p in group.processors.values()}
+            links = [(c["source"]["id"], c["destination"]["id"]) for c in group.connections
+                     if c["source"]["id"] != c["destination"]["id"]]
+            fed = {d for _, d in links}
+            feeding = {s for s, _ in links}
+            _EDGES[self.id] = {
+                "in": [n for i, n in names.items() if i in feeding and i not in fed],
+                "out": [n for i, n in names.items() if i not in feeding],
+            }
+
+        return {side: list(names) for side, names in _EDGES[self.id].items()}
+
+    def edge_kpis(self) -> tuple:
+        """
+        Chart-only KPIs for what the group takes in (its entries' FlowFiles
+        Out) and puts out (its exits' FlowFiles In), when no KPI of the
+        scenario already charts them.
+        """
+
+        edges = self.flow_edges()
+        have = {k.key for k in self.kpis}
+        wanted = [Kpi(self.id, "processor", name, "flowfiles_out", alert=False, good="up",
+                      primary=False, rollup=True) for name in edges["in"]]
+        wanted += [Kpi(self.id, "processor", name, "flowfiles_in", alert=False, good="up",
+                       primary=False, rollup=True) for name in edges["out"]]
+
+        return tuple(k for k in wanted if k.key not in have)
+
+
+# Inferred edges by scenario id: building a group is cheap, but not free.
+_EDGES = {}
 
 
 @dataclass(frozen=True)
@@ -90,7 +145,9 @@ class Pack:
 
     @property
     def kpis(self) -> list:
-        return [k for s in self.scenarios for k in s.kpis]
+        """Every scenario's own KPIs, then the chart-only ones its in/out roll-up needs."""
+
+        return [k for s in self.scenarios for k in s.kpis + s.edge_kpis()]
 
     @property
     def parameters(self) -> dict:

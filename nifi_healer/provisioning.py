@@ -302,6 +302,28 @@ def merged_kpis(existing: list, ours: list) -> list:
     return kept
 
 
+def already_configured(existing: list, ours: list) -> bool:
+    """
+    Every one of ours is already configured as we would send it, so a
+    re-run need not write: a deployment-level write updates the
+    deployment.
+    """
+
+    def contains(read, sent) -> bool:
+        if isinstance(sent, dict):
+            return isinstance(read, dict) and all(k in read and contains(read[k], v) for k, v in sent.items())
+
+        return read == sent
+
+    for payload in ours:
+        previous = next((k for k in existing if metrics.same_kpi(k, payload)), None)
+
+        if previous is None or not contains(previous, {k: v for k, v in payload.items() if k != "id"}):
+            return False
+
+    return True
+
+
 def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
     entry = fleet.pack(pack_name)
     deployment, flow = entry.get("deployment_crn"), entry.get("deployed_flow_crn")
@@ -329,6 +351,11 @@ def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
             configuration = require(read(), f"read the {level} configuration for {pack_name}")
             existing = [k for k in configuration.get("kpis") or []
                         if (k.get("metricComponentType") in DEPLOYMENT_SCOPES) == (level == "deployment")]
+
+            if already_configured(existing, wanted):
+                result = None
+                break
+
             result = client.dfw(
                 *command,
                 "--configuration-version", configuration.get("configurationVersion"),
@@ -342,6 +369,10 @@ def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
                 require(result, f"configure {level} KPIs for {pack_name}")
 
             log("  [kpis] configuration version moved; re-reading once")
+
+        if result is None:
+            log(f"  [kpis] {pack_name}: {len(wanted)} {level} KPI(s) already configured; not written")
+            continue
 
         log(f"  [kpis] {pack_name}: {len(wanted)} {level} KPI(s) written, waiting for kpisDirty=false")
         (wait or (lambda: _wait_for_clean(client, read)))()
@@ -362,6 +393,7 @@ def configure_kpis(client: Client, pack_name: str, wait=None) -> dict:
             "tolerance_seconds": kpi.tolerance_seconds,
             "good": kpi.good,
             "primary": kpi.primary,
+            "rollup": kpi.rollup,
             "component_id": payload.get("componentId", ""),
             "chart": list(metrics.chart_key(chart)) if chart else None,
         })

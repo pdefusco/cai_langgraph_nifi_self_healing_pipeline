@@ -165,7 +165,10 @@ def _timed(handler):
 def refresh_fleet(choice):
     snapshot = _snapshot()
 
-    return (views.fleet_header(snapshot), views.fleet_rows(snapshot, get_store()),
+    store = get_store()
+
+    return (views.fleet_header(snapshot), views.deployment_rows(snapshot, store),
+            views.group_rows(snapshot, store), views.fleet_rows(snapshot, store),
             views.kpi_frame(snapshot, choice))
 
 
@@ -372,20 +375,26 @@ def build() -> gr.Blocks:
 
         with gr.Tab("Fleet"):
             fleet_header = gr.Markdown()
-            fleet_table = gr.Dataframe(headers=views.FLEET_HEADERS, interactive=False, wrap=True,
-                                       max_height=520)
+            deployment_table = gr.Dataframe(headers=views.DEPLOYMENT_HEADERS, interactive=False, wrap=True,
+                                            label="Deployments")
+            group_table = gr.Dataframe(headers=views.GROUP_HEADERS, interactive=False, wrap=True,
+                                       max_height=420, label="Process groups (in and out: FlowFiles per bucket)")
+
+            with gr.Accordion("KPIs", open=True):
+                fleet_table = gr.Dataframe(headers=views.FLEET_HEADERS, interactive=False, wrap=True,
+                                           max_height=520)
 
             with gr.Row():
                 kpi_pick = gr.Dropdown(label="KPI chart", choices=[], scale=3, allow_custom_value=True)
 
             kpi_plot = gr.LinePlot(x="time", y="value", color="series", height=300, label="KPI")
+            fleet_outputs = [fleet_header, deployment_table, group_table, fleet_table, kpi_plot]
             fleet_timer = gr.Timer(1.0)
             choices_timer = gr.Timer(15.0)
-            fleet_timer.tick(refresh_fleet, inputs=[kpi_pick], outputs=[fleet_header, fleet_table, kpi_plot],
-                             show_progress="hidden")
+            fleet_timer.tick(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs, show_progress="hidden")
             choices_timer.tick(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick],
                                show_progress="hidden")
-            kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=[fleet_header, fleet_table, kpi_plot])
+            kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
 
         with gr.Tab("Review Queue"):
             with gr.Row():

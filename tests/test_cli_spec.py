@@ -86,7 +86,9 @@ def test_system_kpis_go_through_update_deployment(tenant):
     deployment, flow = entry["deployment_crn"], entry["deployed_flow_crn"]
 
     assert [k["metricComponentType"] for k in client.deployment_configuration(deployment)["kpis"]] == ["SYSTEM"]
-    assert {k["metricComponentType"] for k in client.flow_configuration(deployment, flow)["kpis"]} == {"NIFI_CONNECTION"}
+    # NIFI_PROCESSOR: the chart-only KPIs at S20's edges, for its in/out roll-up.
+    assert {k["metricComponentType"] for k in client.flow_configuration(deployment, flow)["kpis"]} == \
+        {"NIFI_CONNECTION", "NIFI_PROCESSOR"}
     assert all(k["chart"] for k in entry["kpis"])
 
     scopes = {s["type"] for s in client.flow_configuration_metadata(deployment, flow)["kpiMetaData"]["kpiScopes"]}
@@ -96,7 +98,25 @@ def test_system_kpis_go_through_update_deployment(tenant):
     # Re-running replaces ours in place: no duplicates on either side.
     provisioning.configure_kpis(client, "p6-sizing-cpu", wait=lambda: world.settle(deployment))
     assert len(client.deployment_configuration(deployment)["kpis"]) == 1
-    assert len(client.flow_configuration(deployment, flow)["kpis"]) == 1
+    assert len(client.flow_configuration(deployment, flow)["kpis"]) == 3
+
+    # A level already configured as wanted is not written again: update-deployment updates the deployment.
+    writes, dfw = [], client.dfw
+
+    def spy(*argv):
+        if argv[0].startswith("update-"):
+            writes.append(argv[0])
+
+        return dfw(*argv)
+
+    client.dfw = spy
+    provisioning.configure_kpis(client, "p6-sizing-cpu", wait=lambda: world.settle(deployment))
+    assert writes == []
+
+    configuration = client.flow_configuration(deployment, flow)
+    configuration["kpis"] = configuration["kpis"][:2]
+    assert not provisioning.already_configured(configuration["kpis"], [p for _, p in provisioning.kpi_payloads(
+        "p6-sizing-cpu", provisioning.kpi_metadata(client, deployment, flow))])
 
     assert accepted(["dfworkload", "update-deployment", "--environment-crn", "crn:e",
                      "--deployment-crn", "crn:d", "--configuration-version", 1,

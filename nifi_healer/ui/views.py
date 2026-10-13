@@ -17,17 +17,27 @@ from nifi_healer import llm
 from nifi_healer.actions import executor
 from nifi_healer.agent import graph
 from nifi_healer.cdp.client import get_client
+from nifi_healer.kpi import rollup
 from nifi_healer.kpi.detectors import group_name
 from nifi_healer.store.db import CLOSED_STATUSES, get_store
 
+DEPLOYMENT_HEADERS = ["Pack", "State", "Flow", "CPU %", "Memory %", "Cores", "Active alerts",
+                      "Groups not ok", "Open incidents", "KPIs read"]
+GROUP_HEADERS = ["Pack", "Process group", "Status", "In", "Out", "Out / in", "Queued (watched)", "Incident"]
 FLEET_HEADERS = ["Pack", "Process group", "KPI", "Status", "Latest", "Threshold", "Trend /min", "Incident"]
 DIFF_HEADERS = ["Path", "Before", "After"]
-HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Opened", "Action", "Reviewed by"]
+HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Opened", "Action", "Reviewed by",
+                   "Change"]
+OUTCOME_HEADERS = ["KPI", "Decides", "Before (mean · last)", "After (mean · last)", "Change (last)",
+                   "Trend /min", "Verdict", "Why"]
 
 QUEUE_STATUSES = ("PENDING_REVIEW", "NEW", "DIAGNOSING", "APPLYING")
 
 STATUS_MARK = {"ok": "ok", "breaching": "BREACHING", "warning": "warning", "imbalance": "IMBALANCE",
                "alert": "ALERT", "missing": "no chart"}
+
+# A group shows its worst KPI's status.
+_SEVERITY = {"breaching": 4, "imbalance": 4, "alert": 4, "warning": 3, "missing": 1, "ok": 0}
 
 
 def clock(t: float | None) -> str:
@@ -60,6 +70,54 @@ def _number(value) -> str:
         return f"{value:,.0f}"
 
     return f"{value:,.3g}"
+
+
+def _percent(ratio) -> str:
+    return "—" if ratio is None else f"{ratio:.0%}"
+
+
+def change(before, after, good: str = "down") -> str:
+    """
+    "417 → 0 (−100%, better)", judged in the KPI's good direction. An
+    outcome's change is from the last bucket before the fix to the last of
+    the window after it: the verdict reads slopes, so a draining backlog's
+    means can match while its level falls.
+    """
+
+    if before is None or after is None:
+        return "—"
+
+    text = f"{_number(before)} → {_number(after)}"
+
+    if abs(before) < 1e-9:
+        return text if abs(after) < 1e-9 else f"{text} (from 0)"
+
+    delta = (after - before) / abs(before)
+
+    if abs(delta) < 0.005:
+        return f"{text} (no change)"
+
+    better = (delta < 0) == (good == "down")
+
+    return f"{text} ({delta:+.0%}, {'better' if better else 'worse'})".replace("-", "−")
+
+
+def _component(kpi_key: str) -> str:
+    """ "s17-requests" from "S17:connection:s17-requests:queued_count"; the metric for a system KPI."""
+
+    parts = (kpi_key or "").split(":")
+
+    return (parts[2] or parts[3]) if len(parts) == 4 else kpi_key
+
+
+def _deciding(details: dict) -> dict | None:
+    """The deciding KPI that carries the verdict, else the first deciding one."""
+
+    judged = details.get("kpis") or []
+    deciding = [k for k in judged if k.get("primary") or k.get("signalled")] or judged
+
+    return next((k for k in deciding if k.get("verdict") == details.get("verdict")),
+                deciding[0] if deciding else None)
 
 
 def _threshold(summary: dict) -> str:
@@ -102,15 +160,108 @@ def fleet_header(snapshot: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _open_incidents(store) -> dict:
+    return {(i["pack"], i["process_group"]): i for i in store.incidents() if i["status"] not in CLOSED_STATUSES}
+
+
+def _alerts(facts: dict) -> str:
+    counts = facts.get("alerts") or {}
+    shown = [f"{counts[level]} {level}" for level in ("error", "warning", "info") if counts.get(level)]
+
+    return ", ".join(shown) or "none"
+
+
+def _system(summary: dict | None, suffix: str = "") -> str:
+    """ "3.5 (30m mean 3.2, +0.1/min)" from a summarized system chart."""
+
+    if not summary or summary.get("latest") is None:
+        return "—"
+
+    trend = summary.get("trend_per_min") or 0
+
+    return (f"{_number(summary['latest'])}{suffix} (mean {_number(summary['mean'])}"
+            + (f", {trend:+.2g}/min" if abs(trend) >= 0.01 else "") + ")")
+
+
+def deployment_rows(snapshot: dict, store) -> list:
+    """One row per deployment: its health and size, from the charts every deployment has."""
+
+    incidents = _open_incidents(store)
+    rows = []
+
+    for name in sorted(snapshot["packs"]):
+        view = snapshot["packs"][name]
+        facts, flow, system = view.get("facts") or {}, view.get("flow") or {}, view.get("system") or {}
+        statuses = {}
+
+        for summary in (view.get("kpis") or {}).values():
+            if summary.get("scenario"):
+                worst = statuses.get(summary["scenario"], "ok")
+                status = summary.get("status") or "ok"
+                statuses[summary["scenario"]] = max(worst, status, key=lambda s: _SEVERITY.get(s, 2))
+
+        cores = (system.get("cores") or {}).get("latest")
+        rows.append([
+            name, facts.get("state") or "", f"v{flow['flow_version']}" if flow.get("flow_version") else "",
+            _system(system.get("cpu")), _system(system.get("memory")),
+            _number(cores) if cores is not None else "—", _alerts(facts),
+            f"{sum(1 for s in statuses.values() if s != 'ok')} of {len(statuses)}",
+            str(sum(1 for pack, _ in incidents if pack == name)),
+            ago(view.get("kpi_at"), snapshot["now"]),
+        ])
+
+    return rows
+
+
+def group_rows(snapshot: dict, store) -> list:
+    """
+    One row per process group: its worst KPI, what its entries send on
+    against what its exits receive (kpi/rollup.py), and what its watched
+    queues hold.
+    """
+
+    incidents = _open_incidents(store)
+    rows = []
+
+    for name in sorted(snapshot["packs"]):
+        view = snapshot["packs"][name]
+        by_scenario = {}
+
+        for summary in (view.get("kpis") or {}).values():
+            if summary.get("scenario"):
+                by_scenario.setdefault(summary["scenario"], []).append(summary)
+
+        for scenario in sorted(by_scenario):
+            summaries = by_scenario[scenario]
+            status = max((s.get("status") or "ok" for s in summaries if not s.get("rollup")),
+                         key=lambda s: _SEVERITY.get(s, 2), default="ok")
+            flow = (view.get("groups") or {}).get(scenario) or {}
+            queued = [s["latest"] for s in summaries
+                      if s.get("metric") == "queued_count" and s.get("latest") is not None]
+            group = group_name(scenario)
+            incident = incidents.get((name, group))
+            rows.append([
+                name, group, STATUS_MARK.get(status, status),
+                _number(flow["in"][-1][1]) if flow.get("in") else "—",
+                _number(flow["out"][-1][1]) if flow.get("out") else "—",
+                _percent(rollup.ratio(flow)) if flow.get("in") and flow.get("out") else "—",
+                _number(sum(queued)) if queued else "—",
+                f"{incident['id']} ({incident['status']})" if incident else "",
+            ])
+
+    return rows
+
+
 def fleet_rows(snapshot: dict, store) -> list:
-    open_by_group = {(i["pack"], i["process_group"]): i for i in store.incidents()
-                     if i["status"] not in CLOSED_STATUSES}
+    """One row per KPI that alerts or decides; the roll-up's edge charts are in group_rows."""
+
+    open_by_group = _open_incidents(store)
     rows = []
 
     for name in sorted(snapshot["packs"]):
         view = snapshot["packs"][name]
 
-        for key, summary in sorted((view.get("kpis") or {}).items(),
+        for key, summary in sorted(((k, s) for k, s in (view.get("kpis") or {}).items() if not s.get("rollup")),
                                    key=lambda item: (item[1].get("scenario") or "", item[0])):
             group = group_name(summary["scenario"]) if summary.get("scenario") else ""
             incident = open_by_group.get((name, group))
@@ -126,16 +277,36 @@ def fleet_rows(snapshot: dict, store) -> list:
 
 
 def kpi_choices(snapshot: dict) -> list:
-    """[(label, "pack|kpi key")] for the chart picker, breaching first."""
+    """
+    [(label, "pack|kpi key")] for the chart picker, breaching first, then
+    each group's in vs out ("pack|group:S01").
+    """
 
     choices = []
 
     for name in sorted(snapshot["packs"]):
-        for key, summary in (snapshot["packs"][name].get("kpis") or {}).items():
+        view = snapshot["packs"][name]
+
+        for key, summary in (view.get("kpis") or {}).items():
             label = f"{name} · {summary.get('component')} · {summary.get('metric')}"
             choices.append((summary.get("status") == "ok", label, f"{name}|{key}"))
 
+        for scenario, flow in sorted((view.get("groups") or {}).items()):
+            if flow.get("in") and flow.get("out"):
+                choices.append((True, f"{name} · {group_name(scenario)} · in vs out", f"{name}|group:{scenario}"))
+
     return [(label, value) for _, label, value in sorted(choices)]
+
+
+def _group_frame(flow: dict):
+    import pandas as pd
+
+    frames = [pd.DataFrame({"time": [datetime.fromtimestamp(t, tz=timezone.utc) for t, _ in flow[side]],
+                            "value": [v for _, v in flow[side]],
+                            "series": f"{side} ({', '.join(flow['edges'][side])})"})
+              for side in ("in", "out")]
+
+    return pd.concat(frames)
 
 
 def kpi_frame(snapshot: dict, choice: str | None):
@@ -150,6 +321,12 @@ def kpi_frame(snapshot: dict, choice: str | None):
 
     name, key = choice.split("|", 1)
     view = snapshot["packs"].get(name) or {}
+
+    if key.startswith("group:"):
+        flow = (view.get("groups") or {}).get(key[len("group:"):]) or {}
+
+        return _group_frame(flow) if flow.get("in") and flow.get("out") else empty
+
     points = (view.get("series") or {}).get(key) or []
     summary = (view.get("kpis") or {}).get(key) or {}
 
@@ -498,11 +675,16 @@ def history_rows(store, limit: int = 200) -> list:
         actions = store.actions(incident_id=incident["id"])
         reviews = store.reviews(incident["id"])
         last = actions[-1] if actions else None
+        outcomes = store.outcomes(incident["id"])
+        shown = _deciding(outcomes[-1].get("details") or {}) if outcomes else None
         rows.append([
             incident["id"], incident["pack"], incident["process_group"], incident["status"],
             incident.get("verdict") or "", clock(incident["opened_at"]),
             f"{last['action_type']} ({last['status']})" if last else "",
             ", ".join(sorted({r["reviewer"] or "?" for r in reviews})),
+            f"{_component(shown['kpi'])} "
+            f"{change(shown['before'].get('latest'), shown['after'].get('latest'), shown.get('good', 'down'))}"
+            if shown else "",
         ])
 
     return rows
@@ -549,13 +731,76 @@ def incident_detail(store, incident_id: str | None) -> str:
     for o in store.outcomes(incident["id"]):
         details = o.get("details") or {}
         out += ["", f"**Outcome** for action {o['action_id']}: **{o['verdict']}** ({o.get('period')})"]
-        out += [f"- `{k.get('kpi')}`: {k.get('verdict')}, {k.get('reason') or ''}"
-                for k in details.get("kpis") or []]
+
+        if details.get("started_at"):
+            out.append(f"Before: the {_minutes(details.get('window_seconds'))} up to "
+                       f"{clock(details['started_at'])}. After: the {_minutes(details.get('window_seconds'))} "
+                       f"from {_minutes(details.get('settle_seconds'))} after it finished.")
+
+        out += outcome_table(details)
+
+        if details.get("side_effects"):
+            out.append("Side effects (worse, not deciding): "
+                       + ", ".join(f"`{_component(k)}`" for k in details["side_effects"]))
+
+        out += group_lines(details.get("group") or {})
 
         if details.get("reason"):
             out.append(f"- {details['reason']}")
 
     return "\n".join(out)
+
+
+def _minutes(seconds) -> str:
+    return f"{(seconds or 0) / 60:.0f} min"
+
+
+def _cell(text) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def outcome_table(details: dict) -> list:
+    """The outcome's KPIs before and after, as markdown table lines."""
+
+    judged = details.get("kpis") or []
+
+    if not judged:
+        return []
+
+    lines = ["", "| " + " | ".join(OUTCOME_HEADERS) + " |", "|" + "---|" * len(OUTCOME_HEADERS)]
+
+    for k in judged:
+        before, after = k.get("before") or {}, k.get("after") or {}
+        role = "primary" if k.get("primary") else "opened it" if k.get("signalled") else "no"
+        parts = (k.get("kpi") or "").split(":")
+        cells = [
+            f"{_component(k.get('kpi'))} · {parts[3] if len(parts) == 4 else ''}", role,
+            f"{_number(before.get('mean')) or '—'} · {_number(before.get('latest')) or '—'}",
+            f"{_number(after.get('mean')) or '—'} · {_number(after.get('latest')) or '—'}",
+            change(before.get("latest"), after.get("latest"), k.get("good", "down")),
+            f"{before.get('trend_per_min') or 0:+,.1f} → {after.get('trend_per_min') or 0:+,.1f}",
+            f"**{k.get('verdict')}**", k.get("reason") or "",
+        ]
+        lines.append("| " + " | ".join(_cell(c) for c in cells) + " |")
+
+    return lines + [""]
+
+
+def group_lines(group: dict) -> list:
+    """The process group's in and out either side of the change (kpi/rollup.py)."""
+
+    if not group:
+        return []
+
+    sides = []
+
+    for side in ("in", "out"):
+        edges = ", ".join(group.get("edges", {}).get(side) or [])
+        sides.append(f"{side} ({edges}) "
+                     + change(group[side]["before"].get("mean"), group[side]["after"].get("mean"), "up"))
+
+    return [f"**Group in/out per bucket:** {'; '.join(sides)}; out / in "
+            f"{_percent(group.get('ratio_before'))} → {_percent(group.get('ratio_after'))}"]
 
 
 # ---------------------------------------------------------------------

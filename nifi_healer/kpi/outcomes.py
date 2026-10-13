@@ -24,11 +24,11 @@ signals opened it (S17's queue never fills live, the bad endpoint fails
 fast, so only its stub's rate shows the fault): any WORSENED wins, then
 any IMPROVED, then NO_CHANGE. Too few buckets on either side of every
 deciding KPI is INCONCLUSIVE. Other KPIs that got worse are reported as
-side effects.
+side effects, and the group's in and out (kpi/rollup.py) alongside.
 """
 
 import config
-from nifi_healer.kpi import metrics
+from nifi_healer.kpi import metrics, rollup
 
 IMPROVED = "IMPROVED"
 NO_CHANGE = "NO_CHANGE"
@@ -166,7 +166,8 @@ def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: fl
 
     judged = []
 
-    for kpi in kpis:
+    # Roll-up KPIs are read only as the group's in and out, below.
+    for kpi in (k for k in kpis if not k.get("rollup")):
         before, after = windows(series_by_key.get(kpi["key"]) or [], started_at, finished_at)
         judged.append(dict(judge(kpi, before, after), signalled=kpi.get("key") in signalled))
 
@@ -175,6 +176,32 @@ def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: fl
     side_effects = [j["kpi"] for j in judged if j not in deciding and j["verdict"] == WORSENED]
 
     return {"verdict": verdict, "kpis": judged, "side_effects": side_effects,
+            "group": group_change(kpis, series_by_key, started_at, finished_at),
             "started_at": started_at, "finished_at": finished_at,
             "settle_seconds": config.VERIFY_SETTLE_SECONDS,
             "window_seconds": config.VERIFY_WINDOW_SECONDS}
+
+
+def group_change(kpis: list, series_by_key: dict, started_at: float, finished_at: float) -> dict:
+    """
+    The process group's in and out (kpi/rollup.py) either side of the
+    change, and out over in. Shown with the verdict, never deciding it.
+    {} when an edge of the group has no chart.
+    """
+
+    flow = rollup.group_flow(kpis, series_by_key)
+
+    if not (flow["in"] and flow["out"]):
+        return {}
+
+    change = {"edges": flow["edges"]}
+
+    for side in ("in", "out"):
+        before, after = windows(flow[side], started_at, finished_at)
+        change[side] = {"before": metrics.summarize(before), "after": metrics.summarize(after)}
+
+    for when in ("before", "after"):
+        into, out = change["in"][when]["mean"], change["out"][when]["mean"]
+        change[f"ratio_{when}"] = out / into if into and out is not None else None
+
+    return change

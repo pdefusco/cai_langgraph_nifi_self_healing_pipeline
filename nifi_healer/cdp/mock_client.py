@@ -36,6 +36,10 @@ from nifi_healer.sim import world as worlds
 from nifi_healer.sim.world import MockError
 
 CHART_TYPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTEM"}
+CORES_PER_NODE = {"EXTRA_SMALL": 2, "SMALL": 3, "MEDIUM": 6, "LARGE": 12}
+
+# The JVM's share of a node's memory, and how much more each CPU percent takes.
+_MEMORY_BASE, _MEMORY_PER_CPU = 9.0, 0.05
 
 
 def parse_options(tokens: list) -> dict:
@@ -88,6 +92,30 @@ def _ms(seconds: float) -> int:
 
 def _public(kpi: dict) -> dict:
     return {k: v for k, v in kpi.items() if not k.startswith("_")}
+
+
+def _derived_system_charts(cpu: dict, deployment: dict) -> list:
+    """
+    Memory Utilization and Core Allocation on the CPU chart's buckets, as
+    list-deployment-system-metrics returns them live. Cores is today's
+    allocation for every bucket, also before a resize.
+    """
+
+    cores = float(CORES_PER_NODE[deployment["cluster_size"]] * deployment["nodes"])
+    charts = []
+
+    for name, value in (("Memory Utilization", lambda v: _MEMORY_BASE + _MEMORY_PER_CPU * v),
+                        ("Core Allocation", lambda v: cores)):
+        datas = [dict(d, value=round(value(d["value"]), 3)) for d in cpu["metrics"]["datas"]]
+        values = [d["value"] for d in datas]
+        charts.append({
+            "name": name, "unitType": "RATIO" if name.startswith("Memory") else "COUNT",
+            "componentType": "SYSTEM", "componentName": None,
+            "metrics": {"averageValue": sum(values) / len(values) if values else None,
+                        "currentValue": values[-1] if values else None, "datas": datas},
+        })
+
+    return charts
 
 
 class MockClient(Client):
@@ -261,8 +289,7 @@ class MockClient(Client):
         return {
             "configurationVersion": deployment["deployment_configuration_version"],
             "clusterSize": {"name": deployment["cluster_size"],
-                            "coresPerNode": {"EXTRA_SMALL": 2, "SMALL": 3, "MEDIUM": 6,
-                                             "LARGE": 12}[deployment["cluster_size"]]},
+                            "coresPerNode": CORES_PER_NODE[deployment["cluster_size"]]},
             "staticNodeCount": deployment["nodes"],
             "autoScalingEnabled": False,
             "cfmNifiVersion": deployment["nifi_version"],
@@ -526,7 +553,7 @@ class MockClient(Client):
             period = options.get("metrics-time-period") or "LAST_THIRTY_MINUTES"
             chart = self._chart(deployment, "system||cpu", period, deployment["created"])
 
-            return {"metricCharts": [chart]}
+            return {"metricCharts": [chart] + _derived_system_charts(chart, deployment)}
 
     def _df_list_deployment_active_alerts(self, options: dict) -> dict:
         (crn,) = self._required(options, "deployment-crn")

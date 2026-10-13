@@ -179,6 +179,9 @@ def _pairs(kpis: list) -> list:
     by_scenario = {}
 
     for kpi in kpis:
+        if kpi.get("rollup"):
+            continue    # charted for the group's in/out, not paired
+
         if kpi.get("kind") == "processor" and kpi.get("metric") in ("flowfiles_in", "flowfiles_out"):
             by_scenario.setdefault(kpi["scenario"], []).append(kpi)
 
@@ -336,6 +339,7 @@ def detect(pack_name: str, entry: dict, charts: list, alerts: list, now: float,
         summary.update(scenario=kpi["scenario"], component=kpi["component"],
                        metric=kpi["metric"], above=kpi.get("above"), below=kpi.get("below"),
                        primary=kpi.get("primary", True), good=kpi.get("good", "down"),
+                       rollup=kpi.get("rollup", False),
                        status="missing" if chart is None else "ok")
         status[kpi["key"]] = summary
 
