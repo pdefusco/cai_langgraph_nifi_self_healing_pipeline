@@ -133,11 +133,13 @@ _RESULT_BARS = (sc.WORKED, sc.NO_HELP, sc.WORSE, sc.UNCLEAR, sc.PENDING)
 
 def _groups(m: dict) -> str:
     head = ("<tr><th>{}</th><th>Incidents</th><th>Valid first try</th><th>Design fix</th>"
+            "<th title=\"Proposals that cite a past case (memory)\">Cited a case</th>"
             "<th>Review</th><th>Result</th><th>Worked</th><th>Regressions</th><th>To resolve</th></tr>"
             ).format(_e(m["grouping"]))
     rows = "".join(
         f"<tr><td class=\"sc-g\">{_e(name)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
-        f"<td>{pct(s['matched'])}</td><td class=\"sc-stack\">{_bar(s['review'], _REVIEW_BARS)}</td>"
+        f"<td>{pct(s['matched'])}</td><td>{pct(s['cited'])}</td>"
+        f"<td class=\"sc-stack\">{_bar(s['review'], _REVIEW_BARS)}</td>"
         f"<td class=\"sc-stack\">{_bar(s['results'], _RESULT_BARS)}</td><td>{pct(s['worked'])}</td>"
         f"<td>{s['regressed'] or ''}</td><td>{duration(s['to_resolve'])}</td></tr>"
         for name, s in m["rows"])
@@ -165,7 +167,11 @@ def _case(c: dict, now: float) -> str:
     elif c["apply_failed"]:
         result = _chip("mx-v-WORSENED", "apply failed")
 
-    flags = (_chip("mx-v-WORSENED", "regressed") if c["regressed"] else "") + \
+    cited = c.get("cited") or []
+    flags = (f'<span class="mx-chip" title="{_e(", ".join(cited))}">cited '
+             + (_e(_short(cited[0].split(":", 1)[1])) if len(cited) == 1 else f"{len(cited)} past cases")
+             + "</span>" if cited else "") + \
+        (_chip("mx-v-WORSENED", "regressed") if c["regressed"] else "") + \
         (_chip("mx-v-WORSENED", "rolled back") if c.get("rolled_back") else "") + \
         (_chip("", "healthy control") if c["control"] else "")
     first = "" if c["valid_first"] is None else "valid" if c["valid_first"] else \
@@ -226,7 +232,8 @@ def render(m: dict) -> str:
             + f"<span><b>{s['repairs']}</b> re-proposals</span></span></div>"
             + _tiles(s, seen if replayed else None) + _groups(m) + _recent(m)
             + f'<p class="mx-hint">{hint}The design fix is each scenario\'s known-correct lever, kept from the '
-              "agent; a fix matches on its action and target, not its values. A reviewer's label on a fix "
+              "agent; a fix matches on its action and target, not its values. Cited a case: the proposals "
+              "that cite one of the past cases shown to the agent (memory). A reviewer's label on a fix "
               "(History → Correct the outcome) counts over its measured verdict. A healthy-control incident is a "
               "false alarm: the right proposal there is NO_ACTION.</p></div>")
 

@@ -15,7 +15,7 @@ from nifi_healer.agent import graph, prompts
 from nifi_healer.eval import replay, scorecard as sc
 from nifi_healer.rag import ingest, memory, retriever
 from nifi_healer.runtime.poller import Poller
-from nifi_healer.ui import views
+from nifi_healer.ui import scorecard, views
 
 
 class FixLLM:
@@ -171,3 +171,14 @@ def test_replay_rounds_learn_from_earlier_ones(replayed):
     assert snapshot["runs"][-1]["agent_version"].endswith("/no-memory")
     assert any(c["run"].endswith(" · no memory") for c in found)
     assert {name for name, _ in sc.table(found, "Replay round")} == {"round 1", "round 2"}
+
+    # Only round 2 of the memory run had a past case to cite.
+    by_version = dict(sc.table(found, "Agent version"))
+    cited = [c for c in found if c["cited"]]
+    assert len(cited) == 1 and cited[0]["round"] == 2 and cited[0]["cited"][0].startswith("case:INC-")
+    assert by_version[snapshot["runs"][-1]["agent_version"]]["cited"] == 0.0
+    assert dict(sc.table(found, "Cited a past case"))["cited a past case"]["incidents"] == 1
+
+    html = scorecard.render(scorecard.model(None, 0.0, "All", "Cited a past case", source=scorecard.REPLAY))
+    assert "Cited a case" in html and "By cited a past case" in html
+    assert f"cited {cited[0]['cited'][0].split('-', 3)[-1]}" in html

@@ -16,6 +16,7 @@ Each case answers, for one incident:
              verify windows' verdict. A dry run has none.
   regressed  a later window measured a resolved incident worse.
   rolled back  a rollback of its fix was applied.
+  cited      the past cases (rag/memory.py) its proposal cites.
 
 A rollback incident is not a case: the agent proposed nothing in it. It
 shows as its fix's `rolled_back`.
@@ -54,6 +55,8 @@ GROUPINGS = {
     "Who chose the fix": lambda c: c["origin"],
     "Replay run": lambda c: c.get("run") or "(not a replay)",
     "Replay round": lambda c: f"round {c['round']}" if c.get("round") else "(not a replay)",
+    "Cited a past case": lambda c: "cited a past case" if c.get("cited") else
+                                   "cited none" if c["proposed"] else "(no proposal)",
 }
 
 
@@ -192,6 +195,7 @@ def cases(record: dict) -> list:
             "result": result, "result_from": source,
             "regressed": any((o.get("details") or {}).get("regression") for o in by["outcomes"].get(iid, [])),
             "rolled_back": any(a["id"] in rolled_back for a in applied),
+            "cited": [str(c) for c in (pick or {}).get("citations") or [] if str(c).startswith("case:")],
             "control": bool(scenario and scenario.family == "NONE"),
         })
 
@@ -219,6 +223,7 @@ def summarize(group: list) -> dict:
         "first_valid": sum(bool(c["valid_first"]) for c in proposed),
         "valid_first": _rate(sum(bool(c["valid_first"]) for c in proposed), len(proposed)),
         "repairs": sum(c["repairs"] for c in proposed),
+        "cited": _rate(sum(bool(c.get("cited")) for c in proposed), len(proposed)),
         "match": {m: sum(c["match"] == m for c in labelled) for m in MATCHES[:3]},
         "matched": _rate(sum(c["match"] in (EXPECTED, ACCEPTABLE) for c in labelled), len(labelled)),
         "review": {r: sum(c["review"] == r for c in group) for r in REVIEWS},
