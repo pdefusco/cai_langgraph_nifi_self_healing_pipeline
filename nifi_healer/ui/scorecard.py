@@ -131,13 +131,18 @@ _REVIEW_BARS = (sc.APPROVED, sc.EDITED, sc.REJECTED, sc.UNDECIDED)
 _RESULT_BARS = (sc.WORKED, sc.NO_HELP, sc.WORSE, sc.UNCLEAR, sc.PENDING)
 
 
+def _name(group: str) -> str:
+    # An agent version breaks after its slashes, not across the next column.
+    return _e(group).replace("/", "/<wbr>")
+
+
 def _groups(m: dict) -> str:
     head = ("<tr><th>{}</th><th>Incidents</th><th>Valid first try</th><th>Design fix</th>"
             "<th title=\"Proposals that cite a past case (memory)\">Cited a case</th>"
             "<th>Review</th><th>Result</th><th>Worked</th><th>Regressions</th><th>To resolve</th></tr>"
             ).format(_e(m["grouping"]))
     rows = "".join(
-        f"<tr><td class=\"sc-g\">{_e(name)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
+        f"<tr><td class=\"sc-g\">{_name(name)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
         f"<td>{pct(s['matched'])}</td><td>{pct(s['cited'])}</td>"
         f"<td class=\"sc-stack\">{_bar(s['review'], _REVIEW_BARS)}</td>"
         f"<td class=\"sc-stack\">{_bar(s['results'], _RESULT_BARS)}</td><td>{pct(s['worked'])}</td>"
@@ -186,15 +191,35 @@ def _case(c: dict, now: float) -> str:
 
 
 def _recent(m: dict) -> str:
-    shown = m["cases"][::-1][:_RECENT]
-    more = len(m["cases"]) - len(shown)
+    # Each group shows its own newest, so an older run is not cut off by a newer one.
+    key = sc.GROUPINGS[m["grouping"]]
+    groups = {}
+
+    for c in m["cases"][::-1]:
+        groups.setdefault(key(c), []).append(c)
+
+    each = max(_RECENT // max(len(groups), 1), 10)
     head = ("<tr><th>Incident</th><th>Scenario</th><th>Agent's fix</th><th>First proposal</th>"
             "<th>Against the design</th><th>Review</th><th>Result</th><th></th></tr>")
+    body, cut = [], False
 
-    return (f'<div class="mx-ledger-head"><span class="mx-eyebrow">Incidents, newest first</span>'
-            + (f"<p>The {_RECENT} newest of {len(m['cases'])}.</p>" if more > 0 else "") + "</div>"
+    for name, _ in m["rows"]:
+        found = groups.get(name) or []
+        cut = cut or len(found) > each
+
+        if len(groups) > 1:
+            body.append(f'<tr class="mx-grp"><td colspan="8">{_name(name)}<span>'
+                        + (f"the {each} newest of {len(found)}" if len(found) > each else f"{len(found)}")
+                        + "</span></td></tr>")
+
+        body += [_case(c, m["now"]) for c in found[:each]]
+
+    title = "Incidents, newest first" + (f" in each {m['grouping'].lower()}" if len(groups) > 1 else "")
+    note = f"<p>The {each} newest of {len(m['cases'])}.</p>" if cut and len(groups) == 1 else ""
+
+    return (f'<div class="mx-ledger-head"><span class="mx-eyebrow">{_e(title)}</span>{note}</div>'
             f'<div class="mx-scroll"><table class="mx-ledger sc-table sc-cases"><thead>{head}</thead><tbody>'
-            + "".join(_case(c, m["now"]) for c in shown) + "</tbody></table></div>")
+            + "".join(body) + "</tbody></table></div>")
 
 
 _HOW_TO_REPLAY = ("Run one as a CAI job: script <code>cai_job.py</code>, Arguments "
@@ -259,4 +284,6 @@ CSS = """
 .sc-b-pending{background:repeating-linear-gradient(45deg,var(--mx-neutral-tint) 0 3px,transparent 3px 6px)}
 .sc-id{display:block;font:500 12px var(--mx-mono)}
 .sc-fix{font:500 12px var(--mx-mono)}
+.sc tr.mx-grp td{font-family:var(--mx-mono);font-size:12px}
+.sc tr.mx-grp span{margin-left:12px;font:400 11.5px var(--font);color:var(--mx-muted)}
 """

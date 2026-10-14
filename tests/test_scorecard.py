@@ -153,6 +153,20 @@ def test_summary_and_groups():
     assert sc.summarize([])["worked"] is None
 
 
+def test_each_group_lists_its_own_newest_incidents():
+    found = sc.cases(_record())
+    older = [c for c in found if c["agent_version"] == "prompt:b/model:m"]
+    newer = [c for c in found if c["agent_version"] == "prompt:a/model:m"] * 10
+    cases = older + newer          # oldest first: version b would fall past a single newest-50 cut
+    m = {"cases": cases, "grouping": "Agent version", "rows": sc.table(cases, "Agent version"), "now": 0.0}
+
+    html = scorecard._recent(m)
+    assert "Incidents, newest first in each agent version" in html
+    assert f"prompt:a/<wbr>model:m<span>the 25 newest of {len(newer)}</span>" in html
+    assert "prompt:b/<wbr>model:m<span>1</span>" in html
+    assert html.count("<tr><td><span class=\"sc-id\">") == 25 + 1
+
+
 def test_scorecard_from_the_store_and_its_html(agent):
     client, store, entry, incident = _approved_s01(agent)
     now = client.now()
