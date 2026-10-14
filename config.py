@@ -248,9 +248,9 @@ RAG_TOP_K = _int("SELFHEAL_RAG_TOP_K", 5)
 MEMORY = _bool("SELFHEAL_MEMORY", True)
 MEMORY_TOP_K = _int("SELFHEAL_MEMORY_TOP_K", 3)
 
-# Fix track records (rag/priors.py): how often each fix worked on the
-# incident's group, and fleet-wide on the same symptom (the TOP_K tried
-# most). Off for a baseline replay (eval/replay.py --no-priors).
+# Fix track records (rag/priors.py), on the review: how often each fix
+# worked on the incident's group, and on other groups with the same
+# symptom (the TOP_K tried most). The agent does not see them.
 PRIORS = _bool("SELFHEAL_PRIORS", True)
 PRIORS_TOP_K = _int("SELFHEAL_PRIORS_TOP_K", 5)
 

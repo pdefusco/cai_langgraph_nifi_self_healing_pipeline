@@ -521,7 +521,7 @@ def review(store, client, incident_id: str | None) -> dict:
             f"`{c}` ({headline})" for c, headline in cases.items()))
 
     if record:
-        text.append("**Track record shown to the agent:**\n" + "\n".join(f"- {line}" for line in record))
+        text.append("**Track record of these fixes:**\n" + "\n".join(f"- {line}" for line in record))
 
     family = plan.get("family") or "?"
     text.append(f"**Action family:** {family} · **risk:** {plan.get('risk') or '?'} · "

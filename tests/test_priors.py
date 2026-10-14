@@ -1,7 +1,7 @@
 """
 Fix track records (rag/priors.py): how often each fix worked on the
-incident's group and on other groups with the same symptom, in the
-prompt, on the review and as a warning when it keeps failing.
+incident's group and on other groups with the same symptom, on the
+review and as a warning when it keeps failing. The agent never sees them.
 """
 
 import config
@@ -25,22 +25,13 @@ def test_a_fix_that_keeps_failing_is_flagged(replayed):
     found = replay.cases(snapshot)
 
     assert [c["result"] for c in found] == [sc.NO_HELP] * 3
-    assert "Track record of fixes" in model.prompts[0] and model.prompts[0].rstrip().endswith("(none)")
-    assert "On this process group, SET_CONCURRENT_TASKS 'S02 Drain': 0 of 1 worked (1 didn't help)" \
-        in model.prompts[1]
-    assert "0 of 2 worked (2 didn't help)" in model.prompts[2]
+    assert not any("Track record" in p or "worked (" in p for p in model.prompts)
 
     # One failure is a hint; two on the same group warn the reviewer.
     warnings = [p["validation"]["warnings"] for p in snapshot["record"]["proposals"]]
     assert [any("has not worked on this process group" in w for w in ws) for ws in warnings] == \
         [False, False, True]
-
-    replay.run(["S02"], priors=False)
-    snapshot = replay.load()
-
-    assert "On this process group" not in model.prompts[-1] and snapshot["runs"][-1]["priors"] is False
-    assert snapshot["runs"][-1]["agent_version"].endswith("/no-priors")
-    assert any(c["run"].endswith(" · no priors") for c in replay.cases(snapshot))
+    assert warnings[2][-1] == "this fix has not worked on this process group before: 0 of 2 worked (2 didn't help)"
 
 
 def test_tries_count_what_ran_and_what_was_rejected(fleet):
@@ -66,7 +57,7 @@ def test_tries_count_what_ran_and_what_was_rejected(fleet):
         "On other process groups, with Flow Files Queued over its threshold, SET_CONCURRENT_TASKS: 1 of 1 worked",
         "On other process groups, with Flow Files Queued over its threshold, SET_RUN_SCHEDULE: 0 of 1 worked "
         "(1 rejected)"]
-    assert "Track record shown to the agent" in views.review(store, client, incidents["S03"]["id"])["proposal"]
+    assert "Track record of these fixes" in views.review(store, client, incidents["S03"]["id"])["proposal"]
     assert review["plan"]["warnings"] == []
 
 

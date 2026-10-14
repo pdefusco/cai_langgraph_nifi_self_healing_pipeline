@@ -6,7 +6,6 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --pack p1-throughput
     python -m nifi_healer.eval.replay --scenario S17 --oracle  # the design fix, no LLM
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
-    python -m nifi_healer.eval.replay --trials 3 --no-priors   # no fix track records
     CAI job: cai_job.py    Arguments: -m nifi_healer.eval.replay --trials 3
 
 Each trial round, over the packs the chosen scenarios are in:
@@ -37,8 +36,8 @@ The store is kept from run to run, so with memory on (rag/memory.py) a
 round's agent sees the cases of every earlier round and run in this
 REPLAY_DIR, except the oracle's; the Scorecard's Replay round grouping
 shows whether it learns. `--no-memory` is the baseline (its agent
-version ends /no-memory). The fix track records (rag/priors.py) come
-from the same store; `--no-priors` leaves them out (/no-priors).
+version ends /no-memory). Runs before 2026-10-14 could also leave out
+the fix track records (/no-priors); the agent no longer sees them.
 
 The pacing guards (cooldown, actions per window) are off: every round is
 a fresh tenant, and a pack's faults are fixed one after another, which on
@@ -74,8 +73,7 @@ RECORD = "record.json"
 # Every config setting isolate() changes.
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
-            "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
-            "PRIORS")
+            "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY")
 
 
 def log(msg: str) -> None:
@@ -312,12 +310,12 @@ def _pct(rate) -> str:
 
 
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
-        detect_seconds: float = DETECT_SECONDS, memory: bool = True, priors: bool = True) -> str:
+        detect_seconds: float = DETECT_SECONDS, memory: bool = True) -> str:
     """`trials` rounds of `ids` in an isolated mock tenant; returns the run's id. Calls isolate()."""
 
     directory = directory or config.REPLAY_DIR
     world = isolate(directory)
-    config.MEMORY, config.PRIORS = memory, priors
+    config.MEMORY = memory
     client, store = clients.get_client(), db.get_store()
 
     if oracle:
@@ -327,11 +325,11 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
     previous = load(directory) or {}
     runs = previous.get("runs") or []
     entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
-             "agent_version": prompts.agent_version(model), "memory": memory, "priors": priors, "scenarios": ids, "trials": [],
+             "agent_version": prompts.agent_version(model), "memory": memory, "scenarios": ids, "trials": [],
              "started_at": time.time(), "finished_at": None}
     runs.append(entry)
     log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
-        + ("" if memory else ", no memory") + ("" if priors else ", no priors") + f" in {directory}")
+        + ("" if memory else ", no memory") + f" in {directory}")
     now = previous.get("now") or 0.0
 
     for number in range(1, trials + 1):
@@ -353,14 +351,12 @@ def main() -> int:
     parser.add_argument("--oracle", action="store_true", help="answer with the design fix instead of the LLM")
     parser.add_argument("--dir", default="", help=f"where the replay keeps its tenant (default {config.REPLAY_DIR})")
     parser.add_argument("--no-memory", action="store_true", help="show the agent no past cases (the baseline)")
-    parser.add_argument("--no-priors", action="store_true", help="show the agent no fix track records")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
                         help="simulated minutes to wait for every fault's incident")
     args = parser.parse_args()
 
     ids = chosen(args.scenario, args.pack)
-    run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
-                 not args.no_priors)
+    run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0

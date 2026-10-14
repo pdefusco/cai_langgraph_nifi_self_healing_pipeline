@@ -5,12 +5,17 @@ symptom.
 
     rows = for_incident(incident)
     rows[0]       # {scope, fix, worked, no_help, worse, rejected, tries, ...}
-    lines(rows)   # what the agent and the reviewer are shown
+    lines(rows)   # what the reviewer is shown
 
 Counted from the same cases as the remediation memory (rag/memory.py):
 applied fixes the KPIs or a reviewer judged, and rejected proposals.
 Memory shows a few similar cases in full; the priors count all of them,
 so one lucky or unlucky case does not stand for the record.
+
+Only the reviewer sees them. In the replay (2026-10-14) they did not
+help the agent, with memory (97% of fixes worked either way) or without
+it (78% vs 80%): its misses are the right lever at the wrong value, and
+a track record leaves the values out.
 
 On the group, a fix is its steps without their values: 4 or 6 concurrent
 tasks on the same processor is one fix. On other groups it is the
