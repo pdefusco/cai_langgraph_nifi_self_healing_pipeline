@@ -145,7 +145,8 @@ def _tiles(s: dict, seen: dict | None = None) -> str:
         approved,
         _tile("Fix worked", pct(s["worked"]),
               _of(worked, s["judged"], "judged") + (f" · {s['labelled']} by a reviewer" if s["labelled"] else "")),
-        _tile("Median lift", lift_text(s["lift"]), _spread(s) or "no fix measured yet"),
+        _tile("Median lift", lift_text(s["lift"]),
+              " · ".join(x for x in (_spread(s), _measured_on(s)) if x) or "no fix measured yet"),
         _tile("Regressions", str(s["regressed"]), "worse in a later window"
               + (f" · {s['rolled_back']} fix(es) rolled back" if s["rolled_back"] else "")),
         _tile("Time to resolve", duration(s["to_resolve"]), "median, opened to resolved"),
@@ -168,11 +169,36 @@ def _spread(s: dict) -> str:
     return f"middle half {lift_text(low)} to {lift_text(high)} · {count}"
 
 
+def _measured_on(s: dict) -> str:
+    """
+    The KPIs a group's lifts were read on: "on S01 Queue · Flow Files
+    Queued" for one, else how many on each metric, "96 on Flow Files
+    Queued · 20 on Bytes Sent".
+    """
+
+    found = s.get("lifted_on") or {}
+
+    if len(found) == 1:
+        name, metric = _kpi_name(next(iter(found)))
+
+        return f"on {name}" + (f" · {metric}" if metric else "")
+
+    kinds = {}
+
+    for key, n in found.items():
+        name, metric = _kpi_name(key)
+        kinds[metric or name] = kinds.get(metric or name, 0) + n
+
+    return " · ".join(f"{n} on {kind}" for kind, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def _lift_cell(s: dict) -> str:
     if s["lift"] is None:
         return '<span class="mx-none">—</span>'
 
-    return f'<b class="sc-lift {_tone(s["lift"])}">{lift_text(s["lift"])}</b><small class="sc-sub">{_e(_spread(s))}</small>'
+    return (f'<b class="sc-lift {_tone(s["lift"])}">{lift_text(s["lift"])}</b>'
+            f'<small class="sc-sub">{_e(_spread(s))}</small>'
+            + (f'<small class="sc-sub">measured {_e(_measured_on(s))}</small>' if s.get("lifted_on") else ""))
 
 
 def _bar(counts: dict, order: tuple) -> str:
@@ -262,14 +288,10 @@ def _moved(c: dict) -> str:
     label = f"reviewer: {c['result']}" if c["result_from"] == "reviewer" else ""
 
     if k:
-        name, metric = _kpi_name(k["kpi"])
-        levels = f"{_level(k['before'])} → {_level(k['after'])}"
-        tip = (f"{name}{' · ' + metric if metric else ''} ({'mean' if k['good'] == 'up' else 'level'}): {levels} "
-               f"over the {window_label(k['window'])} window after the fix, "
-               f"{'higher' if k['good'] == 'up' else 'lower'} is better; measured {k['verdict'].replace('_', ' ').lower()}")
-        sub = " · ".join(x for x in (f"{name} {levels}", "so far" if c["result"] == sc.PENDING else "", label) if x)
+        sub = " · ".join(x for x in ("so far" if c["result"] == sc.PENDING else "",
+                                     f"measured {k['verdict'].replace('_', ' ').lower()}", label) if x)
 
-        return (f'<b class="sc-lift {_tone(c["lift"])}" title="{_e(tip)}">{lift_text(c["lift"])}</b>'
+        return (f'<b class="sc-lift {_tone(c["lift"])}">{lift_text(c["lift"])}</b>'
                 f'<small class="sc-sub">{_e(sub)}</small>')
 
     if label:
@@ -282,6 +304,24 @@ def _moved(c: dict) -> str:
         return _chip("mx-v-WORSENED", "apply failed")
 
     return f'<span class="mx-none">{_e(words)}</span>' if words else ""
+
+
+def _on(c: dict) -> str:
+    """The KPI an incident's lift was read on, and its two levels."""
+
+    k = c.get("lift_kpi")
+
+    if not k:
+        return ""
+
+    name, metric = _kpi_name(k["kpi"])
+    window = window_label(k["window"])
+    levels = f"{_level(k['before'])} → {_level(k['after'])}"
+    how = (f"average {levels}, before vs the {window} after the fix · higher is better" if k["good"] == "up" else
+           f"{levels}, when fixed vs {window} later · lower is better")
+
+    return (f'<span class="sc-kpi">{_e(name)}</span>'
+            f'<small class="sc-sub">{_e(" · ".join(x for x in (metric, how) if x))}</small>')
 
 
 def _case(c: dict, now: float) -> str:
@@ -303,7 +343,8 @@ def _case(c: dict, now: float) -> str:
             f"<td>{_e(c['scenario_title'])}</td><td class=\"sc-fix\">{_e(c['action'] or '—')}</td>"
             f"<td>{_e(first)}</td><td>{_chip(css, text) if c['proposed'] else ''}</td>"
             f"<td>{_chip(_REVIEW_CHIP[c['review']], c['review'])}</td>"
-            f"<td>{result}</td><td><span class=\"mx-chips\">{flags}</span></td></tr>")
+            f"<td>{result}</td><td class=\"sc-on\">{_on(c)}</td>"
+            f"<td><span class=\"mx-chips\">{flags}</span></td></tr>")
 
 
 def _recent(m: dict) -> str:
@@ -317,7 +358,9 @@ def _recent(m: dict) -> str:
     each = max(_RECENT // max(len(groups), 1), 10)
     head = ("<tr><th>Incident</th><th>Scenario</th><th>Agent's fix</th><th>First proposal</th>"
             "<th>Against the design</th><th>Review</th><th title=\"How far the fix moved the KPI that opened "
-            "the incident, −100% to +100%; hover for the KPI's levels\">Lift</th><th></th></tr>")
+            "the incident, −100% to +100%\">Lift</th><th title=\"The KPI the lift was read on: the one that opened "
+            "the incident, and its level when the fix went in and at the end of the window\">Measured on</th>"
+            "<th></th></tr>")
     body, cut = [], False
 
     for name, _ in m["rows"]:
@@ -326,7 +369,7 @@ def _recent(m: dict) -> str:
 
         if len(groups) > 1:
             title, sub = agent_name(name) if m["grouping"] == "Agent version" else (name, "")
-            body.append(f'<tr class="mx-grp"><td colspan="8" title="{_e(name)}">{_e(title)}'
+            body.append(f'<tr class="mx-grp"><td colspan="9" title="{_e(name)}">{_e(title)}'
                         + (f'<span>{_e(sub)}</span>' if sub else "") + '<span>'
                         + (f"the {each} newest of {len(found)}" if len(found) > each else f"{len(found)}")
                         + "</span></td></tr>")
@@ -375,8 +418,8 @@ def render(m: dict) -> str:
             + (f"<span><b>{s['apply_failed']}</b> failed to apply</span>" if s["apply_failed"] else "")
             + f"<span><b>{s['repairs']}</b> re-proposals</span></span></div>"
             + _tiles(s, seen if replayed else None) + _groups(m) + _recent(m)
-            + f'<p class="mx-hint">{hint}Lift: how far a fix moved the KPI that opened its incident, from '
-              "−100% (as bad as it gets) through 0 (no change) to +100% (a backlog cleared, a stopped rate "
+            + f'<p class="mx-hint">{hint}Lift: how far a fix moved the KPI that opened its incident (Measured on), '
+              "from −100% (as bad as it gets) through 0 (no change) to +100% (a backlog cleared, a stopped rate "
               "back). The words behind every column are under How to read this page, above.</p></div>")
 
 
@@ -399,6 +442,8 @@ CSS = """
 .sc-up{color:var(--mx-good)}.sc-down{color:var(--mx-bad)}
 .sc-sub{display:block;margin-top:2px;font:400 11px var(--font);color:var(--mx-muted);white-space:normal}
 .sc-v{display:block;font:500 12px var(--mx-mono)}
+.sc-kpi{display:block;font:500 12px var(--mx-mono)}
+.sc .sc-table td.sc-on{min-width:200px;white-space:normal}
 .sc-id{display:block;font:500 12px var(--mx-mono)}
 .sc-fix{font:500 12px var(--mx-mono)}
 .sc tr.mx-grp td{font-family:var(--mx-mono);font-size:12px}

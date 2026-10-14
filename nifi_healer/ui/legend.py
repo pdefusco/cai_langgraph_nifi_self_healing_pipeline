@@ -152,8 +152,10 @@ How good the agent is at fixing things, counted from the incidents it handled.
     **−50%**: it doubled.
   - When several KPIs decide an incident, the one that moved least counts, so one cleared queue cannot hide another
     still full.
-  - A group shows the median and, beneath it, the **middle half**: where the middle 50% of its fixes fell.
-  - Hover over an incident's lift to see the KPI and its two values.
+  - **Measured on**, beside each incident's lift: the KPI it was read on (the component, such as *S01 Queue*, and
+    the metric, such as *Flow Files Queued*), its two values, and the window.
+  - A group shows the median and, beneath it, the **middle half** (where the middle 50% of its fixes fell) and which
+    KPIs those lifts were measured on.
 - **Regressions**: fixes that looked fine at first but were measured worse in a later window.
 - **To resolve**: the median time from an incident opening to it being resolved.
 """

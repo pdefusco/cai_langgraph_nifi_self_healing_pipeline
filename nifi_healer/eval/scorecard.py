@@ -15,7 +15,8 @@ Each case answers, for one incident:
              is one (RIGHT_FIX, WRONG_FIX, UNCLEAR), else the deciding
              verify windows' verdict. A dry run has none.
   lift       how far the deciding KPIs moved their good way in the window
-             the verdict settled on, -100%..+100% (kpi/outcomes.py).
+             the verdict settled on, -100%..+100% (kpi/outcomes.py);
+             lift_kpi the KPI it was measured on, and its two levels.
   regressed  a later window measured a resolved incident worse.
   rolled back  a rollback of its fix was applied.
   cited      the past cases (rag/memory.py) its proposal cites.
@@ -238,6 +239,11 @@ def summarize(group: list) -> dict:
     fixed = [c["closed_at"] - c["opened_at"] for c in group
              if c["status"] == "RESOLVED" and c.get("closed_at")]
     lifts = sorted(c["lift"] for c in judged if c.get("lift") is not None)
+    lifted_on = {}
+
+    for c in judged:
+        if c.get("lift") is not None:
+            lifted_on[c["lift_kpi"]["kpi"]] = lifted_on.get(c["lift_kpi"]["kpi"], 0) + 1
 
     return {
         "incidents": len(group),
@@ -261,6 +267,7 @@ def summarize(group: list) -> dict:
         "lift": statistics.median(lifts) if lifts else None,
         "lift_range": tuple(statistics.quantiles(lifts, n=4, method="inclusive")[::2]) if len(lifts) > 1 else None,
         "lifted": len(lifts),
+        "lifted_on": lifted_on,
         "first_at": min((c["opened_at"] for c in group), default=None),
         "regressed": sum(c["regressed"] for c in group),
         "rolled_back": sum(c.get("rolled_back", False) for c in group),

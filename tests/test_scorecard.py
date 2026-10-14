@@ -220,6 +220,20 @@ def test_cases_carry_the_settled_windows_lift_and_groups_its_median():
 
     s = sc.summarize(list(found.values()))
     assert (s["lift"], s["lifted"], s["lift_range"]) == (0.0, 3, (-0.375, 0.5))
+    assert s["lifted_on"] == {"S01:connection:S01 Queue:queued_count": 3}
+
+    # The scorecard names the KPI behind each lift, without leaving the page.
+    assert scorecard._measured_on(s) == "on S01 Queue · Flow Files Queued"
+    assert scorecard._measured_on({"lifted_on": {"S01:connection:S01 Queue:queued_count": 3,
+                                                 "S03:connection:S03 Queue:queued_count": 2,
+                                                 "S20:processor:S20 Sink:bytes_out": 4}}) == \
+        "5 on Flow Files Queued · 4 on Bytes Sent"
+    on = scorecard._on(found["1"])
+    assert '<span class="sc-kpi">S01 Queue</span>' in on and "Flow Files Queued · 800 → 0, when fixed vs 15 min later" in on
+    m = {"cases": list(found.values()), "grouping": "Scenario", "rows": sc.table(list(found.values()), "Scenario"),
+         "now": 0.0}
+    assert "Measured on</th>" in scorecard._recent(m)
+    assert "measured on S01 Queue · Flow Files Queued" in scorecard._groups(m)
     assert scorecard.lift_text(s["lift"]) == "0%" and scorecard.lift_text(-0.75) == "−75%" and \
         scorecard.lift_text(1.0) == "+100%" and scorecard.lift_text(None) == "—"
 
