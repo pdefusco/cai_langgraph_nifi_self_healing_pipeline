@@ -6,6 +6,7 @@ rates over a grouping, and the Scorecard tab's HTML (ui/scorecard.py).
 import config
 from flows import packs
 from nifi_healer.eval import scorecard as sc
+from nifi_healer.kpi import outcomes
 from nifi_healer.ui import gradio_app, scorecard
 
 from test_agent_graph import agent  # noqa: F401 (a fixture)
@@ -162,9 +163,75 @@ def test_each_group_lists_its_own_newest_incidents():
 
     html = scorecard._recent(m)
     assert "Incidents, newest first in each agent version" in html
-    assert f"prompt:a/<wbr>model:m<span>the 25 newest of {len(newer)}</span>" in html
-    assert "prompt:b/<wbr>model:m<span>1</span>" in html
+    assert f"instructions a<span>m · memory on</span><span>the 25 newest of {len(newer)}</span>" in html
+    assert 'title="prompt:b/model:m">instructions b<span>m · memory on</span><span>1</span>' in html
     assert html.count("<tr><td><span class=\"sc-id\">") == 25 + 1
+
+
+def _judged(kpi, verdict, before, after, good="down", primary=True, signalled=False):
+    field = "mean" if good == "up" else "latest"
+    return {"kpi": kpi, "good": good, "primary": primary, "signalled": signalled, "verdict": verdict,
+            "before": {field: before}, "after": {field: after}}
+
+
+def test_lift_is_how_far_a_kpi_moved_its_good_way():
+    assert outcomes.lift(_judged("q", "IMPROVED", 800, 0)) == 1.0               # a backlog cleared
+    assert outcomes.lift(_judged("q", "IMPROVED", 800, 400)) == 0.5             # halved
+    assert outcomes.lift(_judged("q", "WORSENED", 400, 800)) == -0.5            # doubled
+    assert outcomes.lift(_judged("r", "IMPROVED", 0, 5, good="up")) == 1.0      # a stopped rate back
+    assert outcomes.lift(_judged("r", "WORSENED", 10, 5, good="up")) == -0.5
+    assert outcomes.lift(_judged("q", "NO_CHANGE", 0, 0)) == 0.0
+    assert outcomes.lift(_judged("q", "INCONCLUSIVE", 800, 0)) is None
+
+    # A queue's lift is its level at the end of each side, not its mean.
+    assert outcomes.levels({"good": "down", "before": {"mean": 1, "latest": 2}, "after": {"latest": 3}}) == (2, 3)
+
+
+def test_an_outcomes_lift_is_its_least_moved_deciding_kpi():
+    signalled = _judged("S01:connection:S01 Queue:queued_count", "IMPROVED", 800, 0, signalled=True)
+    primary = _judged("S01:connection:S01 Other:queued_count", "NO_CHANGE", 100, 90)
+    found = outcomes.outcome_lift({"kpis": [signalled, primary]})
+    assert (found["lift"], found["kpi"], found["before"], found["after"]) == \
+        (1.0, "S01:connection:S01 Queue:queued_count", 800, 0)     # the KPI that opened it, over the primary
+
+    worse = _judged("S01:connection:S01 Other:queued_count", "WORSENED", 100, 400)
+    assert outcomes.outcome_lift({"kpis": [signalled, worse]})["lift"] == -0.75     # a worse one counts too
+
+    side = _judged("x", "WORSENED", 1, 100, primary=False)
+    assert outcomes.outcome_lift({"kpis": [primary, side]})["lift"] == 0.1          # not a deciding KPI
+    assert outcomes.outcome_lift({"kpis": [_judged("q", "INCONCLUSIVE", 1, 2)]}) is None
+    assert outcomes.outcome_lift(None) is None
+
+
+def test_cases_carry_the_settled_windows_lift_and_groups_its_median():
+    record = _record()
+    details = {1: (800, 0), 2: (100, 100), 3: (100, 400)}
+
+    for o in record["outcomes"]:
+        n = int(o["incident_id"].rsplit("-", 1)[1])
+
+        if n in details:
+            o["details"]["kpis"] = [_judged("S01:connection:S01 Queue:queued_count", o["verdict"], *details[n])]
+
+    found = {c["incident"][-1]: c for c in sc.cases(record)}
+    assert (found["1"]["lift"], found["1"]["lift_kpi"]["window"]) == (1.0, FIRST)    # 15 min settled it
+    assert (found["2"]["lift"], found["2"]["lift_kpi"]["window"]) == (0.0, SECOND)   # 15 min no change: the 1 h
+    assert found["3"]["lift"] == -0.75 and found["6"]["lift"] is None
+
+    s = sc.summarize(list(found.values()))
+    assert (s["lift"], s["lifted"], s["lift_range"]) == (0.0, 3, (-0.375, 0.5))
+    assert scorecard.lift_text(s["lift"]) == "0%" and scorecard.lift_text(-0.75) == "−75%" and \
+        scorecard.lift_text(1.0) == "+100%" and scorecard.lift_text(None) == "—"
+
+
+def test_agent_names_in_plain_words():
+    assert scorecard.agent_name("prompt:fa8c5675be/model:nvidia/nemotron-3-super-120b-a12b") == \
+        ("instructions fa8c5675be", "nemotron-3-super-120b-a12b · memory on")
+    assert scorecard.agent_name("prompt:029d81b0d7/model:nvidia/nemotron/no-memory/no-priors") == \
+        ("instructions 029d81b0d7", "nemotron · memory off · track records off")
+    assert scorecard.agent_name("prompt:a/model:oracle") == \
+        ("instructions a", "oracle (the design fix, no LLM) · memory on")
+    assert scorecard.agent_name("(none)") == ("(none)", "")
 
 
 def test_scorecard_from_the_store_and_its_html(agent):
@@ -184,10 +251,21 @@ def test_scorecard_from_the_store_and_its_html(agent):
     action = store.actions(incident_id=incident["id"])[-1]
     store.add_label(incident["id"], action["id"], "WRONG_FIX", "<b>drained</b> on its own", "ops", now)
     html = scorecard.render(scorecard.model(store, now, "All", "Who chose the fix"))
-    assert '<span class="mx-chip mx-v-NO_CHANGE">reviewer: didn&#x27;t help</span>' in html
+    # Its lift stays what was measured; the reviewer's call shows beside it.
+    assert "reviewer: didn&#x27;t help" in html and '<b class="sc-lift sc-up"' in html
     assert "<b>drained" not in html
 
     assert "No incidents over the last 24 h." in scorecard.render(scorecard.model(store, now + 3 * 86400, "24 h"))
     assert "Agent scorecard" in gradio_app.show_scorecard("7 d", "Agent version")
     assert scorecard.duration(30) == "<1 min" and scorecard.duration(4000) == "67 min" and \
         scorecard.duration(7200) == "2.0 h" and scorecard.duration(3 * 86400) == "3.0 d"
+
+
+def test_every_tab_has_a_plain_legend():
+    from nifi_healer.ui import legend
+
+    texts = [legend.FLEET, legend.REVIEW, legend.HISTORY, legend.MONITOR, legend.SCORECARD, legend.SYSTEM]
+    assert all(t.strip() and "{" not in t for t in texts)
+    for term in ("Agent version", "Instructions", "not a commit", "oracle", "Memory on/off", "Lift", "middle half",
+                 "healthy control", "Replay"):
+        assert term in legend.SCORECARD, term

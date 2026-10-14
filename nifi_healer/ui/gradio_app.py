@@ -31,7 +31,7 @@ from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
 from nifi_healer.store.db import get_store
-from nifi_healer.ui import monitor, scorecard, views
+from nifi_healer.ui import legend, monitor, scorecard, views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
@@ -518,6 +518,11 @@ def fast_forward(minutes):
 # ---------------------------------------------------------------------
 
 
+def _legend(text: str) -> None:
+    with gr.Accordion("How to read this page", open=False):
+        gr.Markdown(text)
+
+
 def build() -> gr.Blocks:
     with gr.Blocks(title="NiFi Self-Healing") as demo:
         gr.Markdown("## NiFi Self-Healing Pipeline\n"
@@ -525,6 +530,8 @@ def build() -> gr.Blocks:
                     f"{'**ARMED**' if config.ARMED else 'disarmed (dry runs)'}")
 
         with gr.Tab("Fleet"):
+            _legend(legend.FLEET)
+
             fleet_header = gr.Markdown()
             deployment_table = gr.Dataframe(headers=views.DEPLOYMENT_HEADERS, interactive=False, wrap=True,
                                             label="Deployments")
@@ -548,6 +555,8 @@ def build() -> gr.Blocks:
             kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
 
         with gr.Tab("Review Queue"):
+            _legend(legend.REVIEW)
+
             with gr.Row():
                 queue_pick = gr.Dropdown(label="Incident", choices=[], scale=4, allow_custom_value=True)
                 queue_refresh = gr.Button("Refresh", scale=1)
@@ -597,6 +606,8 @@ def build() -> gr.Blocks:
             diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
         with gr.Tab("History"):
+            _legend(legend.HISTORY)
+
             history_refresh = gr.Button("Refresh")
             history_table = gr.Dataframe(headers=views.HISTORY_HEADERS, interactive=False, wrap=True,
                                          max_height=420)
@@ -647,6 +658,8 @@ def build() -> gr.Blocks:
                                outputs=corrected)
 
         with gr.Tab("Monitor"):
+            _legend(legend.MONITOR)
+
             with gr.Row():
                 mon_range = gr.Radio(list(monitor.RANGES), value=monitor.DEFAULT_RANGE, label="Range", scale=2)
                 fleet_query = gr.Textbox(label="Filter deployments", placeholder="name", scale=2)
@@ -681,6 +694,8 @@ def build() -> gr.Blocks:
                 show_fleet, **fleet_out)
 
         with gr.Tab("Scorecard"):
+            _legend(legend.SCORECARD)
+
             with gr.Row():
                 score_source = gr.Radio(list(scorecard.SOURCES), value=scorecard.LIVE, label="Incidents",
                                         info="Replay: the offline replay's trials (eval/replay.py)", scale=2)
@@ -699,6 +714,8 @@ def build() -> gr.Blocks:
             score_group.change(show_scorecard, **score_inputs)
 
         with gr.Tab("System"):
+            _legend(legend.SYSTEM)
+
             system_md = gr.Markdown()
 
             with gr.Row():

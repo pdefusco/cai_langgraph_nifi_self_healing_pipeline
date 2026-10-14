@@ -188,7 +188,11 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   turns off the automatic proposals.
 - **Scorecard** shows how often the agent's first proposal is valid, picks the scenario's design fix, is approved as
   proposed, and works (a reviewer's label counts over the measured verdict), by agent version, scenario, fix or
-  who chose it.
+  who chose it. Each fix also gets a **lift**, from −100% to +100%: how far the KPI that opened the incident moved
+  its good way in the window that decided the verdict (`outcomes.outcome_lift`). A group shows the median and its
+  middle half. An agent version is the fingerprint of the prompt text, plus the model and whether memory was on. It
+  changes only when what the LLM is shown changes. Every tab opens with a **How to read this page** key
+  (`nifi_healer/ui/legend.py`).
 - **Offline replay.** `.venv/bin/python -m nifi_healer.eval.replay --trials 3` runs every scenario three times,
   each round on a fresh mock tenant of its own (`var/data/replay`), against the configured LLM: detect, diagnose,
   approve, judge. It is the only place a proposal is approved without a reviewer, and it refuses unless the client

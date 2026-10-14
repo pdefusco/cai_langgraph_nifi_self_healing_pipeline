@@ -8,7 +8,9 @@ over the verdict measured for it.
 """
 
 from nifi_healer.eval import replay, scorecard as sc
-from nifi_healer.ui.monitor import _e, _when
+from nifi_healer.kpi import metrics
+from nifi_healer.ui.monitor import _e, _when, short
+from nifi_healer.ui.views import window_label
 
 SINCE = {"24 h": 86400, "7 d": 7 * 86400, "All": None}
 DEFAULT_SINCE = "7 d"
@@ -23,9 +25,7 @@ _REVIEW_CHIP = {sc.APPROVED: "mx-agent", sc.EDITED: "mx-operator", sc.REJECTED: 
                 sc.UNDECIDED: "mx-v-pending", sc.NO_REVIEW: ""}
 _RESULT_CHIP = {sc.WORKED: "mx-v-IMPROVED", sc.NO_HELP: "mx-v-NO_CHANGE", sc.WORSE: "mx-v-WORSENED",
                 sc.UNCLEAR: "mx-v-INCONCLUSIVE", sc.PENDING: "mx-v-pending"}
-_BAR = {sc.APPROVED: "approved", sc.EDITED: "edited", sc.REJECTED: "rejected", sc.UNDECIDED: "undecided",
-        sc.WORKED: "worked", sc.NO_HELP: "nohelp", sc.WORSE: "worse", sc.UNCLEAR: "unclear",
-        sc.PENDING: "pending"}
+_BAR = {sc.APPROVED: "approved", sc.EDITED: "edited", sc.REJECTED: "rejected", sc.UNDECIDED: "undecided"}
 
 
 def model(store, now: float, since: str = DEFAULT_SINCE, grouping: str = GROUPINGS[0], source: str = LIVE) -> dict:
@@ -72,6 +72,43 @@ def duration(seconds) -> str:
     return f"{seconds / 86400:.1f} d"
 
 
+def lift_text(lift) -> str:
+    """+0.86 -> "+86%"."""
+
+    if lift is None:
+        return "—"
+
+    return "0%" if abs(lift) < 0.005 else f"{lift * 100:+.0f}%".replace("-", "−")
+
+
+def _tone(lift) -> str:
+    return "" if lift is None or abs(lift) < 0.05 else "sc-up" if lift > 0 else "sc-down"
+
+
+def _level(value) -> str:
+    if abs(value) >= 1000:
+        return short(abs(value))
+
+    return f"{value:.1f}" if abs(value) < 10 and not float(value).is_integer() else f"{value:.0f}"
+
+
+def _kpi_name(key: str) -> tuple:
+    """("S01 Queue", "Flow Files Queued") from a KPI key, scenario:kind:component:metric."""
+
+    parts = (key or "").split(":")
+
+    if len(parts) != 4:
+        return key or "?", ""
+
+    try:
+        label = metrics.metric(parts[3]).label
+
+    except KeyError:
+        label = parts[3]
+
+    return parts[2] or label, label if parts[2] else ""
+
+
 def _chip(css: str, text: str) -> str:
     return f'<span class="mx-chip {css}">{_e(text)}</span>' if css or text else ""
 
@@ -108,10 +145,34 @@ def _tiles(s: dict, seen: dict | None = None) -> str:
         approved,
         _tile("Fix worked", pct(s["worked"]),
               _of(worked, s["judged"], "judged") + (f" · {s['labelled']} by a reviewer" if s["labelled"] else "")),
+        _tile("Median lift", lift_text(s["lift"]), _spread(s) or "no fix measured yet"),
         _tile("Regressions", str(s["regressed"]), "worse in a later window"
               + (f" · {s['rolled_back']} fix(es) rolled back" if s["rolled_back"] else "")),
         _tile("Time to resolve", duration(s["to_resolve"]), "median, opened to resolved"),
     )) + "</div>"
+
+
+def _spread(s: dict) -> str:
+    """ "middle half +80% to +100% · 116 fixes": where most of the group's lifts fall."""
+
+    if not s["lifted"]:
+        return ""
+
+    count = f"{s['lifted']} fix{'' if s['lifted'] == 1 else 'es'} measured"
+
+    if not s["lift_range"]:
+        return count
+
+    low, high = s["lift_range"]
+
+    return f"middle half {lift_text(low)} to {lift_text(high)} · {count}"
+
+
+def _lift_cell(s: dict) -> str:
+    if s["lift"] is None:
+        return '<span class="mx-none">—</span>'
+
+    return f'<b class="sc-lift {_tone(s["lift"])}">{lift_text(s["lift"])}</b><small class="sc-sub">{_e(_spread(s))}</small>'
 
 
 def _bar(counts: dict, order: tuple) -> str:
@@ -128,24 +189,60 @@ def _bar(counts: dict, order: tuple) -> str:
 
 
 _REVIEW_BARS = (sc.APPROVED, sc.EDITED, sc.REJECTED, sc.UNDECIDED)
-_RESULT_BARS = (sc.WORKED, sc.NO_HELP, sc.WORSE, sc.UNCLEAR, sc.PENDING)
 
 
-def _name(group: str) -> str:
-    # An agent version breaks after its slashes, not across the next column.
-    return _e(group).replace("/", "/<wbr>")
+_FLAGS = (("/no-memory", "memory off"), ("/no-priors", "track records off"))
+
+
+def agent_name(version: str) -> tuple:
+    """
+    ("instructions fa8c5675be", "nemotron-3-super-120b-a12b · memory on")
+    from prompt:fa8c5675be/model:nvidia/nemotron-3-super-120b-a12b; the
+    model id has slashes of its own, so the flags come off its end.
+    """
+
+    if not version.startswith("prompt:") or "/model:" not in version:
+        return version, ""
+
+    prompt, model = version[len("prompt:"):].split("/model:", 1)
+    flags = []
+
+    for flag, words in _FLAGS * 2:
+        if model.endswith(flag):
+            model = model[:-len(flag)]
+            flags.insert(0, words)
+
+    if "memory off" not in flags:
+        flags.insert(0, "memory on")
+
+    model = "oracle (the design fix, no LLM)" if model == "oracle" else model.rsplit("/", 1)[-1]
+
+    return f"instructions {prompt}", " · ".join([model] + flags)
+
+
+def _name(m: dict, group: str, s: dict | None = None) -> str:
+    if m["grouping"] != "Agent version":
+        return _e(group)
+
+    title, sub = agent_name(group)
+    since = f" · since {_when(s['first_at'], True)}" if s and s.get("first_at") else ""
+
+    return (f'<span class="sc-v" title="{_e(group)}">{_e(title)}</span>'
+            + (f'<small class="sc-sub">{_e(sub + since)}</small>' if sub or since else ""))
 
 
 def _groups(m: dict) -> str:
     head = ("<tr><th>{}</th><th>Incidents</th><th>Valid first try</th><th>Design fix</th>"
             "<th title=\"Proposals that cite a past case (memory)\">Cited a case</th>"
-            "<th>Review</th><th>Result</th><th>Worked</th><th>Regressions</th><th>To resolve</th></tr>"
+            "<th>Review</th><th title=\"How far the fixes moved the KPIs that opened their incidents, "
+            "−100% to +100%: the median, and where the middle half falls\">Lift</th>"
+            "<th>Worked</th><th>Regressions</th><th>To resolve</th></tr>"
             ).format(_e(m["grouping"]))
     rows = "".join(
-        f"<tr><td class=\"sc-g\">{_name(name)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
+        f"<tr><td class=\"sc-g\">{_name(m, name, s)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
         f"<td>{pct(s['matched'])}</td><td>{pct(s['cited'])}</td>"
         f"<td class=\"sc-stack\">{_bar(s['review'], _REVIEW_BARS)}</td>"
-        f"<td class=\"sc-stack\">{_bar(s['results'], _RESULT_BARS)}</td><td>{pct(s['worked'])}</td>"
+        f"<td class=\"sc-stack\">{_lift_cell(s)}</td><td>{pct(s['worked'])}</td>"
         f"<td>{s['regressed'] or ''}</td><td>{duration(s['to_resolve'])}</td></tr>"
         for name, s in m["rows"])
 
@@ -158,19 +255,38 @@ def _short(incident_id: str) -> str:
     return incident_id.split("-", 3)[-1]
 
 
+def _moved(c: dict) -> str:
+    """The incident's lift, with the KPI and levels behind it; a word where nothing was measured."""
+
+    k = c.get("lift_kpi")
+    label = f"reviewer: {c['result']}" if c["result_from"] == "reviewer" else ""
+
+    if k:
+        name, metric = _kpi_name(k["kpi"])
+        levels = f"{_level(k['before'])} → {_level(k['after'])}"
+        tip = (f"{name}{' · ' + metric if metric else ''} ({'mean' if k['good'] == 'up' else 'level'}): {levels} "
+               f"over the {window_label(k['window'])} window after the fix, "
+               f"{'higher' if k['good'] == 'up' else 'lower'} is better; measured {k['verdict'].replace('_', ' ').lower()}")
+        sub = " · ".join(x for x in (f"{name} {levels}", "so far" if c["result"] == sc.PENDING else "", label) if x)
+
+        return (f'<b class="sc-lift {_tone(c["lift"])}" title="{_e(tip)}">{lift_text(c["lift"])}</b>'
+                f'<small class="sc-sub">{_e(sub)}</small>')
+
+    if label:
+        return _chip(_RESULT_CHIP[c["result"]], label)
+
+    words = {sc.PENDING: "measuring", sc.UNCLEAR: "too little data"}.get(c["result"]) or \
+        ("dry run" if c["dry_run"] else "")
+
+    if c["apply_failed"] and not c["result"]:
+        return _chip("mx-v-WORSENED", "apply failed")
+
+    return f'<span class="mx-none">{_e(words)}</span>' if words else ""
+
+
 def _case(c: dict, now: float) -> str:
     css, text = _MATCH_CHIP[c["match"]]
-    result = ""
-
-    if c["result"]:
-        result = _chip(_RESULT_CHIP[c["result"]],
-                       f"reviewer: {c['result']}" if c["result_from"] == "reviewer" else c["result"])
-
-    elif c["dry_run"]:
-        result = _chip("", "dry run")
-
-    elif c["apply_failed"]:
-        result = _chip("mx-v-WORSENED", "apply failed")
+    result = _moved(c)
 
     cited = c.get("cited") or []
     flags = (f'<span class="mx-chip" title="{_e(", ".join(cited))}">cited '
@@ -200,7 +316,8 @@ def _recent(m: dict) -> str:
 
     each = max(_RECENT // max(len(groups), 1), 10)
     head = ("<tr><th>Incident</th><th>Scenario</th><th>Agent's fix</th><th>First proposal</th>"
-            "<th>Against the design</th><th>Review</th><th>Result</th><th></th></tr>")
+            "<th>Against the design</th><th>Review</th><th title=\"How far the fix moved the KPI that opened "
+            "the incident, −100% to +100%; hover for the KPI's levels\">Lift</th><th></th></tr>")
     body, cut = [], False
 
     for name, _ in m["rows"]:
@@ -208,7 +325,9 @@ def _recent(m: dict) -> str:
         cut = cut or len(found) > each
 
         if len(groups) > 1:
-            body.append(f'<tr class="mx-grp"><td colspan="8">{_name(name)}<span>'
+            title, sub = agent_name(name) if m["grouping"] == "Agent version" else (name, "")
+            body.append(f'<tr class="mx-grp"><td colspan="8" title="{_e(name)}">{_e(title)}'
+                        + (f'<span>{_e(sub)}</span>' if sub else "") + '<span>'
                         + (f"the {each} newest of {len(found)}" if len(found) > each else f"{len(found)}")
                         + "</span></td></tr>")
 
@@ -256,11 +375,9 @@ def render(m: dict) -> str:
             + (f"<span><b>{s['apply_failed']}</b> failed to apply</span>" if s["apply_failed"] else "")
             + f"<span><b>{s['repairs']}</b> re-proposals</span></span></div>"
             + _tiles(s, seen if replayed else None) + _groups(m) + _recent(m)
-            + f'<p class="mx-hint">{hint}The design fix is each scenario\'s known-correct lever, kept from the '
-              "agent; a fix matches on its action and target, not its values. Cited a case: the proposals "
-              "that cite one of the past cases shown to the agent (memory). A reviewer's label on a fix "
-              "(History → Correct the outcome) counts over its measured verdict. A healthy-control incident is a "
-              "false alarm: the right proposal there is NO_ACTION.</p></div>")
+            + f'<p class="mx-hint">{hint}Lift: how far a fix moved the KPI that opened its incident, from '
+              "−100% (as bad as it gets) through 0 (no change) to +100% (a backlog cleared, a stopped rate "
+              "back). The words behind every column are under How to read this page, above.</p></div>")
 
 
 CSS = """
@@ -278,10 +395,10 @@ CSS = """
 .sc-bar-t{display:block;margin-top:3px;font-size:11px;color:var(--mx-muted)}
 .sc-b-approved{background:var(--mx-accent)}.sc-b-edited{background:var(--mx-operator)}
 .sc-b-rejected{background:var(--mx-bad)}.sc-b-undecided{background:var(--mx-neutral-tint)}
-.sc-b-worked{background:var(--mx-good)}.sc-b-worse{background:var(--mx-bad)}
-.sc-b-nohelp{background:color-mix(in srgb,var(--mx-muted) 55%,transparent)}
-.sc-b-unclear{background:var(--mx-neutral-tint)}
-.sc-b-pending{background:repeating-linear-gradient(45deg,var(--mx-neutral-tint) 0 3px,transparent 3px 6px)}
+.sc-lift{display:block;font:600 15px/1.2 var(--mx-mono);font-variant-numeric:tabular-nums}
+.sc-up{color:var(--mx-good)}.sc-down{color:var(--mx-bad)}
+.sc-sub{display:block;margin-top:2px;font:400 11px var(--font);color:var(--mx-muted);white-space:normal}
+.sc-v{display:block;font:500 12px var(--mx-mono)}
 .sc-id{display:block;font:500 12px var(--mx-mono)}
 .sc-fix{font:500 12px var(--mx-mono)}
 .sc tr.mx-grp td{font-family:var(--mx-mono);font-size:12px}

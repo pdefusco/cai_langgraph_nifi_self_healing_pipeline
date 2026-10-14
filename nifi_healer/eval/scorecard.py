@@ -14,6 +14,8 @@ Each case answers, for one incident:
   result     what the applied fix did: the reviewer's label when there
              is one (RIGHT_FIX, WRONG_FIX, UNCLEAR), else the deciding
              verify windows' verdict. A dry run has none.
+  lift       how far the deciding KPIs moved their good way in the window
+             the verdict settled on, -100%..+100% (kpi/outcomes.py).
   regressed  a later window measured a resolved incident worse.
   rolled back  a rollback of its fix was applied.
   cited      the past cases (rag/memory.py) its proposal cites.
@@ -29,6 +31,7 @@ the reviewer's as much as the agent's, so `origin` tells them apart.
 
 import statistics
 
+import config
 from flows import packs
 from nifi_healer.actions import catalog
 from nifi_healer.kpi import outcomes
@@ -129,6 +132,19 @@ def _result(action: dict | None, found: list, label: dict | None) -> tuple:
     return _FROM_VERDICT.get(verdict, UNCLEAR), "measured"
 
 
+def _measured(found: list) -> dict | None:
+    """Of an action's outcomes, the window the verdict settles on (poller.settled), else the first so far."""
+
+    by = {o["window_seconds"]: o for o in found}
+    first, *later = config.VERIFY_WINDOWS
+    row = by.get(first)
+
+    if row and row["verdict"] not in (outcomes.IMPROVED, outcomes.WORSENED) and later and later[0] in by:
+        row = by[later[0]]
+
+    return row
+
+
 def cases(record: dict) -> list:
     """One case per incident in a store.record(), oldest first."""
 
@@ -163,9 +179,10 @@ def cases(record: dict) -> list:
         edited = (chosen.get("agent_version") or "").endswith("+review") \
             or any(r["decision"] == "edit" for r in reviews)
         labels = {r["action_id"]: r for r in by["action_labels"].get(iid, [])}
-        result, source = _result(last, [o for o in by["outcomes"].get(iid, [])
-                                        if last and o["action_id"] == last["id"]],
-                                 labels.get((last or {}).get("id")))
+        found = [o for o in by["outcomes"].get(iid, []) if last and o["action_id"] == last["id"]]
+        result, source = _result(last, found, labels.get((last or {}).get("id")))
+        measured = _measured(found) if result else None
+        moved = outcomes.outcome_lift(measured.get("details")) if measured else None
 
         if decided and decided[-1]["decision"] == "reject":
             review = REJECTED
@@ -196,6 +213,8 @@ def cases(record: dict) -> list:
             "dry_run": bool(last and last["dry_run"] and last["status"] == "DRY_RUN"),
             "applied": bool(applied), "apply_failed": bool(last and last["status"] == "FAILED"),
             "result": result, "result_from": source,
+            "lift": moved["lift"] if moved else None,
+            "lift_kpi": dict(moved, window=measured["window_seconds"]) if moved else None,
             "regressed": any((o.get("details") or {}).get("regression") for o in by["outcomes"].get(iid, [])),
             "rolled_back": any(a["id"] in rolled_back for a in applied),
             "cited": [str(c) for c in (pick or {}).get("citations") or [] if str(c).startswith("case:")],
@@ -218,6 +237,7 @@ def summarize(group: list) -> dict:
     judged = [c for c in group if c["result"] in (WORKED, NO_HELP, WORSE)]
     fixed = [c["closed_at"] - c["opened_at"] for c in group
              if c["status"] == "RESOLVED" and c.get("closed_at")]
+    lifts = sorted(c["lift"] for c in judged if c.get("lift") is not None)
 
     return {
         "incidents": len(group),
@@ -238,6 +258,10 @@ def summarize(group: list) -> dict:
         "labelled": sum(c["result_from"] == "reviewer" for c in group),
         "worked": _rate(sum(c["result"] == WORKED for c in judged), len(judged)),
         "judged": len(judged),
+        "lift": statistics.median(lifts) if lifts else None,
+        "lift_range": tuple(statistics.quantiles(lifts, n=4, method="inclusive")[::2]) if len(lifts) > 1 else None,
+        "lifted": len(lifts),
+        "first_at": min((c["opened_at"] for c in group), default=None),
         "regressed": sum(c["regressed"] for c in group),
         "rolled_back": sum(c.get("rolled_back", False) for c in group),
         "to_resolve": statistics.median(fixed) if fixed else None,

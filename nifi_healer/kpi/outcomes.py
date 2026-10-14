@@ -29,6 +29,10 @@ fast, so only its stub's rate shows the fault): any WORSENED wins, then
 any IMPROVED, then NO_CHANGE. Too few buckets on either side of every
 deciding KPI is INCONCLUSIVE. Other KPIs that got worse are reported as
 side effects, and the group's in and out (kpi/rollup.py) alongside.
+
+The verdict's number is its lift (outcome_lift): how far the deciding
+KPIs moved their good way, from -100% to +100%, so outcomes compare
+without reading each KPI's before and after.
 """
 
 import config
@@ -192,6 +196,64 @@ def combine(verdicts: list) -> str:
         return IMPROVED
 
     return NO_CHANGE
+
+
+def levels(judged: dict) -> tuple:
+    """
+    (before, after) for a judged KPI's lift: a queue where it stood when
+    the change went in and where it ended the window, a rate each side's
+    mean (one bucket of a rate is noise).
+    """
+
+    pre, post = judged.get("before") or {}, judged.get("after") or {}
+    field = "mean" if judged.get("good") == "up" else "latest"
+
+    return pre.get(field), post.get(field)
+
+
+def lift(judged: dict) -> float | None:
+    """
+    How far a judged KPI moved its good way, from -1 to +1: the change
+    over the larger of its two levels. +1 is a backlog cleared or a
+    stopped rate back, 0 no change, -1 the reverse; a halving or a
+    doubling is half of that. None when the KPI was not measured.
+    """
+
+    before, after = levels(judged)
+
+    if judged.get("verdict") in (None, INCONCLUSIVE) or before is None or after is None:
+        return None
+
+    scale = max(abs(before), abs(after))
+
+    if scale < 1e-9:
+        return 0.0
+
+    return (before - after) / scale * (-1 if judged.get("good") == "up" else 1)
+
+
+def outcome_lift(details: dict) -> dict | None:
+    """
+    An outcome's lift, one number: of the deciding KPIs, those whose
+    signals opened the incident (else the primary ones) and any that got
+    worse, the one that moved least its good way, so one queue cleared
+    does not hide another still full. {lift, kpi, good, before, after,
+    verdict}; None when no deciding KPI was measured.
+    """
+
+    measured = [k for k in (details or {}).get("kpis") or [] if lift(k) is not None]
+    deciding = [k for k in measured if k.get("primary", True) or k.get("signalled")] or measured
+    pool = [k for k in deciding if k.get("signalled")] or deciding
+    pool += [k for k in deciding if k["verdict"] == WORSENED and k not in pool]
+
+    if not pool:
+        return None
+
+    worst = min(pool, key=lift)
+    before, after = levels(worst)
+
+    return {"lift": lift(worst), "kpi": worst.get("kpi"), "good": worst.get("good", "down"),
+            "before": before, "after": after, "verdict": worst["verdict"]}
 
 
 def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: float,
