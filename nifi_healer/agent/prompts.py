@@ -13,6 +13,7 @@ import re
 
 import config
 from nifi_healer.actions import catalog
+from nifi_healer.rag import priors as rag_priors
 
 SYSTEM = """You are the remediation planner for Apache NiFi 2.6 flows running in Cloudera DataFlow (CDF) on AWS.
 A monitor raised an incident for one process group. Diagnose its root cause from the evidence, and propose the
@@ -33,6 +34,9 @@ Rules:
 - Weigh the past cases as evidence. Prefer what worked on the same kind of fault; do not repeat a fix that was
   rejected or did not help unless the evidence now differs. A reviewer's change shows the value they wanted. A case
   on another process group is a hint, not a recipe.
+- Weigh each fix's track record. A fix that has repeatedly failed on this process group needs evidence that this
+  time differs; prefer a different lever. A record on other process groups is only a hint. A few tries are weak
+  evidence either way.
 - Cite the playbook section ids and case ids you relied on, exactly as given.
 
 Action catalog:
@@ -65,6 +69,9 @@ Playbook sections:
 
 Past cases on similar incidents (what was tried, what the reviewer did, what it measured):
 {memory}
+
+Track record of fixes (applied fixes as judged after, and rejected proposals):
+{priors}
 {feedback}"""
 
 FEEDBACK = """
@@ -80,8 +87,9 @@ PROMPT_VERSION = hashlib.sha256(
 
 
 def agent_version(model_id: str) -> str:
-    # Without its past cases the same prompt is a different agent (the replay's baseline).
-    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory")
+    # Without its past cases or track records the same prompt is a different agent (the replay's baselines).
+    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory") \
+        + ("" if config.PRIORS else "/no-priors")
 
 
 def system_prompt() -> str:
@@ -102,7 +110,7 @@ def _playbook_block(hit: dict) -> str:
 
 
 def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None,
-                memory: list | None = None) -> str:
+                memory: list | None = None, priors: list | None = None) -> str:
     sizing = context.get("sizing") or {}
 
     return USER.format(
@@ -115,6 +123,7 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         inventory=context.get("inventory") or "(unavailable)",
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
+        priors="\n".join(f"- {line}" for line in rag_priors.lines(priors)) or "(none)",
         feedback=FEEDBACK.format(problems="\n".join(f"- {p}" for p in feedback)) if feedback else "",
     )
 

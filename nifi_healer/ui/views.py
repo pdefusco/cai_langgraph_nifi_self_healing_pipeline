@@ -454,13 +454,14 @@ def review(store, client, incident_id: str | None) -> dict:
         playbooks = {h["id"]: h.get("heading") for h in payload.get("playbooks") or []}
         cases = {h["id"]: h.get("headline") for h in payload.get("memory") or []}
         playbooks.update(cases)
+        record = payload.get("priors") or []
 
     else:
         row = _latest_proposal(store, incident_id)
         plan = (row or {}).get("validation") or {}
         proposal = {"diagnosis": (row or {}).get("diagnosis"), "rationale": (row or {}).get("rationale"),
                     "citations": (row or {}).get("citations") or [], "steps": (row or {}).get("action") or []}
-        playbooks, cases = {}, {}
+        playbooks, cases, record = {}, {}, []
 
     run = graph.run_state(incident_id)
 
@@ -518,6 +519,9 @@ def review(store, client, incident_id: str | None) -> dict:
     if cases:
         text.append("**Past cases shown to the agent:** " + "; ".join(
             f"`{c}` ({headline})" for c, headline in cases.items()))
+
+    if record:
+        text.append("**Track record shown to the agent:**\n" + "\n".join(f"- {line}" for line in record))
 
     family = plan.get("family") or "?"
     text.append(f"**Action family:** {family} · **risk:** {plan.get('risk') or '?'} · "

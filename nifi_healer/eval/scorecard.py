@@ -17,6 +17,8 @@ Each case answers, for one incident:
   regressed  a later window measured a resolved incident worse.
   rolled back  a rollback of its fix was applied.
   cited      the past cases (rag/memory.py) its proposal cites.
+  fix_steps  what ran (an edit, if the reviewer made one), else what the
+             agent proposed: what rag/priors.py credits the result to.
 
 A rollback incident is not a case: the agent proposed nothing in it. It
 shows as its fix's `rolled_back`.
@@ -189,6 +191,7 @@ def cases(record: dict) -> list:
             "steps": steps, "action": "+".join(dict.fromkeys(str(s.get("action") or "") for s in steps)) or
                                     ("NO_ACTION" if pick and _valid(pick) else ""),
             "match": match(steps, scenario) if pick else UNKNOWN,
+            "fix_steps": [s for s in chosen.get("action") or [] if isinstance(s, dict)] if applied else steps,
             "review": review, "origin": "reviewer's edit" if edited else "agent as proposed",
             "dry_run": bool(last and last["dry_run"] and last["status"] == "DRY_RUN"),
             "applied": bool(applied), "apply_failed": bool(last and last["status"] == "FAILED"),

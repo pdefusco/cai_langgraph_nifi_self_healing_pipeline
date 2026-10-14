@@ -201,6 +201,9 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   rejections count, never the replay's oracle runs. A proposal can cite a case id; the Review Queue lists the cases
   the agent saw. In the replay a round learns from the earlier ones; `--no-memory` is the baseline to compare with
   (Scorecard grouped by Replay run or Replay round).
+- **Fix track records.** Each diagnosis also sees how often each fix worked on the same process group, and on other
+  groups with the same symptom (`nifi_healer/rag/priors.py`), counted over the same cases. A proposal that already
+  failed twice on its group gets a warning in the Review Queue. `--no-priors` is the replay baseline.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.
@@ -327,6 +330,7 @@ up again, and so does an app restart.
 | `SELFHEAL_LLM_PROVIDER` / `SELFHEAL_EMBEDDING_PROVIDER` | `cai` / `cai` if an endpoint is set, else `hash` | swap providers in `nifi_healer/llm.py` |
 | `SELFHEAL_RAG_TOP_K` | 5 | playbook sections per diagnosis |
 | `SELFHEAL_MEMORY` / `SELFHEAL_MEMORY_TOP_K` | true / 3 | show each diagnosis this many similar past cases |
+| `SELFHEAL_PRIORS` / `SELFHEAL_PRIORS_TOP_K` | true / 5 | show each fix's track record (this many from other groups) |
 | `SELFHEAL_DATA_DIR`, `SELFHEAL_CHROMA_DIR` | `/home/cdsw/...` on CAI, `./var/...` elsewhere | where state lives |
 | `SELFHEAL_APP_HOST`, `CDSW_APP_PORT` / `SELFHEAL_APP_PORT` | `127.0.0.1`, 8100 | UI bind address |
 

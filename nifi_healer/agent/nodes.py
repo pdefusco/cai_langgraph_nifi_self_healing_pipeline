@@ -5,7 +5,8 @@ The graph's nodes. Each takes the state and returns the fields it changed.
     propose_rollback      ROLLBACK of the one action it undoes, without the LLM
     gather_context        the deployed flow's inventory, sizing, version
     retrieve_playbooks    playbook sections for the signals and the parameters used,
-                          and the most similar past cases (rag/memory.py)
+                          the most similar past cases (rag/memory.py), and the
+                          track record of the fixes tried (rag/priors.py)
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv
     human_review          interrupt(): approve | reject | edit | rediagnose
@@ -30,7 +31,7 @@ from nifi_healer.agent import prompts
 from nifi_healer.agent.schemas import Proposal
 from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
-from nifi_healer.rag import memory, retriever
+from nifi_healer.rag import memory, priors, retriever
 from nifi_healer.sim.world import groups_from_definition
 from nifi_healer.store.db import get_store
 
@@ -141,10 +142,18 @@ def retrieve_playbooks(state: dict) -> dict:
         log(f"{incident['id']}: past cases unavailable: {exc}")
         cases = []
 
+    try:
+        record = priors.for_incident(incident)
+
+    except Exception as exc:  # and so are the track records
+        log(f"{incident['id']}: fix track records unavailable: {exc}")
+        record = []
+
     keep = ("id", "collection", "heading", "title", "text", "similarity")
 
     return {"playbooks": [{k: h.get(k) for k in keep} for h in hits],
-            "memory": [{k: h.get(k) for k in ("id", "headline", "text", "similarity")} for h in cases]}
+            "memory": [{k: h.get(k) for k in ("id", "headline", "text", "similarity")} for h in cases],
+            "priors": record}
 
 
 # ---------------------------------------------------------------------
@@ -187,7 +196,8 @@ def diagnose_and_propose(state: dict) -> dict:
     version = prompts.agent_version(getattr(model, "model_name", "") or config.LLM_MODEL_ID)
     messages = [SystemMessage(content=prompts.system_prompt()),
                 HumanMessage(content=prompts.user_prompt(incident, state["context"], state.get("playbooks") or [],
-                                                         state.get("feedback"), state.get("memory")))]
+                                                         state.get("feedback"), state.get("memory"),
+                                                         state.get("priors")))]
 
     try:
         proposal, raw, error = _ask(model, messages)
@@ -235,6 +245,10 @@ def validate_proposal(state: dict) -> dict:
     cited = list(proposal.get("citations") or [])
     report["warnings"] = [f"cites {c!r}, which was not among the retrieved sections" for c in cited
                           if c not in known]
+    failed = priors.warning(state.get("priors"), report["steps"] or proposal.get("steps") or [])
+
+    if failed:
+        report["warnings"].append(failed)
 
     if report["ok"] and report["family"] == catalog.NONE:
         status = "NO_ACTION"
@@ -284,6 +298,7 @@ def review_payload(state: dict) -> dict:
         "plan": state.get("plan"),
         "playbooks": [{"id": h["id"], "heading": h.get("heading")} for h in state.get("playbooks") or []],
         "memory": [{"id": h["id"], "headline": h.get("headline")} for h in state.get("memory") or []],
+        "priors": priors.lines(state.get("priors")),
         "armed": config.ARMED,
         "error": state.get("review_error", ""),
     }

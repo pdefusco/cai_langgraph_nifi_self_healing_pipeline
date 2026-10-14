@@ -392,10 +392,16 @@ def by_group(signals: list) -> dict:
     return {g: s for g, s in groups.items() if any(x["severity"] == CRITICAL for x in s)}
 
 
+def lead(signals: list) -> dict | None:
+    """An incident's most telling signal."""
+
+    order = {"kpi_breach": 0, "flow_imbalance": 1, "platform_alert": 2, "trend_to_breach": 3}
+    ranked = sorted(signals, key=lambda s: (s.get("severity") != CRITICAL, order.get(s.get("type"), 9)))
+
+    return ranked[0] if ranked else None
+
+
 def headline(signals: list) -> str:
     """One line for an incident: its most telling signal."""
 
-    order = {"kpi_breach": 0, "flow_imbalance": 1, "platform_alert": 2, "trend_to_breach": 3}
-    ranked = sorted(signals, key=lambda s: (s["severity"] != CRITICAL, order.get(s["type"], 9)))
-
-    return ranked[0]["summary"] if ranked else ""
+    return (lead(signals) or {}).get("summary", "")
