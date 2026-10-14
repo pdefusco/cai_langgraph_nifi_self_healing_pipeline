@@ -53,12 +53,24 @@ def test_tries_count_what_ran_and_what_was_rejected(fleet):
     # S03 has the same symptom: both are records from other groups.
     graph.start(incidents["S03"]["id"])
     review = graph.pending(incidents["S03"]["id"])
-    assert review["priors"] == [
-        "On other process groups, with Flow Files Queued over its threshold, SET_CONCURRENT_TASKS: 1 of 1 worked",
-        "On other process groups, with Flow Files Queued over its threshold, SET_RUN_SCHEDULE: 0 of 1 worked "
-        "(1 rejected)"]
-    assert "Track record of these fixes" in views.review(store, client, incidents["S03"]["id"])["proposal"]
+    shown = views.review(store, client, incidents["S03"]["id"])["proposal"]
+    assert "**Track record of these fixes:**\n" \
+        "- On other process groups, with Flow Files Queued over its threshold, SET_CONCURRENT_TASKS: 1 of 1 worked\n" \
+        "- On other process groups, with Flow Files Queued over its threshold, SET_RUN_SCHEDULE: 0 of 1 worked " \
+        "(1 rejected)" in shown
     assert review["plan"]["warnings"] == []
+
+
+def test_the_review_shows_the_record_as_it_stands_now(fleet):
+    world, client, store, incidents = fleet("p1-throughput")
+    llm.set_chat_model(FixLLM())
+    graph.start(incidents["S02"]["id"])
+
+    assert "Track record of these fixes:** none yet" in views.review(store, client, incidents["S02"]["id"])["proposal"]
+
+    # S01's fix is judged after S02's proposal was made; S02's open review shows it.
+    _judged(world, client, store, incidents["S01"])
+    assert "SET_CONCURRENT_TASKS: 1 of 1 worked" in views.review(store, client, incidents["S02"]["id"])["proposal"]
 
 
 def test_priors_off_and_the_top_k(fleet, monkeypatch):

@@ -19,6 +19,7 @@ from nifi_healer.agent import graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi import rollup
 from nifi_healer.kpi.detectors import group_name
+from nifi_healer.rag import priors
 from nifi_healer.store.db import CLOSED_STATUSES, get_store
 
 DEPLOYMENT_HEADERS = ["Pack", "State", "Flow", "CPU %", "Memory %", "Cores", "Active alerts",
@@ -381,6 +382,25 @@ def _latest_proposal(store, incident_id: str) -> dict | None:
     return rows[-1] if rows else None
 
 
+def track_record(store, incident: dict) -> str:
+    """The fixes' record as it stands now, not when the proposal was made (the agent never sees it)."""
+
+    if not config.PRIORS:
+        return ""
+
+    try:
+        lines = priors.lines(priors.for_incident(incident, store))
+
+    except Exception as exc:  # the review still renders without it
+        return f"**Track record of these fixes:** unavailable ({exc})"
+
+    if not lines:
+        return ("**Track record of these fixes:** none yet; no fix has been judged or rejected on this process "
+                "group, or on another with the same symptom.")
+
+    return "**Track record of these fixes:**\n" + "\n".join(f"- {line}" for line in lines)
+
+
 APPLYING = ("**Applying the approved change to the tenant.** A flow edit imports a new flow version and "
             "deploys it, which takes several minutes; this panel updates when it is done, and History "
             "has the commands.")
@@ -454,14 +474,13 @@ def review(store, client, incident_id: str | None) -> dict:
         playbooks = {h["id"]: h.get("heading") for h in payload.get("playbooks") or []}
         cases = {h["id"]: h.get("headline") for h in payload.get("memory") or []}
         playbooks.update(cases)
-        record = payload.get("priors") or []
 
     else:
         row = _latest_proposal(store, incident_id)
         plan = (row or {}).get("validation") or {}
         proposal = {"diagnosis": (row or {}).get("diagnosis"), "rationale": (row or {}).get("rationale"),
                     "citations": (row or {}).get("citations") or [], "steps": (row or {}).get("action") or []}
-        playbooks, cases, record = {}, {}, []
+        playbooks, cases = {}, {}
 
     run = graph.run_state(incident_id)
 
@@ -520,8 +539,8 @@ def review(store, client, incident_id: str | None) -> dict:
         text.append("**Past cases shown to the agent:** " + "; ".join(
             f"`{c}` ({headline})" for c, headline in cases.items()))
 
-    if record:
-        text.append("**Track record of these fixes:**\n" + "\n".join(f"- {line}" for line in record))
+    if payload and (record := track_record(store, incident)):
+        text.append(record)
 
     family = plan.get("family") or "?"
     text.append(f"**Action family:** {family} · **risk:** {plan.get('risk') or '?'} · "

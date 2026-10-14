@@ -297,7 +297,6 @@ def review_payload(state: dict) -> dict:
         "plan": state.get("plan"),
         "playbooks": [{"id": h["id"], "heading": h.get("heading")} for h in state.get("playbooks") or []],
         "memory": [{"id": h["id"], "headline": h.get("headline")} for h in state.get("memory") or []],
-        "priors": priors.lines(state.get("priors")),
         "armed": config.ARMED,
         "error": state.get("review_error", ""),
     }
