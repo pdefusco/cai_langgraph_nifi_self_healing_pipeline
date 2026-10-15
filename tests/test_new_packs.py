@@ -10,6 +10,9 @@ from midnight UTC instead: it shows within its detect_within, an
 intermittent one clears on its own and comes back, a slow burn warns
 before it breaches, and a fix is judged over a whole detect_within
 after its clear_within, so the next burst or batch is in it.
+
+A control is polled the same way over its detect_within: nothing
+critical shows, though the noise it was built with does.
 """
 
 import copy
@@ -18,6 +21,7 @@ import pytest
 
 from flows import packs
 from flows.builder.lib import check
+from flows.scenarios.base import action
 from nifi_healer.flow import edits
 from nifi_healer.kpi import detectors, metrics
 from nifi_healer.sim.engine import Simulation
@@ -30,8 +34,24 @@ SCOPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTE
 MASKED = {"S31", "S33"}   # the second fault shows only once the first is fixed
 STEADY = ("cascade", "compound")        # faulty from deploy on, and until fixed
 TIMED = ("intermittent", "slow_burn")   # on a schedule, or only after hours
+CONTROL = ("control",)                  # healthy, and noisy enough to tempt a fix
 MIDNIGHT = START - 8 * 3600             # 00:00 UTC: a day's schedule runs from the start
 SCAN = 300.0
+
+# What makes each control noisy, from what it showed over its detect_within:
+# (each KPI's values by key, the warnings polled, its processor count).
+NOISE = {
+    "S40": lambda seen, warned, size: (max(seen["S40:connection:s40-to-load:queued_count"]) > 0.7 * 5000
+                                       and "trend_to_breach" in warned),
+    "S41": lambda seen, warned, size: (max(seen["S41:processor:S41 Reject DLQ:flowfiles_in"]) > 0
+                                       and min(seen["S41:processor:S41 Validate Partner Order:flowfiles_in"]) == 0),
+    "S42": lambda seen, warned, size: (max(seen["S42:processor:S42 Load Readings:flowfiles_out"])
+                                       >= 10 * min(seen["S42:processor:S42 Load Readings:flowfiles_out"]) > 0),
+    "S43": lambda seen, warned, size: (min(seen["S43:processor:S43 Post Ledger:flowfiles_out"]) == 0
+                                       < max(seen["S43:processor:S43 Post Ledger:flowfiles_out"])),
+    "S44": lambda seen, warned, size: size == 30,
+    "S45": lambda seen, warned, size: max(seen["S45:system::cpu"]) >= 70,
+}
 
 
 def _kpi(k) -> dict:
@@ -166,6 +186,36 @@ def shown():
     return sims
 
 
+@pytest.fixture(scope="module")
+def quiet():
+    """
+    {control id: (its polls over its detect_within, each of its KPIs'
+    values by key)}, deployed at midnight UTC, built once.
+    """
+
+    sims = {}
+
+    for name, scenario in _scenarios(*CONTROL):
+        pack = packs.PACKS[name]
+        sim = Simulation(packs.build(name), dict(pack.parameters), pack.cluster_size, pack.nodes, MIDNIGHT)
+        polls, seen = [], {}
+
+        while sim.t < MIDNIGHT + scenario.detect_within:
+            polls += _polls(sim, pack, scenario, SCAN)
+
+            # Until the 30-minute charts stop reaching back before the deploy.
+            if sim.t - MIDNIGHT < 3600:
+                continue
+
+            for k in scenario.kpis:
+                datas = sim.chart(f"{k.kind}|{k.component}|{k.metric}", "LAST_THIRTY_MINUTES", sim.t)
+                seen.setdefault(k.key, []).extend(v for _, v in metrics.points({"datas": datas}))
+
+        sims[scenario.id] = polls, seen
+
+    return sims
+
+
 def _after_shown(shown, name, scenario, steps) -> list:
     """The polls over a detect_within, from clear_within after `steps` are applied to the fault as it shows."""
 
@@ -182,7 +232,8 @@ def test_the_second_wave_is_not_provisioned_by_default():
 
     for name in WAVE_2:
         for scenario in packs.PACKS[name].scenarios:
-            assert scenario.kind != "classic" and scenario.wrong, scenario.id
+            # A control has nothing to fix, so no fix is wrong for it but every one.
+            assert scenario.kind != "classic" and (scenario.wrong or scenario.kind == "control"), scenario.id
 
 
 @pytest.mark.parametrize("name", WAVE_2)
@@ -253,9 +304,30 @@ def test_a_wrong_fix_does_not(settled, name, scenario_id, index):
     assert _faulty(sim, pack, scenario), scenario.wrong[index]
 
 
-def test_every_second_wave_scenario_is_steady_or_timed():
-    assert {s.kind for _, s in _scenarios(*STEADY, *TIMED)} == set(STEADY + TIMED)
-    assert len(_scenarios(*STEADY, *TIMED)) == sum(len(packs.PACKS[n].scenarios) for n in WAVE_2)
+def test_every_second_wave_scenario_is_steady_timed_or_a_control():
+    assert {s.kind for _, s in _scenarios(*STEADY, *TIMED, *CONTROL)} == set(STEADY + TIMED + CONTROL)
+    assert len(_scenarios(*STEADY, *TIMED, *CONTROL)) == sum(len(packs.PACKS[n].scenarios) for n in WAVE_2)
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id) for n, s in _scenarios(*CONTROL)])
+def test_a_control_stays_quiet_over_its_detect_within(quiet, name, scenario_id):
+    polls = quiet[scenario_id][0]
+    critical = [(t, found) for t, found, _ in polls if found]
+
+    assert polls[-1][0] >= MIDNIGHT + packs.SCENARIOS[scenario_id].detect_within
+    assert critical == [], critical[:1]
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id) for n, s in _scenarios(*CONTROL)])
+def test_a_control_is_noisy(quiet, name, scenario_id):
+    scenario = packs.SCENARIOS[scenario_id]
+    polls, seen = quiet[scenario_id]
+    warned = {w for _, _, warnings in polls for w in warnings}
+    model = Simulation(packs.build(name), {}, "EXTRA_SMALL", 1, START).model
+    size = sum(p.group_name == scenario.group_name for p in model.processors.values())
+
+    assert scenario.expected == (action("NO_ACTION"),) and not scenario.wrong
+    assert NOISE[scenario_id](seen, warned, size), {k: (min(v), max(v)) for k, v in seen.items()}
 
 
 @pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id) for n, s in _scenarios(*TIMED)])
