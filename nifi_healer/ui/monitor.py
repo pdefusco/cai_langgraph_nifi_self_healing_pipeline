@@ -599,7 +599,9 @@ def _sort_key(sort: str):
     if sort == "Name":
         return lambda r: r["name"]
 
-    return lambda r: (-needs_attention(r), -r["open"], -r["over"], -r["near"], -r["bad_buckets"], r["name"])
+    # Open incidents first: at 20 deployments, those are what a reviewer is here for.
+    return lambda r: (-bool(r["open"]), -needs_attention(r), -r["open"], -r["over"], -r["near"], -r["bad_buckets"],
+                      r["name"])
 
 
 def fleet_model(store, packs: dict, now: float, span: str = DEFAULT_RANGE, query: str = "",
@@ -1231,6 +1233,130 @@ def render_fleet(f: dict) -> str:
 
     return (f'<div class="mx mx-fleet">{head}{FLEET_LEGEND}<div class="mx-scroll">{timeline}</div>'
             '<p class="mx-hint">Click a deployment to open its timeline below; click a marker to open it at that change.</p></div>')
+
+
+# ---------------------------------------------------------------------
+# App health (System tab)
+# ---------------------------------------------------------------------
+
+# (key, label, unit, bucket aggregate, gate). The poller samples these
+# once a minute (Poller.sample_health); a gate draws a threshold line.
+HEALTH = (("poll.lag.kpis", "KPI reads late (p95 over deployments)", "s", max, 60),
+          ("poll.lag.health", "Health reads late", "s", max, None),
+          ("poll.lag.events", "Event log reads late", "s", max, None),
+          ("poll.pending", "Poll jobs queued", "", max, None),
+          ("cdp.calls", "CDP calls / min", "", sum, None),
+          ("cdp.error_pct", "CDP calls failed", "%", max, 1),
+          ("cdp.p95_ms", "CDP call p95", "ms", max, None),
+          ("llm.calls", "LLM calls / min", "", sum, None),
+          ("llm.p95_ms", "LLM call p95", "ms", max, None),
+          ("agent.queue", "Agent runs queued or running", "", max, None),
+          ("apply.inflight", "Approvals being applied", "", max, None),
+          ("cpu.pct", "Container CPU", "%", max, 60),
+          ("mem.mb", "Container memory", "MB", max, None),
+          ("rss.mb", "App process memory", "MB", max, None),
+          ("db.mb", "Store size", "MB", max, None),
+          ("errors.hour", "Poller errors in the last hour", "", max, None))
+
+HEALTH_STEP = 600
+
+
+def _error_pct(store, since: float) -> list:
+    errors = dict(store.health("cdp.errors", since))
+
+    return [(t, 100.0 * errors.get(t, 0) / calls) for t, calls in store.health("cdp.calls", since) if calls]
+
+
+def health_model(store, now: float, span: float = 86400, step: int = HEALTH_STEP) -> dict:
+    """
+    The App health samples of the last `span` wall seconds, per key in
+    buckets of `step`, and the M1 gate: KPI reads late p95 under 60 s,
+    under 1% of CDP calls failed, container CPU p95 under 60%.
+    """
+
+    since = now - span
+    n = max(1, int(span // step))
+    rows = []
+    found = {key: (_error_pct(store, since) if key == "cdp.error_pct" else store.health(key, since))
+             for key, *_ in HEALTH}
+
+    for key, label, unit, aggregate, gate in HEALTH:
+        buckets = [[] for _ in range(n)]
+
+        for t, value in found[key]:
+            buckets[min(n - 1, max(0, int((t - since) // step)))].append(value)
+
+        values = [aggregate(b) if b else None for b in buckets]
+
+        if aggregate is sum:  # a per-minute count: the bucket's mean minute
+            values = [None if v is None else v / len(b) for v, b in zip(values, buckets)]
+
+        samples = [v for _, v in found[key]]
+        rows.append({"key": key, "label": label, "unit": unit, "gate": gate, "values": values,
+                     "latest": samples[-1] if samples else None, "peak": max(samples, default=None)})
+
+    calls = sum(v for _, v in found["cdp.calls"])
+    failed = sum(v for _, v in store.health("cdp.errors", since))
+    gates = [("KPI reads late, p95", _p95(found["poll.lag.kpis"]), 60, "s"),
+             ("CDP calls failed", 100.0 * failed / calls if calls else None, 1, "%"),
+             ("Container CPU, p95", _p95(found["cpu.pct"]), 60, "%")]
+
+    return {"since": since, "end": now, "now": now, "step": step, "n": n, "rows": rows,
+            "gates": gates, "samples": len(found["poll.lag.kpis"]) or len(found["cpu.pct"])}
+
+
+def _p95(points: list):
+    values = sorted(v for _, v in points)
+
+    return values[max(0, math.ceil(len(values) * 0.95) - 1)] if values else None
+
+
+def _health_text(value, unit: str) -> str:
+    if value is None:
+        return "—"
+
+    if unit == "%":
+        return f"{value:.1f}%"
+
+    return f"{fmt(value)} {unit}".strip()
+
+
+def render_health(h: dict) -> str:
+    if not h["samples"]:
+        return ('<div class="mx"><p class="mx-empty">No App health samples yet: the poller takes one a minute '
+                'once it is running.</p></div>')
+
+    gates = []
+
+    for label, value, limit, unit in h["gates"]:
+        state = "pending" if value is None else "IMPROVED" if value < limit else "WORSENED"
+        verdict = "no data" if value is None else "within" if value < limit else "over"
+        gates.append(f'<span>{_e(label)} <b>{_e(_health_text(value, unit))}</b> '
+                     f'<span class="mx-chip mx-v-{state}">{verdict} {_e(_health_text(limit, unit))}</span></span>')
+
+    head = (f'<div class="mx-head"><span class="mx-name">App health</span>'
+            f'<span class="mx-facts"><span>last {(h["end"] - h["since"]) / 3600:.0f} h</span>{"".join(gates)}'
+            f'<span>times UTC</span></span></div>')
+    m = dict(h, segments=[], selected=None)
+    rows = [_axis(m)]
+
+    for row in h["rows"]:
+        texts = [_health_text(v, row["unit"]) for v in row["values"]]
+        gutter = (f'<span class="mx-lbl" title="{_e(row["key"])}">{_e(row["label"])}</span>'
+                  f'{_val(row["values"], texts)}'
+                  f'<span class="mx-meta">{_e(row["key"])} · peak {_e(_health_text(row["peak"], row["unit"]))}'
+                  f'</span>')
+        unit = "%" if row["unit"] == "%" else ""
+        plot = _chart(m, row["values"], 34, unit, above=row["gate"], uid=f"h-{row['key'].replace('.', '-')}")
+        rows.append(_row(gutter, plot, 34))
+
+    timeline = (f'<div class="mx-tl" data-since="{h["since"]:.0f}" data-step="{h["step"]}" data-n="{h["n"]}">'
+                + "".join(rows) + '<div class="mx-cross" hidden></div><div class="mx-crosslbl" hidden></div></div>')
+
+    return (f'<div class="mx">{head}<div class="mx-scroll">{timeline}</div>'
+            f'<p class="mx-hint">One sample a minute; each point is the worst minute of its '
+            f'{h["step"] // 60} min (calls: the mean minute). Lateness is how far past its interval a '
+            'deployment\'s newest read is.</p></div>')
 
 
 # ---------------------------------------------------------------------

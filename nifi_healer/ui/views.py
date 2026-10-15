@@ -157,10 +157,40 @@ def fleet_header(snapshot: dict) -> str:
     if paused:
         lines.append("Detection paused for " + "; ".join(paused))
 
+    late = falling_behind(beat)
+
+    if late:
+        lines.insert(0, f"⚠ **{late}**")
+
     if beat.get("last_error"):
-        lines.append(f"Last poller error: `{beat['last_error']}`")
+        lines.append(f"Last poller error: `{beat['last_error']}` ({_errors_hour(beat)})")
 
     return "\n\n".join(lines)
+
+
+# KPI reads this long more than an interval late put a warning in the Fleet header.
+LATE_WARNING_SECONDS = 600
+
+
+def falling_behind(beat: dict, now: float | None = None) -> str:
+    """A warning when the KPI reads have run over an interval late for LATE_WARNING_SECONDS, else ""."""
+
+    since = beat.get("kpis_late_since")
+
+    if not since or (now or time.time()) - since < LATE_WARNING_SECONDS:
+        return ""
+
+    lag = (beat.get("health") or {}).get("poll.lag.kpis")
+
+    return (f"The poller is falling behind: KPI reads have run {lag or 0:.0f}s past their "
+            f"{config.POLL_KPI_SECONDS}s interval for {((now or time.time()) - since) / 60:.0f} min "
+            "(System › App health)")
+
+
+def _errors_hour(beat: dict) -> str:
+    count = beat.get("errors_hour") or 0
+
+    return f"{count} error(s) in the last hour"
 
 
 def _open_incidents(store) -> dict:
@@ -353,21 +383,79 @@ def kpi_frame(snapshot: dict, choice: str | None):
 # ---------------------------------------------------------------------
 
 
-def queue_choices(store, keep: str | None = None) -> list:
-    """The open incidents, plus `keep` (the one on screen) once it closes, so the view stays on it."""
+def _queued(store, pack: str = "") -> list:
+    """The open incidents, reviews first, each kind oldest first."""
 
-    incidents = store.incidents(statuses=QUEUE_STATUSES)
+    return sorted(store.incidents(statuses=QUEUE_STATUSES, pack=pack or "", limit=1000),
+                  key=lambda i: (i["status"] != "PENDING_REVIEW", i["opened_at"]))
+
+
+def queue_choices(store, keep: str | None = None, pack: str = "") -> list:
+    """
+    The open incidents (of `pack`, or every deployment's), reviews first
+    and oldest first, plus `keep` (the one on screen) once it closes or
+    is filtered out, so the view stays on it.
+    """
+
+    incidents = _queued(store, pack)
 
     if keep and keep not in {i["id"] for i in incidents}:
         incidents += [i for i in [store.incident(keep)] if i]
 
-    choices = []
+    choices, now = [], get_client().now()
 
     for incident in incidents:
         waiting = "awaiting review" if incident["status"] == "PENDING_REVIEW" else incident["status"].lower()
-        choices.append((f"{incident['id']} · {incident['process_group']} · {waiting}", incident["id"]))
+        choices.append((f"{incident['id']} · {incident['pack']} › {incident['process_group']} · {waiting} · "
+                        f"{_age(now - incident['opened_at'])} old", incident["id"]))
 
     return choices
+
+
+def _age(seconds: float) -> str:
+    """Coarse, so a queue label changes at most once an hour."""
+
+    if seconds < 3600:
+        return "< 1 h"
+
+    return f"{seconds / 3600:.0f} h" if seconds < 172800 else f"{seconds / 86400:.0f} d"
+
+
+def queue_packs(store, packs) -> list:
+    """[(label, pack)] for the Review Queue's filter: every deployment, with how many incidents are open."""
+
+    counts = {}
+
+    for incident in _queued(store):
+        counts[incident["pack"]] = counts.get(incident["pack"], 0) + 1
+
+    names = sorted(set(packs) | set(counts))
+
+    return ([(f"All deployments ({sum(counts.values())} open)", "")]
+            + [(f"{name} ({counts.get(name, 0)} open)", name) for name in names])
+
+
+def queue_summary(store, pack: str = "") -> str:
+    """ "3 awaiting review · oldest 5 h old (INC-…, p1) · 1 being diagnosed" for the queue's header."""
+
+    incidents, now = _queued(store, pack), get_client().now()
+    reviews = [i for i in incidents if i["status"] == "PENDING_REVIEW"]
+
+    if not incidents:
+        return "Nothing waiting" + (f" on {pack}" if pack else "") + "."
+
+    parts = [f"**{len(reviews)}** awaiting review"]
+
+    if reviews:
+        parts.append(f"oldest {_age(now - reviews[0]['opened_at'])} old ({reviews[0]['id']}, {reviews[0]['pack']})")
+
+    for status, label in (("NEW", "new"), ("DIAGNOSING", "being diagnosed"), ("APPLYING", "being applied")):
+        count = sum(1 for i in incidents if i["status"] == status)
+
+        if count:
+            parts.append(f"{count} {label}")
+
+    return " · ".join(parts)
 
 
 def review_key(store, incident_id: str | None) -> str:
@@ -1151,8 +1239,15 @@ def system(snapshot: dict, client) -> str:
                 + (" · tokens minted and renewed by the app" if llm.minting() else "")),
         ("Embeddings", f"`{described['embedder']}`"),
         ("Poller", f"{'running' if beat.get('running') else 'stopped'}, {beat.get('loops', 0)} loop(s); "
-                   f"health every {config.POLL_HEALTH_SECONDS}s, KPIs every {config.POLL_KPI_SECONDS}s"),
-        ("Last poller error", f"`{beat['last_error']}`" if beat.get("last_error") else "none"),
+                   f"health every {config.POLL_HEALTH_SECONDS}s, KPIs every {config.POLL_KPI_SECONDS}s, "
+                   f"events every {config.POLL_EVENTS_SECONDS}s; "
+                   f"{(beat.get('health') or {}).get('poll.workers', config.poll_workers(0))} poll worker(s), "
+                   f"{config.CDP_WORKERS} CLI worker(s) for reads"
+                   + (f" · **{falling_behind(beat)}**" if falling_behind(beat) else "")),
+        ("Last poller error", (f"`{beat['last_error']}`, {ago(beat.get('last_error_at'), time.time())} · "
+                               if beat.get("last_error") else "none · ") + _errors_hour(beat)),
+        ("Retention", f"KPI samples {config.KEEP_DAYS} d, App health {config.HEALTH_KEEP_DAYS} d, the agent's "
+                      f"runs of closed incidents {config.CHECKPOINT_KEEP_DAYS} d"),
         ("Agent", f"{config.AGENT_WORKERS} worker(s), auto-diagnose "
                   f"{'on' if config.AUTO_DIAGNOSE else 'off'}"),
         ("Guardrails", f"cooldown {config.COOLDOWN_SECONDS // 60} min, at most "

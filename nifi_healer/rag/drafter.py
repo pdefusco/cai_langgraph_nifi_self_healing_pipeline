@@ -583,7 +583,7 @@ def _draft(store, row: dict) -> None:
 
     # A reply that does not parse gets one repair turn, an edit check() refuses one more.
     for _ in range(3):
-        raw = prompts.text_of(model.invoke(messages))
+        raw = prompts.text_of(llm.invoke(model, messages))
         parsed, error = _parse(raw)
 
         if parsed is None:

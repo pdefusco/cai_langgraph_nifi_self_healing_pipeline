@@ -50,6 +50,9 @@ REVIEW = f"""
 Every change the agent wants to make waits here for a person. Nothing is written to the tenant until someone
 approves it{'' if config.ARMED else ', and while writes are disarmed an approval is only a dry run'}.{_AUTONOMY}
 
+**The queue**: reviews first, the oldest at the top. **Deployment** narrows it to one deployment; the line beneath
+says how many are waiting and how long the oldest has waited.
+
 **Left: the evidence.** The signals that opened the incident (a KPI over its threshold, an alert, a data imbalance),
 with the KPI values the agent was shown.
 
@@ -217,4 +220,8 @@ How the app itself is configured and whether its parts are working.
   edits qualify, at values a person approved. **Trusted fixes** lists them, even while autonomy is off. **Pause
   autonomy** sends every review back to a person until **Resume autonomy**.
 - **Selftest** checks that both DataFlow APIs and the workload endpoint can be reached.
+- **App health** charts the app itself over the last day, one sample a minute: how late the reads run, CDP and LLM
+  calls (count, failures, slowest 5%), the agent's backlog, CPU and memory, the store's size. Its header checks three
+  limits: KPI reads under 60 s late (p95), under 1% of CDP calls failing, CPU under 60% (p95). When KPI reads run more
+  than an interval late for 10 minutes, the Fleet tab shows a warning.
 """

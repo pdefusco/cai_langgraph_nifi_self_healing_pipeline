@@ -47,6 +47,9 @@ SIZING_SECONDS = 300
 # more is skipped, leaving a gap in the charts as a real outage would.
 MAX_CATCH_UP = 6 * 3600
 
+# Status events kept per deployment; a week-long run would otherwise grow the world file for ever.
+MAX_EVENTS = 2000
+
 SAVE_EVERY = 60.0              # wall seconds between saves of a quiet world
 
 TOLERANCE_UNITS = {"SECONDS": 1, "MINUTES": 60, "HOURS": 3600, "DAYS": 86400}
@@ -340,10 +343,16 @@ class World:
 
     @staticmethod
     def _event(deployment: dict, name: str, at: float) -> None:
-        """A status event, as list-deployment-events reports it: what changed, not the values."""
+        """
+        A status event, as list-deployment-events reports it: what changed,
+        not the values. Only the newest MAX_EVENTS are kept, numbered on
+        from the last so a dropped event's crn is never reused.
+        """
 
         events = deployment.setdefault("events", [])
-        events.append({"crn": f"{deployment['crn']}/event/{len(events) + 1}", "name": name, "t": at})
+        deployment["event_seq"] = deployment.get("event_seq", len(events)) + 1
+        events.append({"crn": f"{deployment['crn']}/event/{deployment['event_seq']}", "name": name, "t": at})
+        del events[:-MAX_EVENTS]
 
     def settle(self, deployment_crn: str) -> None:
         """Apply every pending change now. Mock bootstrap and tests only."""

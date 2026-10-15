@@ -16,7 +16,7 @@ from nifi_healer import llm, provisioning
 from nifi_healer.agent import graph, nodes
 from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import Poller
-from nifi_healer.ui import gradio_app, views
+from nifi_healer.ui import gradio_app, monitor, views
 
 from test_agent_graph import S01_FIX, ScriptedLLM, agent, proposal  # noqa: F401 (agent is a fixture)
 
@@ -458,6 +458,55 @@ def test_a_stale_queue_tick_leaves_the_pick_alone_and_decisions_check_the_panel(
 
     out = gradio_app._decide("edit")(s01, "", "", steps, gradio_app.select_review(s01)[-1])
     assert "validated" in out[0] and [r["decision"] for r in store.reviews(s01)] == ["edit"]
+
+
+def test_the_queue_puts_the_oldest_review_first_and_filters_by_deployment(agent):
+    _, client, store, incidents, _ = agent("p1-throughput", "p5-parameters")
+    now = client.now()
+    s01, s02, s17 = (incidents[k]["id"] for k in ("S01", "S02", "S17"))
+    store.update_incident(s01, now, status="PENDING_REVIEW", opened_at=now - 600)
+    store.update_incident(s17, now, status="PENDING_REVIEW", opened_at=now - 5 * 3600)
+    store.update_incident(s02, now, status="DIAGNOSING")
+    others = [i["id"] for i in incidents.values() if i["id"] not in (s01, s02, s17)]
+
+    for incident_id in others:
+        store.update_incident(incident_id, now, status="REJECTED")
+
+    choices = views.queue_choices(store)
+    assert [v for _, v in choices] == [s17, s01, s02]
+    assert choices[0][0] == f"{s17} · p5-parameters › {incidents['S17']['process_group']} · awaiting review · 5 h old"
+    assert choices[1][0].endswith("· awaiting review · < 1 h old") and "· diagnosing ·" in choices[2][0]
+
+    assert [v for _, v in views.queue_choices(store, pack="p1-throughput")] == [s01, s02]
+    assert [v for _, v in views.queue_choices(store, keep=s17, pack="p1-throughput")] == [s01, s02, s17]
+
+    assert views.queue_summary(store) == (f"**2** awaiting review · oldest 5 h old ({s17}, p5-parameters) · "
+                                          "1 being diagnosed")
+    assert views.queue_summary(store, "p1-throughput").startswith("**1** awaiting review · oldest < 1 h old")
+    assert views.queue_summary(store, "p9-nothing") == "Nothing waiting on p9-nothing."
+    assert views.queue_packs(store, {"p1-throughput": {}, "p5-parameters": {}, "p8-quiet": {}}) == [
+        ("All deployments (3 open)", ""), ("p1-throughput (2 open)", "p1-throughput"),
+        ("p5-parameters (1 open)", "p5-parameters"), ("p8-quiet (0 open)", "p8-quiet")]
+
+    picker, line = gradio_app.filter_queue("p1-throughput", s17)
+    assert picker["value"] == s01 and [v for _, v in picker["choices"]] == [s01, s02]
+    assert line.startswith("**1** awaiting review")
+    assert gradio_app.filter_queue("p1-throughput", s02)[0]["value"] == s02
+
+    packs, line = gradio_app.refresh_queue_packs("p1-throughput")
+    assert "value" not in packs and "p1-throughput" in [v for _, v in packs["choices"]]
+    assert gradio_app.refresh_queue_packs("p9-gone")[0]["value"] == ""
+
+    picker, line = gradio_app.tick_queue(s01, "p1-throughput")
+    assert "value" not in picker and [v for _, v in picker["choices"]] == [s01, s02]
+
+
+def test_open_incidents_lead_the_fleet_overview():
+    def row(name, open_=0, over=0, state="GOOD_HEALTH"):
+        return {"name": name, "open": open_, "over": over, "near": 0, "bad_buckets": 0, "deployment": {"state": state}}
+
+    rows = [row("a"), row("b", over=3), row("c", open_=1), row("d", state="BAD_HEALTH"), row("e", open_=2)]
+    assert [r["name"] for r in sorted(rows, key=monitor._sort_key("Needs attention"))] == ["e", "c", "b", "d", "a"]
 
 
 def test_a_run_that_moves_on_while_the_panel_renders_is_followed(agent, monkeypatch):

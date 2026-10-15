@@ -611,6 +611,71 @@ class Store:
                               "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
                               (key, value, updated_by, now))
 
+    # -- the app's health, and retention -----------------------------------
+
+    def add_health(self, t: float, values: dict) -> None:
+        """values: {key: number}; a key without a number is skipped."""
+
+        rows = [(t, key, float(value)) for key, value in values.items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)]
+
+        with self.lock:
+            self.conn.executemany("INSERT OR REPLACE INTO health_samples (t, key, value) VALUES (?, ?, ?)", rows)
+
+    def health(self, key: str, since: float = 0.0) -> list:
+        with self.lock:
+            rows = self.conn.execute("SELECT t, value FROM health_samples WHERE key = ? AND t >= ? ORDER BY t",
+                                     (key, since)).fetchall()
+
+        return [(r["t"], r["value"]) for r in rows]
+
+    def latest_health(self) -> dict:
+        """{key: (t, value)} from the newest sample of each key."""
+
+        rows = self._all("SELECT key, t, value FROM health_samples h WHERE t = "
+                         "(SELECT MAX(t) FROM health_samples WHERE key = h.key)")
+
+        return {r["key"]: (r["t"], r["value"]) for r in rows}
+
+    def _delete_batches(self, sql: str, params: tuple, batch: int) -> int:
+        deleted = 0
+
+        while True:
+            with self.lock:
+                count = self.conn.execute(sql, params + (batch,)).rowcount
+
+            deleted += count
+
+            if count < batch:
+                return deleted
+
+    def prune_samples(self, before: float, batch: int = 5000) -> int:
+        """
+        Delete KPI samples older than `before`, deployment by deployment
+        (the time index leads with it) and a batch per statement, so the
+        shared connection is never held long. No VACUUM: SQLite reuses
+        the freed pages. Returns rows deleted.
+        """
+
+        crns = [r["crn"] for r in self._all("SELECT crn FROM deployments")]
+
+        return sum(self._delete_batches(
+            "DELETE FROM kpi_samples WHERE rowid IN (SELECT rowid FROM kpi_samples "
+            "WHERE deployment_crn = ? AND t < ? LIMIT ?)", (crn, before), batch) for crn in crns)
+
+    def prune_health(self, before: float, batch: int = 5000) -> int:
+        return self._delete_batches("DELETE FROM health_samples WHERE rowid IN "
+                                    "(SELECT rowid FROM health_samples WHERE t < ? LIMIT ?)", (before,), batch)
+
+    def closed_between(self, start: float, end: float) -> list:
+        """Ids of incidents closed in [start, end), the ones whose checkpoints may go."""
+
+        marks = ", ".join("?" for _ in CLOSED_STATUSES)
+
+        return [r["id"] for r in self._all(
+            f"SELECT id FROM incidents WHERE status IN ({marks}) AND closed_at >= ? AND closed_at < ? "
+            "ORDER BY closed_at", CLOSED_STATUSES + (start, end))]
+
     def record(self, since: float = 0.0) -> dict:
         """Every incident opened at or after `since`, with all its rows, by table: the scorecard's reads."""
 

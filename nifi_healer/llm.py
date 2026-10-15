@@ -48,6 +48,7 @@ import urllib.error
 import urllib.request
 
 import config
+from nifi_healer.runtime import telemetry
 
 _JWT_FILE = "/tmp/jwt"
 
@@ -288,6 +289,21 @@ def set_chat_model(model) -> None:
     with _lock:
         _chat, _chat_token, _chat_fixed = model, None, model is not None
         _probe = (0.0, None)
+
+
+def invoke(model, messages: list):
+    """model.invoke(messages), timed for App health (how long, and whether it raised)."""
+
+    started, ok = time.monotonic(), False
+
+    try:
+        reply = model.invoke(messages)
+        ok = True
+
+        return reply
+
+    finally:
+        telemetry.record("llm", time.monotonic() - started, ok)
 
 
 def chat_available() -> tuple:

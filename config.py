@@ -127,6 +127,11 @@ DENYLIST_DEPLOYMENT_CRNS = _list("SELFHEAL_DENYLIST")
 
 CDP_TIMEOUT_SECONDS = _int("SELFHEAL_CDP_TIMEOUT", 120)
 
+# Long-lived CLI processes for reads (cdp/worker.py), so a read stops
+# paying cdpcli's ~1 s of imports each time; started as needed. 0 runs
+# every call in its own process, as before.
+CDP_WORKERS = max(0, _int("SELFHEAL_CDP_WORKERS", 6))
+
 METRICS_TIME_PERIOD = os.environ.get(
     "SELFHEAL_METRICS_TIME_PERIOD", "LAST_THIRTY_MINUTES"
 )
@@ -158,18 +163,25 @@ AUTONOMY_VETO_SECONDS = max(0, _int("SELFHEAL_AUTONOMY_VETO", 600))
 # A chart has ~25 buckets per window, so reading it every second mostly
 # re-reads the same numbers. Both can be set as low as 1. Intervals are
 # wall seconds (they pace CLI calls); the mock's calls cost nothing and
-# its clock runs MOCK_SPEED times faster, so it polls more often.
+# its clock runs MOCK_SPEED times faster, so it polls more often. A live
+# chart bucket is ~72 s, so reading KPIs more than once a minute mostly
+# re-reads the newest bucket.
 
-POLL_HEALTH_SECONDS = max(1, _int("SELFHEAL_POLL_HEALTH_SECONDS", 2 if MOCK else 10))
-POLL_KPI_SECONDS = max(1, _int("SELFHEAL_POLL_KPI_SECONDS", 3 if MOCK else 30))
+POLL_HEALTH_SECONDS = max(1, _int("SELFHEAL_POLL_HEALTH_SECONDS", 2 if MOCK else 30))
+POLL_KPI_SECONDS = max(1, _int("SELFHEAL_POLL_KPI_SECONDS", 3 if MOCK else 60))
 
 # The deployment event log (what changed, for the Monitor tab). Changes
 # are rare; the log is read whole (the newest 200 events) each time.
-POLL_EVENTS_SECONDS = max(1, _int("SELFHEAL_POLL_EVENTS_SECONDS", 5 if MOCK else 60))
+POLL_EVENTS_SECONDS = max(1, _int("SELFHEAL_POLL_EVENTS_SECONDS", 5 if MOCK else 120))
 
-# Packs polled at once. Each live read is a 1-3 s subprocess, and tier B
-# is three of them per pack.
-POLL_WORKERS = max(1, _int("SELFHEAL_POLL_WORKERS", 4))
+# Packs polled at once; 0 (the default) means one per two deployments,
+# at least 4, growing with the fleet. Tier B is three reads per pack.
+POLL_WORKERS = max(0, _int("SELFHEAL_POLL_WORKERS", 0))
+
+
+def poll_workers(deployments: int) -> int:
+    return POLL_WORKERS or max(4, -(-deployments // 2))
+
 
 # Consecutive breaching buckets, inside one response, before a signal.
 BREACH_DEBOUNCE = max(1, _int("SELFHEAL_BREACH_DEBOUNCE", 2))
@@ -205,6 +217,12 @@ VERIFY_WINDOWS = (VERIFY_WINDOW_SECONDS,) + tuple(sorted({
 # trying this long after the verdict while its process group is busy.
 PROPOSE_ROLLBACKS = _bool("SELFHEAL_PROPOSE_ROLLBACKS", True)
 ROLLBACK_WITHIN_SECONDS = _int("SELFHEAL_ROLLBACK_WITHIN", 3600)
+
+# Retention (the poller's hourly pass): KPI samples, the app's own health
+# samples, and the agent checkpoints of incidents closed this long ago.
+KEEP_DAYS = max(1, _int("SELFHEAL_KEEP_DAYS", 14))
+HEALTH_KEEP_DAYS = max(1, _int("SELFHEAL_HEALTH_KEEP_DAYS", 30))
+CHECKPOINT_KEEP_DAYS = max(1, _int("SELFHEAL_CHECKPOINT_KEEP_DAYS", 7))
 
 AGENT_WORKERS = max(1, _int("SELFHEAL_AGENT_WORKERS", 2))
 AUTO_DIAGNOSE = _bool("SELFHEAL_AUTO_DIAGNOSE", True)

@@ -167,7 +167,7 @@ def _ask(model, messages: list) -> tuple:
     raw, error = "", ""
 
     for turn in range(2):
-        reply = model.invoke(messages)
+        reply = llm.invoke(model, messages)
         raw = prompts.text_of(reply)
 
         try:

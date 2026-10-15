@@ -188,6 +188,27 @@ def state(incident_id: str) -> dict:
     return get_graph().get_state(_config(incident_id)).values
 
 
+def forget(incident_ids: list) -> int:
+    """
+    Delete closed incidents' checkpoints (retention): nothing reads a
+    closed incident's run again. Returns how many threads were deleted.
+    """
+
+    if not incident_ids:
+        return 0
+
+    checkpointer = get_graph().checkpointer
+
+    for incident_id in incident_ids:
+        with _thread_lock(incident_id):
+            checkpointer.delete_thread(incident_id)
+
+        with _lock:
+            _running.pop(incident_id, None)
+
+    return len(incident_ids)
+
+
 def orphaned(incident: dict) -> bool:
     """
     Marked PENDING_REVIEW but with no paused review: human_review set the
@@ -353,3 +374,11 @@ def run_state(incident_id: str) -> tuple | None:
         queued = [i for i, f in _waiting.items() if not f.running() and not f.done()]
 
     return ("queued", queued.index(incident_id) + 1, len(queued)) if incident_id in queued else None
+
+
+def backlog() -> dict:
+    """Runs queued and running, and decisions being applied: the App health counts."""
+
+    with _lock:
+        return {"agent.queue": sum(1 for f in _waiting.values() if not f.done()),
+                "apply.inflight": sum(1 for f in _applying.values() if not f.done())}

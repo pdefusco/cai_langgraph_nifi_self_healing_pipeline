@@ -194,8 +194,35 @@ def refresh_kpi_choices(choice):
 
 
 @_timed
-def refresh_queue(selected):
-    return _new_choices(views.queue_choices(get_store(), keep=selected), selected)
+def refresh_queue(selected, pack=""):
+    return _new_choices(views.queue_choices(get_store(), keep=selected, pack=pack or ""), selected)
+
+
+@_timed
+def tick_queue(selected, pack):
+    return refresh_queue(selected, pack), views.queue_summary(get_store(), pack or "")
+
+
+@_timed
+def refresh_queue_packs(pack):
+    store = get_store()
+    choices = views.queue_packs(store, fleet.deployed_packs())
+    listed = (pack or "") in [v for _, v in choices]
+
+    return (gr.update(choices=choices) if listed else gr.update(choices=choices, value=""),
+            views.queue_summary(store, pack if listed else ""))
+
+
+@_timed
+def filter_queue(pack, selected):
+    """A new filter: its queue, its summary, and the first incident unless the one on screen is in it."""
+
+    store = get_store()
+    choices = views.queue_choices(store, pack=pack or "")
+    values = [v for _, v in choices]
+
+    return (gr.update(choices=choices, value=selected if selected in values else (values[0] if values else None)),
+            views.queue_summary(store, pack or ""))
 
 
 def _queue_at(incident_id):
@@ -549,6 +576,11 @@ def refresh_system():
     return views.system(_snapshot(), get_client())
 
 
+@_timed
+def show_health():
+    return monitor.render_health(monitor.health_model(get_store(), time.time()))
+
+
 def _autonomy_switch(paused: bool):
     @_timed
     def handler(request: gr.Request = None):
@@ -638,8 +670,12 @@ def build() -> gr.Blocks:
             _legend(legend.REVIEW)
 
             with gr.Row():
+                queue_pack = gr.Dropdown(label="Deployment", choices=[("All deployments", "")], value="",
+                                         scale=2)
                 queue_pick = gr.Dropdown(label="Incident", choices=[], scale=4, allow_custom_value=True)
                 queue_refresh = gr.Button("Refresh", scale=1)
+
+            queue_line = gr.Markdown()
 
             with gr.Row():
                 with gr.Column(scale=2):
@@ -669,12 +705,18 @@ def build() -> gr.Blocks:
                      hold_btn]
             seen = gr.State("")
             queue_timer = gr.Timer(5.0)
+            packs_timer = gr.Timer(30.0)
             follow_timer = gr.Timer(3.0)
 
             queue_pick.change(select_review, inputs=[queue_pick], outputs=panel + [seen])
-            queue_refresh.click(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
+            queue_pack.change(filter_queue, inputs=[queue_pack, queue_pick], outputs=[queue_pick, queue_line])
+            queue_refresh.click(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line]).then(
+                refresh_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick]).then(
                 select_review, inputs=[queue_pick], outputs=panel + [seen])
-            queue_timer.tick(refresh_queue, inputs=[queue_pick], outputs=[queue_pick], show_progress="hidden")
+            queue_timer.tick(tick_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick, queue_line],
+                             show_progress="hidden")
+            packs_timer.tick(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line],
+                             show_progress="hidden")
             follow_timer.tick(follow_review, inputs=[queue_pick, seen], outputs=panel + [seen],
                               show_progress="hidden")
 
@@ -865,9 +907,12 @@ def build() -> gr.Blocks:
                 forward_btn = gr.Button("Fast-forward")
 
             system_result = gr.Markdown()
+            health_html = gr.HTML(js_on_load=monitor.JS)
             selftest_out = gr.JSON(label="Selftest")
+            health_timer = gr.Timer(60.0)
 
-            system_refresh.click(refresh_system, outputs=[system_md])
+            system_refresh.click(refresh_system, outputs=[system_md]).then(show_health, outputs=[health_html])
+            health_timer.tick(show_health, outputs=[health_html], show_progress="hidden")
             poll_btn.click(poll_now, outputs=[system_result]).then(refresh_system, outputs=[system_md])
             selftest_btn.click(selftest, outputs=[selftest_out])
             pause_btn.click(_autonomy_switch(True), outputs=[system_result, system_md])
@@ -884,11 +929,13 @@ def build() -> gr.Blocks:
         demo.load(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
             select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
         demo.load(playbook_patch, outputs=[pb_patch])
+        demo.load(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
             select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail]).then(
             pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
         demo.load(refresh_system, outputs=[system_md])
+        demo.load(show_health, outputs=[health_html])
         demo.load(show_scorecard, **score_inputs)
         demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
             show_fleet, **fleet_out)

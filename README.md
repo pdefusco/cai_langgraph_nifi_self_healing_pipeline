@@ -330,8 +330,10 @@ up again, and so does an app restart.
 | `SELFHEAL_PREFIX` | `nfh-` | names the app may create or touch |
 | `SELFHEAL_DENYLIST` | (empty) | deployment CRNs never touched, comma-separated |
 | `SELFHEAL_NIFI_VERSION` | `2.6.0.4.12.0.2-1` | NiFi build for deployments and processor bundles |
-| `SELFHEAL_POLL_HEALTH_SECONDS` / `_KPI_SECONDS` | 10 / 30 for live (2 / 3 for mock) | tier A / tier B intervals, minimum 1 |
-| `SELFHEAL_POLL_WORKERS` | 4 | packs polled concurrently |
+| `SELFHEAL_POLL_HEALTH_SECONDS` / `_KPI_SECONDS` / `_EVENTS_SECONDS` | 30 / 60 / 120 for live (2 / 3 / 5 for mock) | poll intervals, minimum 1 |
+| `SELFHEAL_POLL_WORKERS` | 4, or half the deployments when more | packs polled concurrently |
+| `SELFHEAL_CDP_WORKERS` | 6 | long-lived cdp CLI processes for reads (writes always run alone); 0 runs every call alone |
+| `SELFHEAL_KEEP_DAYS` / `_HEALTH_KEEP_DAYS` / `_CHECKPOINT_KEEP_DAYS` | 14 / 30 / 7 | KPI samples, App health samples, and closed incidents' checkpoints are pruned after this many days |
 | `SELFHEAL_BREACH_DEBOUNCE` | 2 | consecutive breaching buckets before a signal |
 | `SELFHEAL_INCIDENT_COOLDOWN` | 900 | seconds before a process group can reopen an incident |
 | `SELFHEAL_VERIFY_SETTLE` / `_WINDOW` | 300 / 900 | outcome measurement after a change |

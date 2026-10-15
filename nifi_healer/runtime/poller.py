@@ -55,6 +55,7 @@ Gradio's demo.load runs per browser tab, which in the cai_langgraph
 articles started one poller per tab.
 """
 
+import os
 import threading
 import time
 import traceback
@@ -67,6 +68,7 @@ from nifi_healer import fleet
 from nifi_healer.actions import rollback
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
 from nifi_healer.kpi import changes, detectors, metrics, outcomes, rollup
+from nifi_healer.runtime import telemetry
 from nifi_healer.store.db import Store, get_store
 
 BUSY_STATES = ("UPDATING", "DEPLOYING", "UNKNOWN", "TERMINATING")
@@ -81,6 +83,13 @@ BACKFILL_PERIODS = ("LAST_ONE_HOUR", "LAST_TWELVE_HOURS", "LAST_ONE_DAY")
 # Change kinds that cut a verify window short; KPI edits and the
 # deployment's creation change no data.
 _CUTTING_KINDS = ("flow_version", "parameters", "sizing", "other")
+
+HEALTH_EVERY = 60          # wall seconds between App health samples
+RETENTION_EVERY = 3600     # wall seconds between pruning passes
+
+# Each tier's newest read, from the view, and how often it should come.
+_TIERS = (("health", "health_wall", "POLL_HEALTH_SECONDS"), ("kpis", "kpi_wall", "POLL_KPI_SECONDS"),
+          ("events", "events_wall", "POLL_EVENTS_SECONDS"))
 
 
 def log(message: str) -> None:
@@ -127,10 +136,13 @@ class Poller:
                           "last_error": None, "last_error_at": None}
         self._stop = threading.Event()
         self._thread = None
-        self._pool = ThreadPoolExecutor(max_workers=config.POLL_WORKERS,
-                                        thread_name_prefix="poll")
+        self.workers = config.poll_workers(0)
+        self._pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="poll")
         self._in_flight = set()
         self._last_run = {}
+        self._waits = {}     # tier -> [seconds a job waited for a worker], since the last health sample
+        self._pending = 0
+        self._errors = []    # wall times of recent errors, for the errors-per-hour count
         self._fleet = {}
         self._fleet_at = 0.0
         self._kinds = {}  # flow version crn -> {processor name: kind}; a version never changes
@@ -150,7 +162,7 @@ class Poller:
             self._thread = threading.Thread(target=self._loop, name="poller", daemon=True)
             self._thread.start()
             log(f"started: health every {config.POLL_HEALTH_SECONDS}s, KPIs every "
-                f"{config.POLL_KPI_SECONDS}s, {config.POLL_WORKERS} worker(s), "
+                f"{config.POLL_KPI_SECONDS}s, {self.workers} worker(s) to begin with, "
                 f"{self.client.kind} client")
 
         return self
@@ -171,8 +183,20 @@ class Poller:
         if time.monotonic() - self._fleet_at > _FLEET_EVERY:
             self._fleet = fleet.deployed_packs()
             self._fleet_at = time.monotonic()
+            self._grow(config.poll_workers(len(self._fleet)))
 
         return self._fleet
+
+    def _grow(self, workers: int) -> None:
+        """A bigger pool for a bigger fleet; the old one finishes what it holds."""
+
+        if workers <= self.workers:
+            return
+
+        old, self._pool = self._pool, ThreadPoolExecutor(max_workers=workers, thread_name_prefix="poll")
+        self.workers = workers
+        old.shutdown(wait=False)
+        log(f"{workers} worker(s) for {len(self._fleet)} deployment(s)")
 
     def _due(self, job: tuple, interval: float) -> bool:
         with self.lock:
@@ -188,7 +212,19 @@ class Poller:
             return True
 
     def _submit(self, job: tuple, fn, *args) -> None:
+        submitted = time.monotonic()
+
+        with self.lock:
+            self._pending += 1
+
         def run():
+            with self.lock:
+                self._pending -= 1
+                waits = self._waits.setdefault(job[0], [])
+
+                if len(waits) < 10000:
+                    waits.append(time.monotonic() - submitted)
+
             try:
                 fn(*args)
 
@@ -226,6 +262,12 @@ class Poller:
                 if self.on_tick and self._due(("autonomy", ""), config.POLL_KPI_SECONDS):
                     self._submit(("autonomy", ""), self.on_tick, self.client, self.store)
 
+                if self._due(("app_health", ""), HEALTH_EVERY):
+                    self._submit(("app_health", ""), self.sample_health)
+
+                if self._due(("retention", ""), RETENTION_EVERY):
+                    self._submit(("retention", ""), self.retain)
+
                 with self.lock:
                     self.heartbeat["loops"] += 1
                     self.heartbeat["last_loop"] = time.time()
@@ -237,8 +279,10 @@ class Poller:
 
     def _error(self, message: str) -> None:
         with self.lock:
+            now = time.time()
             self.heartbeat["last_error"] = message
-            self.heartbeat["last_error_at"] = time.time()
+            self.heartbeat["last_error_at"] = now
+            self._errors = [t for t in self._errors if now - t < 3600][-999:] + [now]
 
         log(f"error: {message}")
 
@@ -335,6 +379,9 @@ class Poller:
 
         found = changes.from_events(self.client.deployment_events(entry["deployment_crn"]))
         added = self.store.add_changes(entry["deployment_crn"], name, found)
+
+        with self.lock:
+            self._view(name)["events_wall"] = time.time()
 
         if added:
             log(f"[{name}] {added} new change(s) in the event log")
@@ -789,6 +836,97 @@ class Poller:
 
         return sorted(out, key=lambda c: c["t"])
 
+    # -- the app's own health -------------------------------------------------
+
+    def lag(self, now: float | None = None) -> dict:
+        """
+        Per tier, how far each pack's newest read is behind its schedule
+        (its age less the tier's interval, never below 0): the p95 and the
+        worst over the packs read at least once.
+        """
+
+        now, out = now or time.time(), {}
+
+        with self.lock:
+            views = [dict(v) for v in self.cache.values()]
+
+        for tier, field, interval in _TIERS:
+            behind = [max(0.0, now - v[field] - getattr(config, interval)) for v in views if v.get(field)]
+
+            if behind:
+                out[f"poll.lag.{tier}"] = round(telemetry.percentile(behind, 95), 1)
+                out[f"poll.lag.{tier}.max"] = round(max(behind), 1)
+
+        return out
+
+    def sample_health(self) -> dict:
+        """One App health sample (store.health_samples): numbers only, never a call's arguments."""
+
+        from nifi_healer.agent import graph
+
+        values = self.lag()
+
+        with self.lock:
+            waits, self._waits = self._waits, {}
+            values["poll.pending"] = self._pending
+            values["poll.workers"] = self.workers
+            values["errors.hour"] = sum(1 for t in self._errors if time.time() - t < 3600)
+
+        for tier, seconds in waits.items():
+            if tier in ("health", "kpis", "events"):
+                values[f"poll.wait.{tier}"] = round(telemetry.percentile(seconds, 95), 2)
+
+        values.update({"cdp.calls": 0, "cdp.errors": 0, "llm.calls": 0, "llm.errors": 0})
+
+        for kind, summary in telemetry.drain().items():
+            values.update({f"{kind}.{name}": value for name, value in summary.items()})
+
+        values.update(graph.backlog())
+        values.update(telemetry.process_stats())
+
+        try:
+            values["db.mb"] = round(os.path.getsize(self.store.path) / 2**20, 2)
+
+        except OSError:
+            pass
+
+        self.store.add_health(time.time(), values)
+        lagging = (values.get("poll.lag.kpis") or 0) > config.POLL_KPI_SECONDS
+
+        with self.lock:
+            self.heartbeat["health"] = values
+            # Since when the KPI reads have run more than an interval late (the header's warning).
+            self.heartbeat["kpis_late_since"] = (self.heartbeat.get("kpis_late_since") or time.time()
+                                                 if lagging else None)
+
+        return values
+
+    def retain(self) -> dict:
+        """
+        Prune what grows without end: KPI samples older than KEEP_DAYS,
+        App health older than HEALTH_KEEP_DAYS, and the checkpoints of
+        incidents closed more than CHECKPOINT_KEEP_DAYS ago.
+        """
+
+        from nifi_healer.agent import graph
+
+        now, day = self.client.now(), 86400
+        pruned = {"kpi_samples": self.store.prune_samples(now - config.KEEP_DAYS * day),
+                  "health_samples": self.store.prune_health(time.time() - config.HEALTH_KEEP_DAYS * day)}
+
+        # From where the last pass stopped, so each closed incident is forgotten once.
+        mark = float((self.store.setting("checkpoints_pruned_to") or {}).get("value") or 0)
+        upto = now - config.CHECKPOINT_KEEP_DAYS * day
+
+        if upto > mark:
+            pruned["checkpoints"] = graph.forget(self.store.closed_between(mark, upto))
+            self.store.set_setting("checkpoints_pruned_to", repr(upto), "retention", now)
+
+        if any(pruned.values()):
+            log("retention: " + ", ".join(f"{count} {what}" for what, count in pruned.items() if count))
+
+        return pruned
+
     # -- reading ----------------------------------------------------------------
 
     def poll_now(self, name: str = "") -> None:
@@ -805,7 +943,8 @@ class Poller:
         with self.lock:
             return {
                 "packs": {name: dict(view) for name, view in self.cache.items()},
-                "heartbeat": dict(self.heartbeat, running=self.running),
+                "heartbeat": dict(self.heartbeat, running=self.running,
+                                  errors_hour=sum(1 for t in self._errors if time.time() - t < 3600)),
                 "now": self.client.now(),
             }
 

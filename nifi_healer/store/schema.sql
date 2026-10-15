@@ -226,3 +226,16 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_by          TEXT,
     updated_at          REAL NOT NULL
 );
+
+-- The app's own vital signs, once a minute (runtime/poller.py's health
+-- job): poll lag, CLI and LLM latency and errors, backlogs, memory, CPU.
+-- Wall time, not the tenant's clock. Numbers only.
+CREATE TABLE IF NOT EXISTS health_samples (
+    t                   REAL NOT NULL,
+    key                 TEXT NOT NULL,
+    value               REAL,
+    PRIMARY KEY (key, t)
+);
+
+CREATE INDEX IF NOT EXISTS health_samples_by_time
+    ON health_samples (t);

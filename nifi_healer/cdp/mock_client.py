@@ -32,6 +32,7 @@ import config
 from nifi_healer.cdp import cli_spec
 from nifi_healer.cdp.client import Client, command_line
 from nifi_healer.kpi import metrics
+from nifi_healer.runtime import telemetry
 from nifi_healer.sim import world as worlds
 from nifi_healer.sim.world import MockError
 
@@ -139,6 +140,13 @@ class MockClient(Client):
     # -- transport ----------------------------------------------------
 
     def run(self, args: list) -> dict:
+        started = time.monotonic()
+        result = self._run(args)
+        telemetry.record("cdp", time.monotonic() - started, not (isinstance(result, dict) and "error" in result))
+
+        return result
+
+    def _run(self, args: list) -> dict:
         args = [str(a) for a in args]
 
         if len(args) < 2:

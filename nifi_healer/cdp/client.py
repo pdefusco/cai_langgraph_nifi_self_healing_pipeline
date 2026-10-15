@@ -32,14 +32,17 @@ Ported from agentstudio_nifi_monitoring_and_self_healing_pipelines
 import base64
 import json
 import os
+import select
 import shlex
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 
 import config
+from nifi_healer.runtime import telemetry
 
 
 # Deployment states settled enough to act on. Anything else means an
@@ -55,6 +58,14 @@ HALF_APPLIED_ACTIONS = frozenset(
 MAX_RAW_OUTPUT_CHARS = 4000
 
 CDP_CREDENTIALS_FILE = os.path.expanduser("~/.cdp/credentials")
+
+WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker.py")
+
+# Operations the worker pool runs; anything else gets its own process.
+READ_PREFIXES = ("describe-", "list-", "get-")
+
+# Calls before a worker is replaced, so nothing cdpcli accumulates grows for ever.
+WORKER_CALLS = 500
 
 
 def command_line(args: list, prefix: str = "cdp") -> str:
@@ -597,10 +608,191 @@ class Client:
         return report
 
 
+class _WorkerDied(Exception):
+    pass
+
+
+class _Worker:
+    """One cdp/worker.py process: one call at a time, from the pool."""
+
+    def __init__(self, environment: dict, timeout: float):
+        self.calls = 0
+        self.environment = environment
+
+        try:
+            self.proc = subprocess.Popen([sys.executable, WORKER_SCRIPT], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         text=True, env=environment)
+
+        except OSError as exc:
+            raise _WorkerDied(str(exc)) from None
+
+        try:
+            ready = self._read(timeout).get("ready")
+
+        except (_WorkerDied, subprocess.TimeoutExpired, ValueError, AttributeError):
+            ready = False
+
+        if not ready:
+            self.kill()
+            raise _WorkerDied("the worker did not start")
+
+    def _read(self, timeout: float) -> dict:
+        readable, _, _ = select.select([self.proc.stdout], [], [], timeout)
+
+        if not readable:
+            raise subprocess.TimeoutExpired("cdp worker", timeout)
+
+        line = self.proc.stdout.readline()
+
+        if not line:
+            raise _WorkerDied("the worker exited")
+
+        return json.loads(line)
+
+    def call(self, args: list, timeout: float) -> subprocess.CompletedProcess:
+        try:
+            self.proc.stdin.write(json.dumps({"args": [str(a) for a in args]}) + "\n")
+            self.proc.stdin.flush()
+
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            raise _WorkerDied(str(exc)) from None
+
+        reply = self._read(timeout)
+        self.calls += 1
+
+        return subprocess.CompletedProcess(args, reply["rc"], reply["stdout"], reply["stderr"])
+
+    def kill(self) -> None:
+        try:
+            self.proc.kill()
+            self.proc.wait(5)
+
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+        for stream in (self.proc.stdin, self.proc.stdout):
+            try:
+                stream.close()
+
+            except OSError:
+                pass
+
+
+class WorkerPool:
+    """
+    Up to `size` long-lived cdp workers for reads, started on demand. A
+    worker that times out is killed (as the one-shot process would be);
+    one that dies is replaced and the call tried once more on a fresh
+    one; each is recycled after WORKER_CALLS calls, or when the
+    credentials it was started with are no longer the current ones.
+    """
+
+    def __init__(self, size: int):
+        self.size = size
+        self._idle = []
+        self._alive = 0
+        self._cond = threading.Condition()
+
+    def _take(self, environment: dict, timeout: float) -> _Worker:
+        stale = []
+
+        with self._cond:
+            # Every worker busy for a whole timeout: the call gets its own process instead.
+            if not self._cond.wait_for(lambda: self._idle or self._alive < self.size, timeout):
+                raise _WorkerDied("every worker is busy")
+
+            while self._idle and self._idle[-1].environment != environment:
+                stale.append(self._idle.pop())
+
+            self._alive -= len(stale)
+            worker = self._idle.pop() if self._idle else None
+
+            if worker is None:
+                self._alive += 1
+
+        for old in stale:
+            old.kill()
+
+        if worker:
+            return worker
+
+
+        try:
+            return _Worker(environment, timeout)
+
+        except BaseException:
+            self._drop()
+            raise
+
+    def _drop(self) -> None:
+        with self._cond:
+            self._alive -= 1
+            self._cond.notify()
+
+    def _give_back(self, worker: _Worker) -> None:
+        if worker.calls >= WORKER_CALLS:
+            worker.kill()
+            self._drop()
+            return
+
+        with self._cond:
+            self._idle.append(worker)
+            self._cond.notify()
+
+    def run(self, args: list, environment: dict, timeout: float) -> subprocess.CompletedProcess:
+        """The call's exit as a CompletedProcess; raises TimeoutExpired, or _WorkerDied twice over."""
+
+        for attempt in (1, 2):
+            worker = self._take(environment, timeout)
+
+            try:
+                completed = worker.call(args, timeout)
+
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                self._drop()
+                raise
+
+            except (_WorkerDied, ValueError, KeyError) as exc:
+                worker.kill()
+                self._drop()
+
+                if attempt == 2:
+                    raise _WorkerDied(str(exc)) from None
+
+                continue
+
+            self._give_back(worker)
+
+            return completed
+
+    def close(self) -> None:
+        with self._cond:
+            idle, self._idle = self._idle, []
+            self._alive -= len(idle)
+
+        for worker in idle:
+            worker.kill()
+
+
+def is_read(args: list) -> bool:
+    """A describe/list/get operation, which the worker pool may run."""
+
+    return len(args) > 1 and str(args[1]).startswith(READ_PREFIXES)
+
+
 class LiveClient(Client):
-    """Runs the CDP CLI in a subprocess."""
+    """
+    Runs the CDP CLI: reads on a pool of long-lived workers
+    (SELFHEAL_CDP_WORKERS, 0 for none), every write in its own
+    subprocess, as each read did before the pool.
+    """
 
     kind = "live"
+
+    def __init__(self):
+        self.pool = WorkerPool(config.CDP_WORKERS) if config.CDP_WORKERS > 0 else None
 
     def _environment(self) -> dict:
         """
@@ -623,6 +815,31 @@ class LiveClient(Client):
         return {}
 
     def run(self, args: list) -> dict:
+        started = time.monotonic()
+        result = self._run(args)
+        telemetry.record("cdp", time.monotonic() - started, not (isinstance(result, dict) and "error" in result))
+
+        return result
+
+    def _invoke(self, args: list, environment: dict) -> subprocess.CompletedProcess:
+        if self.pool and is_read(args):
+            try:
+                return self.pool.run(list(args) + ["--output", "json"], environment, config.CDP_TIMEOUT_SECONDS)
+
+            except _WorkerDied:
+                pass         # the one-shot process says why, with its hint
+
+        # Through `-c` rather than `-m cdpcli.clidriver`: the module has no
+        # __main__ guard, so `-m` is a silent no-op that exits 0.
+        command = [
+            sys.executable, "-c",
+            "import sys; from cdpcli.clidriver import main; sys.exit(main())",
+        ] + [str(a) for a in args] + ["--output", "json"]
+
+        return subprocess.run(command, capture_output=True, text=True,
+                              timeout=config.CDP_TIMEOUT_SECONDS, env=environment)
+
+    def _run(self, args: list) -> dict:
         environment = self._environment()
 
         if not environment:
@@ -635,18 +852,8 @@ class LiveClient(Client):
                 ),
             }
 
-        # Through `-c` rather than `-m cdpcli.clidriver`: the module has no
-        # __main__ guard, so `-m` is a silent no-op that exits 0.
-        command = [
-            sys.executable, "-c",
-            "import sys; from cdpcli.clidriver import main; sys.exit(main())",
-        ] + [str(a) for a in args] + ["--output", "json"]
-
         try:
-            completed = subprocess.run(
-                command, capture_output=True, text=True,
-                timeout=config.CDP_TIMEOUT_SECONDS, env=environment,
-            )
+            completed = self._invoke(args, environment)
 
         except subprocess.TimeoutExpired:
             return {
