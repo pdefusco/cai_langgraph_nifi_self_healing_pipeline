@@ -20,11 +20,11 @@ from nifi_healer.cdp.client import get_client  # noqa: E402
 def add_pack_argument(parser, required: bool = False) -> None:
     parser.add_argument("--pack", action="append", choices=sorted(packs.PACKS), required=required,
                         help="this pack (repeatable)" if required else
-                        "only this pack (repeatable; default: all seven)")
+                        "only this pack (repeatable; default: the wave-1 packs, p1-p7)")
 
 
 def selected(args) -> list:
-    return args.pack or list(packs.PACKS)
+    return args.pack or list(packs.DEFAULT)
 
 
 def banner(title: str) -> None:

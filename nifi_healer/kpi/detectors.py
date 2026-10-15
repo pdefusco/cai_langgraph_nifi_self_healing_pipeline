@@ -170,10 +170,19 @@ def trend_to_breach(kpi: dict, series: list, now: float) -> dict | None:
 # ---------------------------------------------------------------------
 
 
+def _dead_letter(kpi: dict) -> bool:
+    # The name rule ROUTE_RELATIONSHIP_TO_DLQ checks its target by.
+    return kpi["metric"] == "flowfiles_in" and "DLQ" in kpi["component"].upper()
+
+
 def _pairs(kpis: list) -> list:
     """
-    (upstream kpi, downstream kpi) pairs inside one scenario: a stage's
-    own in and out, or one stage's out and a later stage's in.
+    (upstream kpi, downstream kpi, accounted) inside one scenario: a
+    stage's own in and out, or one stage's out and a later stage's in.
+
+    A DLQ's FlowFiles In is never a pair's downstream side: what it takes
+    is accounted for, not lost. Between two stages, `accounted` is the
+    scenario's DLQ in-KPIs, whose rates add to the downstream side.
     """
 
     by_scenario = {}
@@ -188,16 +197,17 @@ def _pairs(kpis: list) -> list:
     pairs = []
 
     for group in by_scenario.values():
-        ins = {k["component"]: k for k in group if k["metric"] == "flowfiles_in"}
+        dead = [k for k in group if _dead_letter(k)]
+        ins = {k["component"]: k for k in group if k["metric"] == "flowfiles_in" and k not in dead}
         outs = {k["component"]: k for k in group if k["metric"] == "flowfiles_out"}
 
         for component in ins.keys() & outs.keys():
-            pairs.append((ins[component], outs[component]))
+            pairs.append((ins[component], outs[component], []))
 
         for source, out in outs.items():
             for sink, into in ins.items():
                 if source != sink and source not in ins and sink not in outs:
-                    pairs.append((out, into))
+                    pairs.append((out, into, dead))
 
     return pairs
 
@@ -212,15 +222,24 @@ def _rising(series: list) -> bool:
     return metrics.trend(tail) > 0 and last > first * 1.1 and last - first >= 1
 
 
-def imbalance(upstream: dict, downstream: dict, series: dict, queues: list, now: float) -> dict | None:
+def _rate(points: list) -> float:
+    tail = points[-_RATE_BUCKETS:]
+
+    return sum(v for _, v in tail) / len(tail) if tail else 0.0
+
+
+def imbalance(upstream: dict, downstream: dict, series: dict, queues: list, now: float,
+              accounted: list = ()) -> dict | None:
+    """accounted: DLQ in-KPIs whose FlowFiles count as delivered downstream."""
+
     up = series.get(upstream["key"]) or []
     down = series.get(downstream["key"]) or []
 
     if len(up) < 2 or len(down) < 2:
         return None
 
-    rate_in = sum(v for _, v in up[-_RATE_BUCKETS:]) / len(up[-_RATE_BUCKETS:])
-    rate_out = sum(v for _, v in down[-_RATE_BUCKETS:]) / len(down[-_RATE_BUCKETS:])
+    rate_in = _rate(up)
+    rate_out = _rate(down) + sum(_rate(series.get(k["key"]) or []) for k in accounted)
 
     if rate_in <= 1e-6:
         return None
@@ -358,11 +377,12 @@ def detect(pack_name: str, entry: dict, charts: list, alerts: list, now: float,
         if kpi.get("metric") == "queued_count":
             queues.setdefault(kpi["scenario"], []).append(kpi)
 
-    for upstream, downstream in _pairs(kpis):
+    for upstream, downstream, accounted in _pairs(kpis):
         if {kinds.get(upstream["component"]), kinds.get(downstream["component"])} & REGROUPING:
             continue
 
-        found = imbalance(upstream, downstream, series, queues.get(upstream["scenario"], []), now)
+        found = imbalance(upstream, downstream, series, queues.get(upstream["scenario"], []), now,
+                          accounted)
 
         if found:
             signals.append(found)

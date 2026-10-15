@@ -134,9 +134,19 @@ class Simulation:
     # -----------------------------------------------------------------
 
     def queued(self, cid: str) -> tuple:
-        queue = self.queues.get(cid) or ()
+        """
+        What the connection holds, as NiFi counts it: its queue plus what
+        its consumer has taken but not yet committed. MergeContent holds its
+        bins' FlowFiles unacknowledged, so they still count toward the input
+        connection's size and its back pressure.
+        """
 
-        return sum(c[1] for c in queue), sum(c[2] for c in queue)
+        queue = self.queues.get(cid) or ()
+        conn = self.model.connections.get(cid)
+        binned = (self.state.get(conn.destination) or {}).get("binned", {}).get(cid) if conn else None
+        held_count, held_bytes = binned or (0.0, 0.0)
+
+        return sum(c[1] for c in queue) + held_count, sum(c[2] for c in queue) + held_bytes
 
     def _full(self, cid: str) -> bool:
         conn = self.model.connections[cid]
@@ -552,9 +562,14 @@ class Simulation:
         bins = max(1.0, float(proc.properties.get("Maximum number of Bins") or 5))
         max_age = parse_duration(proc.properties.get("Max Bin Age"), 0.0)
         held = state.setdefault("bin", [0.0, 0.0, None])
+        binned = state.setdefault("binned", {})       # by input: [count, bytes] in the bins
 
-        if avail > 1e-9:
-            count, size = self._take_inputs(proc, avail)
+        for cid in proc.inputs if avail > 1e-9 else ():
+            count, size = self._take(cid, self._ready(cid)[0])
+
+            if count <= 1e-9:
+                continue
+
             stat["in"] += count
             cpu["fixed"] += count * CHEAP_CPU / DT
 
@@ -563,6 +578,9 @@ class Simulation:
 
             held[0] += count
             held[1] += size
+            part = binned.setdefault(cid, [0.0, 0.0])
+            part[0] += count
+            part[1] += size
 
         merged = consumed = 0.0
 
@@ -584,9 +602,11 @@ class Simulation:
             return
 
         size = held[1] * consumed / held[0]
+        kept = 1.0 - consumed / held[0]
         held[0] -= consumed
         held[1] -= size
         held[2] = self.t if held[0] > 1e-9 else None
+        state["binned"] = {cid: [c * kept, b * kept] for cid, (c, b) in binned.items() if c * kept > 1e-9}
         self._route(proc, {"merged": (merged, size), "original": (consumed, size)}, stat)
 
     def _cpu_bound(self, proc, spread, stat, cpu, avail, avg, rate) -> tuple:

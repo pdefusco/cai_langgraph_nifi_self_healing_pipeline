@@ -92,6 +92,24 @@ def test_imbalance_flags_silent_loss():
     assert found["kpis"][down["key"]]["status"] == "imbalance"
 
 
+def test_imbalance_counts_what_a_dlq_takes_as_delivered():
+    up = kpi("S27", "processor", "S27 Meter Readings", "flowfiles_out", above=None, good="up",
+             primary=False)
+    down = kpi("S27", "processor", "S27 Store Readings", "flowfiles_in", above=None, good="up",
+               primary=False)
+    rejects = kpi("S27", "processor", "S27 Reject DLQ", "flowfiles_in", above=None, good="up")
+    entry = {"kpis": [up, down, rejects]}
+
+    # 1.5/s of the 10 are dropped: nothing reaches the DLQ yet.
+    dropped = [chart(up, [10] * 25), chart(down, [8.5] * 25), chart(rejects, [0] * 25)]
+    found = detectors.detect("p10", entry, dropped, [], NOW)["signals"]
+    assert [(s["type"], s["component"]) for s in found] == [("flow_imbalance", "S27 Store Readings")]
+
+    # Routed to the DLQ, the same 1.5/s is accounted for, and the DLQ is never a lossy side.
+    routed = [chart(up, [10] * 25), chart(down, [8.5] * 25), chart(rejects, [1.5] * 25)]
+    assert detectors.detect("p10", entry, routed, [], NOW)["signals"] == []
+
+
 def test_imbalance_ignored_across_a_processor_that_merges(tenant):
     up = kpi("S15", "processor", "S15 Batcher", "flowfiles_in", above=None, good="up", primary=False)
     down = kpi("S15", "processor", "S15 Batcher", "flowfiles_out", above=None, good="up")

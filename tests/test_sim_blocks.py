@@ -232,6 +232,54 @@ def test_replace_text_passes_through_unless_the_content_overflows_its_buffer():
     assert _per_step(whole, "Rewritten") == 0 and _per_step(whole, "Rewrite DLQ") == pytest.approx(15)
 
 
+def _merging(threshold: int):
+    def build(pg):
+        generator(pg, "Source", batch=100)
+        pg.processor("stage", "Tag", "UpdateAttribute", {"Store State": "Do not store state"}, period="0 sec")
+        pg.processor("merge", "Merge", "MergeContent", {
+            "Merge Strategy": "Bin-Packing Algorithm", "Minimum Number of Entries": "20000",
+            "Maximum Number of Entries": "30000", "Max Bin Age": "10 min",
+        }, period="0 sec", auto_terminate=("original", "failure"))
+        sink(pg, "sink", "Merged", period="0 sec")
+        pg.connect("gen", "stage", ["success"], "Ingest")
+        pg.connect("stage", "merge", ["success"], "Into Merge", object_threshold=threshold)
+        pg.connect("merge", "sink", ["merged"], "Bundles")
+
+    return _flow(build)
+
+
+def test_a_merge_bin_counts_toward_its_input_back_pressure():
+    # The bin needs 20,000 but its input holds 10,000: the merge waits for
+    # its 10 minute age, and the backlog backs up to the source.
+    stuck = _simulation(_merging(10000))
+    merged = 0.0
+
+    for _ in range(int(400 / DT)):
+        stuck.step()
+        merged += _per_step(stuck, "Merged")
+
+    assert stuck.latest("connection|Into Merge|queued_count") == pytest.approx(10000, rel=0.02)
+    assert stuck.latest("connection|Ingest|queued_count") == pytest.approx(10000, rel=0.02)
+    assert _per_step(stuck, "Source", "flowfiles_out") == 0 and merged == 0
+
+    for _ in range(int(300 / DT)):
+        stuck.step()
+        merged += _per_step(stuck, "Merged")
+
+    assert merged == pytest.approx(1)                   # aged out, once
+
+    # Room for a full bin: one bundle per 200 s, and no backlog.
+    flowing = _simulation(_merging(50000))
+    merged = 0.0
+
+    for _ in range(int(700 / DT)):
+        flowing.step()
+        merged += _per_step(flowing, "Merged")
+
+    assert merged == pytest.approx(3)
+    assert flowing.latest("connection|Ingest|queued_count") == 1500       # one step's, not a backlog
+
+
 def test_a_scenario_says_how_its_fault_presents():
     assert SCENARIOS["S19"].kind == "control" and SCENARIOS["S01"].kind == "classic"
     assert SCENARIOS["S01"].detect_within == 1800 and SCENARIOS["S01"].clear_within == 900

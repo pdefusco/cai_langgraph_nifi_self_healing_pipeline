@@ -8,6 +8,7 @@ import json
 import pytest
 
 import config
+from flows import packs
 from nifi_healer import llm
 from nifi_healer.agent import graph
 from nifi_healer.cdp import client as clients
@@ -118,7 +119,7 @@ def test_the_scorecard_shows_the_replay(replayed):
 def test_chosen_scenarios():
     assert replay.chosen(["S19", "S01"]) == ["S01", "S19"]
     assert replay.chosen(pack_names=["p1-throughput"]) == ["S01", "S02", "S03", "S04"]
-    assert len(replay.chosen()) == 21
+    assert len(replay.chosen()) == len(packs.SCENARIOS) > 21     # every wave
 
     with pytest.raises(SystemExit):
         replay.chosen(["S99"])

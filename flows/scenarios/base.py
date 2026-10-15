@@ -11,6 +11,8 @@ the control). It declares:
                      label for evaluation (Phase 3), never shown to the agent.
   acceptable         other fixes that are also correct
   traps              plausible fixes that are wrong, and why
+  wrong              some of those traps as catalog actions, which the
+                     tests apply to check that they do not clear the fault
   kind               how the fault presents (KINDS): classic, one fault where
                      it shows; cascade, the symptom stages away from the
                      cause; compound, several faults; intermittent, it comes
@@ -24,7 +26,9 @@ the control). It declares:
   clear_within       seconds after the last fix by which its KPIs are healthy
 
 A *pack* is one deployment: a root process group holding several
-scenarios, and its sizing.
+scenarios, and its sizing. Its `wave` is the rollout batch it is
+provisioned in: a provision script given no --pack covers wave 1 only,
+so a later pack goes live only when it is named.
 
 KPIs name their component; the metric is a logical name resolved to a
 DataFlow metricId by nifi_healer/kpi/metrics.py, so an unverified id can
@@ -82,6 +86,7 @@ class Scenario:
     expected: tuple = ()
     acceptable: tuple = ()
     traps: tuple = ()
+    wrong: tuple = ()
     parameters: dict = field(default_factory=dict)
     edges: tuple = ()        # (entry names, exit names), when the topology misleads
     kind: str = ""           # one of KINDS; "" is control for family NONE, else classic
@@ -169,6 +174,7 @@ class Pack:
     nodes: int = 1
     parameter_context: str | None = None
     has_listen_components: bool = False
+    wave: int = 1
 
     def scenario(self, scenario_id: str) -> Scenario:
         for scenario in self.scenarios:

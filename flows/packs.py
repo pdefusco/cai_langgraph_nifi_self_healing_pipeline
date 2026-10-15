@@ -1,5 +1,5 @@
 """
-The seven scenario packs, and how a pack becomes a flow definition.
+The scenario packs, and how a pack becomes a flow definition.
 
     from flows import packs
     packs.PACKS["p1-throughput"]         # Pack
@@ -13,7 +13,8 @@ nfh-p1-throughput. Each scenario is a child process group of the root.
 import config
 from flows.builder.lib import ProcessGroup, flow_definition, parameter_context
 from flows.scenarios import (p1_throughput, p2_backpressure, p3_errors, p4_dataloss_latency,
-                             p5_parameters, p6_p7_sizing)
+                             p5_parameters, p6_p7_sizing, p8_orders, p9_clickstream,
+                             p10_iot, p11_payments)
 
 PACKS = {
     pack.name: pack
@@ -25,10 +26,18 @@ PACKS = {
         p5_parameters.PACK,
         p6_p7_sizing.P6,
         p6_p7_sizing.P7,
+        p8_orders.PACK,
+        p9_clickstream.PACK,
+        p10_iot.PACK,
+        p11_payments.PACK,
     )
 }
 
 SCENARIOS = {s.id: s for pack in PACKS.values() for s in pack.scenarios}
+
+# What a provision script covers when it is named no pack: the first
+# rollout wave. Later waves are provisioned by name, one batch at a time.
+DEFAULT = [name for name, pack in PACKS.items() if pack.wave == 1]
 
 
 def flow_name(pack_name: str) -> str:
