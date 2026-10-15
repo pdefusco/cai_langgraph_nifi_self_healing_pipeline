@@ -98,10 +98,12 @@ have led it right. A person reviews your edit before the agent ever reads it.
 Rules:
 - Edit one section: give the full new body of an existing section (by its id), or add a section to one playbook
   (section_id "" and a new heading). Prefer the section the agent relied on.
-- Change the advice the feedback contradicts, minimally; keep the rest of the section, and its
+- Change the advice the feedback contradicts, minimally; keep every other line of the section as it reads, and its
   <!-- symptoms: --> and <!-- actions: --> lines. No markdown heading lines (# or ##) in the text.
-- Write general guidance that holds for any flow: no incident ids, CRNs or deployment names, and no values that are
-  right only for this incident.
+- Keep the section's tables: their rows are values the flows' owners set. Change a value in its row only when the
+  feedback shows that value is wrong; never remove a row.
+- Write general guidance in what you add: no incident ids, CRNs or deployment names, and no values that are right
+  only for this incident.
 - Name only these actions: {actions}. Never advise restarting the deployment or emptying queues
   (STOP_AND_EMPTY_QUEUES).
 - The platform rules (cdf-platform-rules.md) are not edited here.

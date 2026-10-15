@@ -154,6 +154,40 @@ def test_check_refuses_what_the_agent_must_not_read():
     assert "needs a heading" in problems(ok, section_id="", heading="  ")
 
 
+RUNBOOK = "parameter-misconfiguration#runbook-correct-values-for-the-nfh-p5-parameters-context"
+
+# The live PE-1: a reviewer's "policy" turned into a rewrite that dropped the runbook's values.
+GENERIC = """<!-- symptoms: -->
+A parameter value deviates from its intended setting, causing abnormal flow behavior.
+<!-- actions: -->
+1. Identify the correct parameter value from design documentation or policy.
+2. If the correct value violates a policy, do not set it. Instead raise the downstream consumer's concurrent tasks
+   using SET_CONCURRENT_TASKS, or adjust the parameter to the highest allowed value using UPDATE_PARAMETER."""
+
+
+def test_check_refuses_a_rewrite_that_loses_the_section():
+    raws = ingest.raw_playbooks()
+    found = drafter.sections(raws)
+    old = found[RUNBOOK]["text"]
+    problems = " ".join(drafter.check({"playbook": "parameter-misconfiguration.md", "section_id": RUNBOOK,
+                                       "text": GENERIC}, raws, found))
+    assert "drops UPDATE_PARAMETER from the section's actions line" in problems
+    assert "keeps 0 of the section's 3 table rows" in problems and "the symptoms line is empty" in problems
+    assert "% of the section's words; change only what" in problems
+    head, tail = old.rsplit("\n\n", 1)
+    assert drafter._dropped(old, head + "\n\n" + " ".join(tail.split())) == []      # a paragraph rewrapped
+
+    # A value changed in its row, and a line added, is still a small edit.
+    changed = old.replace("| `1` |", "| `2` |") + "\n\nCheck the downstream queue after the change."
+    assert drafter.check({"playbook": "parameter-misconfiguration.md", "section_id": RUNBOOK, "text": changed},
+                         raws, found) == []
+
+    # Every shipped section passes as it reads, so no check refuses a playbook's own text.
+    for chunk_id, section in found.items():
+        assert drafter._dropped(section["text"], section["text"]) == [], chunk_id
+        assert all(drafter._tags(section["text"]).values()), chunk_id
+
+
 def test_check_keeps_an_existing_never_line():
     raws = {"x.md": "---\ntitle: X\n---\n# X\n\n## Never\n"
                     "Never restart the deployment to drain a queue: it drains nothing.\n"}

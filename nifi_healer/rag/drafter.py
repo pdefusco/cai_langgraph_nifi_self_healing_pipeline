@@ -22,6 +22,7 @@ section has one open draft. Nothing here changes what the agent reads:
 only an approval (ui/views.approve_playbook_edit) does.
 """
 
+import difflib
 import json
 import os
 import re
@@ -43,6 +44,9 @@ REJECT, WRONG_FIX = "reject", "wrong_fix"
 KINDS = (REJECT, WRONG_FIX)
 
 MIN_TEXT, MAX_TEXT = 40, 4000
+
+# The share of an existing section's words an edit keeps, in order.
+KEEP = 0.5
 
 # What no playbook may newly advise (counted against the section's text,
 # so an existing "never do X" line still passes).
@@ -361,6 +365,12 @@ def check(edit: dict, raws: dict, found: dict | None = None) -> list:
         if unknown:
             problems.append(f"the actions line names {', '.join(unknown)}, which the catalog does not have")
 
+        if not ingest._split_list(values):
+            problems.append(f"the {name.lower()} line is empty; name what it lists, or leave the line out")
+
+    if old:
+        problems += _dropped(old, text)
+
     for phrase in FORBIDDEN:
         if text.lower().count(phrase) > old.lower().count(phrase):
             problems.append(f"the text adds {phrase!r}, which the agent must never do")
@@ -370,6 +380,48 @@ def check(edit: dict, raws: dict, found: dict | None = None) -> list:
 
     if re.search(r"\bINC-\d", text):
         problems.append("the text names an incident; write guidance for any incident")
+
+    return problems
+
+
+def _tags(text: str) -> dict:
+    return {name.lower(): set(ingest._split_list(values)) for name, values in ingest._TAG.findall(text)}
+
+
+def _rows(text: str) -> list:
+    """A section's table rows, without the header separator."""
+
+    return [line for line in text.splitlines() if line.strip().startswith("|") and set(line.strip()) - set("|-: ")]
+
+
+def _dropped(old: str, new: str) -> list:
+    """
+    What a rewrite of an existing section loses that it must keep: what its
+    tag lines list, its table rows (owners' values, which a row may change
+    but not lose), and most of its lines (an edit changes what the feedback
+    contradicts, not the whole section).
+    """
+
+    problems, tags = [], _tags(new)
+
+    for name, values in _tags(old).items():
+        lost = sorted(values - tags.get(name, set()))
+
+        if lost:
+            problems.append(f"the text drops {', '.join(lost)} from the section's {name} line; keep it")
+
+    if len(_rows(new)) < len(_rows(old)):
+        problems.append(f"the text keeps {len(_rows(new))} of the section's {len(_rows(old))} table rows; "
+                        "keep every row (change a value in its row if the feedback shows it is wrong)")
+
+    # Words, in order, so rewrapping a paragraph is not a rewrite.
+    words = lambda text: ingest._TAG.sub(" ", text).split()  # noqa: E731
+    before = words(old)
+    kept = sum(b.size for b in difflib.SequenceMatcher(a=before, b=words(new), autojunk=False).get_matching_blocks())
+
+    if before and kept < len(before) * KEEP:
+        problems.append(f"the text keeps {kept * 100 // len(before)}% of the section's words; change only what "
+                        "the feedback contradicts and keep the rest as it reads")
 
     return problems
 
