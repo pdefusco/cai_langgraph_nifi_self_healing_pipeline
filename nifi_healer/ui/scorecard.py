@@ -24,10 +24,11 @@ _RECENT = 50
 _MATCH_CHIP = {sc.EXPECTED: ("mx-v-IMPROVED", "design fix"), sc.ACCEPTABLE: ("mx-v-IMPROVED", "acceptable"),
                sc.OTHER: ("mx-operator", "other fix"), sc.UNKNOWN: ("", "no label")}
 _REVIEW_CHIP = {sc.APPROVED: "mx-agent", sc.EDITED: "mx-operator", sc.REJECTED: "mx-v-WORSENED",
-                sc.UNDECIDED: "mx-v-pending", sc.NO_REVIEW: ""}
+                sc.AUTO: "mx-v-IMPROVED", sc.UNDECIDED: "mx-v-pending", sc.NO_REVIEW: ""}
 _RESULT_CHIP = {sc.WORKED: "mx-v-IMPROVED", sc.NO_HELP: "mx-v-NO_CHANGE", sc.WORSE: "mx-v-WORSENED",
                 sc.UNCLEAR: "mx-v-INCONCLUSIVE", sc.PENDING: "mx-v-pending"}
-_BAR = {sc.APPROVED: "approved", sc.EDITED: "edited", sc.REJECTED: "rejected", sc.UNDECIDED: "undecided"}
+_BAR = {sc.APPROVED: "approved", sc.EDITED: "edited", sc.REJECTED: "rejected", sc.AUTO: "auto",
+        sc.UNDECIDED: "undecided"}
 
 
 def model(store, now: float, since: str = DEFAULT_SINCE, grouping: str = GROUPINGS[0], source: str = LIVE) -> dict:
@@ -216,7 +217,7 @@ def _bar(counts: dict, order: tuple) -> str:
     return f'<div class="sc-bar" role="img" aria-label="{_e(text)}">{parts}</div><span class="sc-bar-t">{_e(text)}</span>'
 
 
-_REVIEW_BARS = (sc.APPROVED, sc.EDITED, sc.REJECTED, sc.UNDECIDED)
+_REVIEW_BARS = (sc.APPROVED, sc.EDITED, sc.REJECTED, sc.AUTO, sc.UNDECIDED)
 
 
 _FLAGS = (("/no-memory", "memory off"), ("/no-priors", "track records off"))
@@ -451,6 +452,7 @@ CSS = """
 .sc-bar-t{display:block;margin-top:3px;font-size:11px;color:var(--mx-muted)}
 .sc-b-approved{background:var(--mx-accent)}.sc-b-edited{background:var(--mx-operator)}
 .sc-b-rejected{background:var(--mx-bad)}.sc-b-undecided{background:var(--mx-neutral-tint)}
+.sc-b-auto{background:var(--mx-good)}
 .sc-lift{display:block;font:600 15px/1.2 var(--mx-mono);font-variant-numeric:tabular-nums}
 .sc-up{color:var(--mx-good)}.sc-down{color:var(--mx-bad)}
 .sc-sub{display:block;margin-top:2px;font:400 11px var(--font);color:var(--mx-muted);white-space:normal}

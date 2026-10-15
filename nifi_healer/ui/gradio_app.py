@@ -26,7 +26,7 @@ import gradio as gr
 
 import config
 from nifi_healer import fleet
-from nifi_healer.agent import graph
+from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
@@ -60,7 +60,7 @@ def startup() -> None:
                 log("built the mock tenant")
 
         threading.Thread(target=_warm_playbooks, name="rag-warm", daemon=True).start()
-        poller_module.start(client, get_store(), on_incident=graph.submit)
+        poller_module.start(client, get_store(), on_incident=graph.submit, on_tick=autonomy.tick)
         queued = graph.recover() if config.AUTO_DIAGNOSE else 0
 
         if queued:
@@ -204,8 +204,8 @@ def _queue_at(incident_id):
     return gr.update(choices=views.queue_choices(get_store(), keep=incident_id), value=incident_id)
 
 
-# show_review's outputs: evidence, proposal, diff, commands, steps and the four buttons.
-PANEL_OUTPUTS = 9
+# show_review's outputs: evidence, proposal, diff, commands, steps and the five buttons (Hold among them).
+PANEL_OUTPUTS = 10
 
 
 @_timed
@@ -217,7 +217,7 @@ def show_review(incident_id):
             gr.Code(value=view["steps"], interactive=pending),
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
-            gr.Button(interactive=view["can_diagnose"]))
+            gr.Button(interactive=view["can_diagnose"]), gr.Button(visible=view["can_hold"]))
 
 
 def _panel(incident_id) -> tuple:
@@ -549,6 +549,20 @@ def refresh_system():
     return views.system(_snapshot(), get_client())
 
 
+def _autonomy_switch(paused: bool):
+    @_timed
+    def handler(request: gr.Request = None):
+        login, permission = caller(request)
+
+        if permission.upper() == "RO":
+            return (f"{login or 'You'} can only view this project, so autonomy was left as it is; "
+                    "a project collaborator with write access pauses or resumes it."), refresh_system()
+
+        return views.set_autonomy(paused, login), refresh_system()
+
+    return handler
+
+
 def poll_now():
     current = poller_module.get()
 
@@ -592,7 +606,8 @@ def build() -> gr.Blocks:
     with gr.Blocks(title="NiFi Self-Healing") as demo:
         gr.Markdown("## NiFi Self-Healing Pipeline\n"
                     f"CDF DataFlow · {'mock tenant' if config.MOCK else 'live tenant'} · writes "
-                    f"{'**ARMED**' if config.ARMED else 'disarmed (dry runs)'}")
+                    f"{'**ARMED**' if config.ARMED else 'disarmed (dry runs)'}"
+                    + (" · autonomy on (trusted low-risk fixes approve themselves)" if config.AUTONOMY else ""))
 
         with gr.Tab("Fleet"):
             _legend(legend.FLEET)
@@ -647,9 +662,11 @@ def build() -> gr.Blocks:
                 edit_btn = gr.Button("Submit edit", interactive=False)
                 reject_btn = gr.Button("Reject", variant="stop", interactive=False)
                 diagnose_btn = gr.Button("Diagnose", interactive=False)
+                hold_btn = gr.Button("Hold for review", visible=False)
 
             review_result = gr.Markdown()
-            panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn]
+            panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn,
+                     hold_btn]
             seen = gr.State("")
             queue_timer = gr.Timer(5.0)
             follow_timer = gr.Timer(3.0)
@@ -668,6 +685,7 @@ def build() -> gr.Blocks:
             approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
             edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
             reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
+            hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
             diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
         with gr.Tab("History"):
@@ -839,6 +857,8 @@ def build() -> gr.Blocks:
                 system_refresh = gr.Button("Refresh")
                 poll_btn = gr.Button("Poll now")
                 selftest_btn = gr.Button("Selftest")
+                pause_btn = gr.Button("Pause autonomy", visible=config.AUTONOMY)
+                unpause_btn = gr.Button("Resume autonomy", visible=config.AUTONOMY)
 
             with gr.Row(visible=config.MOCK):
                 minutes = gr.Slider(1, 120, value=20, step=1, label="Fast-forward the mock clock (minutes)")
@@ -850,6 +870,8 @@ def build() -> gr.Blocks:
             system_refresh.click(refresh_system, outputs=[system_md])
             poll_btn.click(poll_now, outputs=[system_result]).then(refresh_system, outputs=[system_md])
             selftest_btn.click(selftest, outputs=[selftest_out])
+            pause_btn.click(_autonomy_switch(True), outputs=[system_result, system_md])
+            unpause_btn.click(_autonomy_switch(False), outputs=[system_result, system_md])
             forward_btn.click(fast_forward, inputs=[minutes], outputs=[system_result]).then(
                 refresh_system, outputs=[system_md])
 

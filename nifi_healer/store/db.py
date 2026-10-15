@@ -561,6 +561,56 @@ class Store:
 
         return self._all("SELECT * FROM playbook_edits WHERE status = 'APPLIED' ORDER BY id")
 
+    # -- auto-approvals and settings ----------------------------------------
+
+    def add_auto_approval(self, incident_id: str, proposal_id, fix: str, basis: str, due_at: float,
+                          now: float) -> bool:
+        """False when the incident already has one (a run paused again, the app restarted)."""
+
+        try:
+            self._insert("auto_approvals", {"incident_id": incident_id, "proposal_id": proposal_id, "fix": fix,
+                                            "basis": basis, "status": "WAITING", "due_at": due_at,
+                                            "created_at": now})
+            return True
+
+        except sqlite3.IntegrityError:
+            return False
+
+    def auto_approval(self, incident_id: str) -> dict | None:
+        return self._one("SELECT * FROM auto_approvals WHERE incident_id = ?", (incident_id,))
+
+    def auto_approvals(self, statuses=None) -> list:
+        """Oldest due first."""
+
+        if statuses:
+            marks = ", ".join("?" for _ in statuses)
+
+            return self._all(f"SELECT * FROM auto_approvals WHERE status IN ({marks}) ORDER BY due_at",
+                             tuple(statuses))
+
+        return self._all("SELECT * FROM auto_approvals ORDER BY due_at")
+
+    def claim_auto_approval(self, incident_id: str, status: str, now: float, reason: str = "",
+                            decided_by: str = "") -> bool:
+        """Move a WAITING row on; False when something else already did (a click and the tick at once)."""
+
+        with self.lock:
+            cursor = self.conn.execute(
+                "UPDATE auto_approvals SET status = ?, reason = ?, decided_by = ?, decided_at = ? "
+                "WHERE incident_id = ? AND status = 'WAITING'", (status, reason, decided_by, now, incident_id))
+
+            return cursor.rowcount == 1
+
+    def setting(self, key: str) -> dict | None:
+        return self._one("SELECT * FROM settings WHERE key = ?", (key,))
+
+    def set_setting(self, key: str, value: str, updated_by: str, now: float) -> None:
+        with self.lock:
+            self.conn.execute("INSERT INTO settings (key, value, updated_by, updated_at) VALUES (?, ?, ?, ?) "
+                              "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
+                              "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
+                              (key, value, updated_by, now))
+
     def record(self, since: float = 0.0) -> dict:
         """Every incident opened at or after `since`, with all its rows, by table: the scorecard's reads."""
 

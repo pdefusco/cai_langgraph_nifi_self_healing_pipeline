@@ -68,8 +68,13 @@ def fleet_fix(steps: list) -> str:
     return "+".join(sorted({str(s.get("action") or "?") for s in steps if isinstance(s, dict)})) or "NO_ACTION"
 
 
-def tries(record: dict, skip: str = "") -> list:
-    """Every judged or rejected fix in a store.record(): [{pack, process_group, symptom, group_fix, fleet_fix, outcome}]."""
+def tries(record: dict, skip: str = "", pending: bool = False) -> list:
+    """
+    Every judged or rejected fix in a store.record(), oldest first:
+    [{incident, pack, process_group, symptom, group_fix, fleet_fix, outcome, steps, auto}];
+    `auto` when no person approved it (agent/autonomy.py). With pending=True, an
+    applied fix not judged yet counts too, as outcome "pending".
+    """
 
     incidents = {i["id"]: i for i in record.get("incidents") or []}
     out = []
@@ -84,13 +89,18 @@ def tries(record: dict, skip: str = "") -> list:
         elif case["applied"] and case["result"] in _FIELD:
             outcome = case["result"]
 
+        elif pending and case["result"] == sc.PENDING:
+            outcome = sc.PENDING
+
         else:
             continue
 
         incident = incidents[case["incident"]]
-        out.append({"pack": incident["pack"], "process_group": incident["process_group"],
+        out.append({"incident": case["incident"], "pack": incident["pack"],
+                    "process_group": incident["process_group"],
                     "symptom": symptom(incident), "group_fix": group_fix(case["fix_steps"]),
-                    "fleet_fix": fleet_fix(case["fix_steps"]), "outcome": outcome})
+                    "fleet_fix": fleet_fix(case["fix_steps"]), "outcome": outcome,
+                    "steps": case["fix_steps"], "auto": case["auto"]})
 
     return out
 

@@ -202,3 +202,27 @@ CREATE TABLE IF NOT EXISTS playbook_edits (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS playbook_edits_source ON playbook_edits (trigger_kind, source_id);
+
+-- A trusted fix's review, waiting out its veto window (agent/autonomy.py).
+-- Leaves WAITING once: APPROVED (it approved itself), HELD or CANCELLED (a
+-- person took it), HANDED_BACK (a guardrail stopped it; a person decides).
+CREATE TABLE IF NOT EXISTS auto_approvals (
+    incident_id         TEXT PRIMARY KEY REFERENCES incidents (id),
+    proposal_id         INTEGER REFERENCES proposals (id),
+    fix                 TEXT NOT NULL,
+    basis               TEXT,               -- why it is trusted, as the reviewer reads it
+    status              TEXT NOT NULL,
+    due_at              REAL NOT NULL,
+    reason              TEXT,
+    decided_by          TEXT,
+    created_at          REAL NOT NULL,
+    decided_at          REAL
+);
+
+-- Switches a person flips at run time (autonomy_paused).
+CREATE TABLE IF NOT EXISTS settings (
+    key                 TEXT PRIMARY KEY,
+    value               TEXT,
+    updated_by          TEXT,
+    updated_at          REAL NOT NULL
+);

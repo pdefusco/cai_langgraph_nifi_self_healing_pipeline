@@ -125,6 +125,7 @@ def isolate(directory: str):
     config.PROPOSE_ROLLBACKS = False
     config.AUTO_DIAGNOSE = True              # the poller hands each new incident to detect()
     config.DRAFT_PLAYBOOK_EDITS = False      # nobody rejects here, and its edits are not the app's
+    config.AUTONOMY = False                  # the replay approves every valid proposal itself
 
     worlds._WORLD = None
     world = worlds.get_world()

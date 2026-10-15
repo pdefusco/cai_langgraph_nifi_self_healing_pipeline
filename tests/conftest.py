@@ -36,6 +36,8 @@ def tenant(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MOCK", True)
     # A rejection would draft a playbook edit with the next scripted reply; test_playbook_edits turns it on.
     monkeypatch.setattr(config, "DRAFT_PLAYBOOK_EDITS", False)
+    # A trusted fix would approve itself on the poller's tick; test_autonomy turns it on.
+    monkeypatch.setattr(config, "AUTONOMY", False)
     saved = (worlds._WORLD, clients._CLIENT, db._STORE["store"])
 
     def build(*names, history: float = 0):

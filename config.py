@@ -141,6 +141,15 @@ COOLDOWN_SECONDS = _int("SELFHEAL_COOLDOWN", 1800)
 MAX_ACTIONS_PER_WINDOW = _int("SELFHEAL_MAX_ACTIONS_PER_WINDOW", 3)
 ACTION_WINDOW_SECONDS = _int("SELFHEAL_ACTION_WINDOW", 86400)
 
+# Graduated autonomy (agent/autonomy.py): a low-risk flow edit whose last
+# tries on its process group all worked, AUTONOMY_AFTER of them approved
+# by a person, approves itself once its review has waited
+# AUTONOMY_VETO_SECONDS (incident clock) with nobody deciding. Off on a
+# live tenant unless set; the System tab can pause it.
+AUTONOMY = _bool("SELFHEAL_AUTONOMY", MOCK)
+AUTONOMY_AFTER = max(1, _int("SELFHEAL_AUTONOMY_AFTER", 3))
+AUTONOMY_VETO_SECONDS = max(0, _int("SELFHEAL_AUTONOMY_VETO", 600))
+
 # ---------------------------------------------------------------------
 # Polling and verification
 # ---------------------------------------------------------------------

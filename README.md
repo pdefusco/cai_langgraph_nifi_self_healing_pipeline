@@ -209,6 +209,11 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   groups with the same symptom (`nifi_healer/rag/priors.py`), counted over the same cases. A proposal that already
   failed twice on its group gets a warning. The agent's prompt leaves them out: in the replay they did not change
   how often its fixes worked, with or without past cases.
+- **Graduated autonomy.** A low-risk flow edit (concurrency, run schedule, back pressure, penalty/yield, retry) that
+  has worked on a process group 3 times in a row with a person's approval, at values a person approved, approves
+  itself after a 10-minute veto window in which anyone can approve, reject or **Hold** it
+  (`nifi_healer/agent/autonomy.py`). Any miss takes the trust away; rollbacks, edits and warned reviews always wait
+  for a person. On for the mock, off on live until `SELFHEAL_AUTONOMY=true`; **System → Pause autonomy** stops it.
 - **Playbook edits.** A rejection, or a wrong-fix label in History, has the LLM draft an edit to the playbook section
   the agent relied on (`nifi_healer/rag/drafter.py`). It waits on the **Playbooks** tab, with its reason and diff,
   until a person approves (or changes, rejects, later reverts) it. Approved edits are kept in the app's database and
@@ -343,6 +348,7 @@ up again, and so does an app restart.
 | `SELFHEAL_RAG_TOP_K` | 5 | playbook sections per diagnosis |
 | `SELFHEAL_MEMORY` / `SELFHEAL_MEMORY_TOP_K` | true / 3 | show each diagnosis this many similar past cases |
 | `SELFHEAL_PRIORS` / `SELFHEAL_PRIORS_TOP_K` | true / 5 | show the reviewer each fix's track record (this many from other groups) |
+| `SELFHEAL_AUTONOMY` / `SELFHEAL_AUTONOMY_AFTER` / `SELFHEAL_AUTONOMY_VETO` | mock only / 3 / 600 | trusted fixes approve themselves; wins a person approved to earn trust; veto window in seconds |
 | `SELFHEAL_DATA_DIR`, `SELFHEAL_CHROMA_DIR` | `/home/cdsw/...` on CAI, `./var/...` elsewhere | where state lives |
 | `SELFHEAL_APP_HOST`, `CDSW_APP_PORT` / `SELFHEAL_APP_PORT` | `127.0.0.1`, 8100 | UI bind address |
 

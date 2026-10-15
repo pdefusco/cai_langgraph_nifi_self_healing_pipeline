@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import config
 from nifi_healer import llm
 from nifi_healer.actions import executor, rollback
-from nifi_healer.agent import graph
+from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi import rollup
 from nifi_healer.kpi.detectors import group_name
@@ -374,8 +374,13 @@ def review_key(store, incident_id: str | None) -> str:
     """Changes whenever the review panel for the incident would show something new."""
 
     incident = store.incident(incident_id) if incident_id else None
+    window = store.auto_approval(incident_id) if incident else None
+    # A veto window's countdown moves the key once a minute of incident time.
+    countdown = (f"{window['status']}:{int(max(0, window['due_at'] - get_client().now()) // 60)}"
+                 if window else "")
 
-    return f"{incident_id}|{incident and incident['status']}|{graph.run_state(incident_id) if incident else None}"
+    return (f"{incident_id}|{incident and incident['status']}|{graph.run_state(incident_id) if incident else None}"
+            f"|{countdown}")
 
 
 def _latest_proposal(store, incident_id: str) -> dict | None:
@@ -447,15 +452,38 @@ def stale(store, incident: dict) -> str:
             "replaces it with a new diagnosis of the running version.")
 
 
+def window_line(window: dict | None, now: float) -> str:
+    """The review's line on its veto window (agent/autonomy.py), or "" when it has none."""
+
+    if not window:
+        return ""
+
+    if window["status"] == autonomy.WAITING:
+        left = max(0, window["due_at"] - now)
+
+        return (f"**Trusted fix: approves itself at {clock(window['due_at'])} (in {int(left // 60)} min)** "
+                f"unless you approve, reject or hold it: {window['basis'] or window['fix']}.")
+
+    lines = {autonomy.APPROVED: "**This trusted fix approved itself** at {at}: {basis}.",
+             autonomy.HANDED_BACK: "**Autonomy handed this to you** at {at}: {reason}.",
+             autonomy.HELD: "**Held for review** by {by} at {at}; it waits for a person.",
+             autonomy.CANCELLED: "**Its veto window closed** at {at}: {reason}."}
+
+    return lines.get(window["status"], "").format(
+        at=clock(window.get("decided_at") or window["due_at"]), basis=window.get("basis") or window["fix"],
+        reason=window.get("reason") or "?", by=window.get("decided_by") or "someone")
+
+
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
     {evidence, proposal, diff, commands, steps, can_approve, can_diagnose,
-    pending, status}.
+    can_hold, pending, status}.
     """
 
     blank = {"evidence": "Select an incident.", "proposal": "", "diff": [], "commands": "",
-             "steps": "", "can_approve": False, "can_diagnose": False, "pending": False, "status": ""}
+             "steps": "", "can_approve": False, "can_diagnose": False, "can_hold": False, "pending": False,
+             "status": ""}
     incident = store.incident(incident_id) if incident_id else None
 
     if not incident:
@@ -541,8 +569,19 @@ def review(store, client, incident_id: str | None) -> dict:
         text.append("**Past cases shown to the agent:** " + "; ".join(
             f"`{c}` ({headline})" for c, headline in cases.items()))
 
+    window = store.auto_approval(incident_id)
+
+    if window and window["status"] == autonomy.WAITING and payload:
+        text.insert(1, window_line(window, now))
+
+    elif window and (payload or window["status"] == autonomy.APPROVED):
+        text.append(window_line(window, now))
+
     if payload and (record := track_record(store, incident)):
         text.append(record)
+
+    if payload and not window and (line := autonomy.progress(store, client, incident, payload)):
+        text.append(line)
 
     family = plan.get("family") or "?"
     text.append(f"**Action family:** {family} · **risk:** {plan.get('risk') or '?'} · "
@@ -588,6 +627,7 @@ def review(store, client, incident_id: str | None) -> dict:
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
         "can_approve": bool(payload and plan.get("ok")) and not applying,
         "can_diagnose": (orphaned or bool(outdated)) and run is None,
+        "can_hold": bool(payload and window and window["status"] == autonomy.WAITING) and not applying,
         "pending": bool(payload) and not applying,
         "status": incident["status"],
     }
@@ -608,6 +648,29 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
     if not waiting:
         return f"{incident_id} is not waiting for a review."
 
+    store, now = get_store(), get_client().now()
+    window = store.auto_approval(incident_id)
+
+    if decision == "hold":
+        if autonomy.hold(store, incident_id, reviewer.strip() or "a reviewer", now):
+            return f"Held: {incident_id} waits for a person; approve or reject it when ready."
+
+        return f"{incident_id} has no veto window open; it already waits for a person."
+
+    armed_approval = decision == "approve" and config.ARMED and (waiting.get("plan") or {}).get("ok")
+    refusal = executor.precheck(get_client(), store, store.incident(incident_id)) if armed_approval else ""
+
+    if refusal:
+        return f"Not applied yet, {refusal} The review stays open: approve again then."
+
+    # A person decides before the window ends (a decision the review would
+    # take: a rejection needs its reason); the tick may just have won.
+    if window and window["status"] == autonomy.WAITING and not (decision == "reject" and not reason.strip()) \
+            and not autonomy.cancel(store, incident_id, reviewer.strip() or "a reviewer",
+                                    f"{decision} by a person", now) \
+            and (store.auto_approval(incident_id) or {}).get("status") == autonomy.APPROVED:
+        return f"This trusted fix approved itself before your {decision}; History shows the result."
+
     answer = {"decision": decision, "reviewer": reviewer.strip(), "reason": reason.strip()}
 
     if decision == "edit":
@@ -622,12 +685,7 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
 
         answer["steps"] = steps
 
-    if decision == "approve" and config.ARMED and (waiting.get("plan") or {}).get("ok"):
-        refusal = executor.precheck(get_client(), get_store(), get_store().incident(incident_id))
-
-        if refusal:
-            return f"Not applied yet, {refusal} The review stays open: approve again then."
-
+    if armed_approval:
         graph.resume_in_background(incident_id, answer)
 
         return ("Approved; applying to the tenant in the background. This panel follows it, "
@@ -796,6 +854,14 @@ def incident_detail(store, incident_id: str | None) -> str:
     for r in store.reviews(incident["id"]):
         out.append(f"- **Review:** {r['decision']} by {r['reviewer'] or '?'} at {clock(r['created_at'])}"
                    + (f": {r['reason']}" if r.get("reason") else ""))
+
+    window = store.auto_approval(incident["id"])
+
+    if window:
+        out.append(f"- **Veto window:** {window['status'].lower().replace('_', ' ')}, due {clock(window['due_at'])}"
+                   + (f", by {window['decided_by']} at {clock(window['decided_at'])}" if window.get("decided_at")
+                      else "")
+                   + f": {window.get('reason') or window.get('basis') or window['fix']}")
 
     labels = store.labels(incident["id"])
 
@@ -1065,6 +1131,14 @@ def system(snapshot: dict, client) -> str:
     beat = snapshot["heartbeat"]
     ok, reason = llm.probe()
     described = llm.describe()
+    store = get_store()
+
+    try:
+        trusted = "; ".join(f"{t['pack']} › {t['process_group']}: `{t['fix']}` ({t['wins']} win(s), "
+                            f"{t['human_wins']} approved by a person)" for t in autonomy.trusted_fixes(store)) or "none"
+
+    except Exception as exc:  # the tab still renders without it
+        trusted = f"unavailable ({exc})"
 
     rows = [
         ("DataFlow client", f"{client.kind}" + (" (simulated tenant)" if config.MOCK else "")),
@@ -1085,6 +1159,8 @@ def system(snapshot: dict, client) -> str:
                        f"{config.MAX_ACTIONS_PER_WINDOW} action(s) per {config.ACTION_WINDOW_SECONDS // 3600} h "
                        f"per deployment, prefix `{config.PREFIX}`"),
         ("Verify", f"settle {config.VERIFY_SETTLE_SECONDS}s, window {config.VERIFY_WINDOW_SECONDS}s"),
+        ("Autonomy", _autonomy_state(store)),
+        ("Trusted fixes", trusted),
         ("Data", f"`{config.DB_PATH}`, checkpoints `{config.CHECKPOINT_PATH}`, Chroma `{config.CHROMA_DIR}`"),
     ]
 
@@ -1092,6 +1168,39 @@ def system(snapshot: dict, client) -> str:
         rows.append(("Mock clock", f"{config.MOCK_SPEED:g}x wall time, tenant time {clock(snapshot['now'])}"))
 
     return "| | |\n|---|---|\n" + "\n".join(f"| {k} | {v} |" for k, v in rows)
+
+
+def _autonomy_state(store) -> str:
+    rule = (f"a low-risk flow edit that has worked on a process group {config.AUTONOMY_AFTER} times in a row "
+            f"with a person's approval, and has not missed since, approves itself after a "
+            f"{config.AUTONOMY_VETO_SECONDS // 60} min veto window")
+
+    if not config.AUTONOMY:
+        return f"off (set SELFHEAL_AUTONOMY=true in the project env): {rule}"
+
+    held = autonomy.paused(store)
+
+    if held:
+        return f"**paused** by {held.get('updated_by') or 'someone'} at {clock(held.get('updated_at'))}: {rule}"
+
+    return f"**on**: {rule}"
+
+
+def set_autonomy(paused: bool, by: str = "") -> str:
+    """Pause or resume autonomy (System tab). Returns a line for the UI."""
+
+    if not config.AUTONOMY:
+        return "Autonomy is off; set SELFHEAL_AUTONOMY=true in the project env to use it."
+
+    store, now, by = get_store(), get_client().now(), by.strip() or "a reviewer"
+
+    if paused:
+        autonomy.pause(store, by, now)
+        return "Autonomy paused: every review waits for a person; open windows are handed back when they end."
+
+    autonomy.unpause(store, by, now)
+
+    return "Autonomy resumed: trusted low-risk fixes approve themselves after their veto window."
 
 
 def propose_rollback(incident_id: str | None, action_id, reason: str, reviewer: str = "") -> str:

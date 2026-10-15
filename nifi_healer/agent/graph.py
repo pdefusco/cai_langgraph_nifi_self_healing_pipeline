@@ -18,7 +18,8 @@ human_review survives an app restart; the UI resumes it with
 resume(incident_id, decision). Runs started by the poller go through a
 small thread pool so a slow LLM never stalls polling; armed approvals
 go through their own pool (resume_in_background) so a reviewer's click
-returns while the deployment changes.
+returns while the deployment changes. A background run that pauses at
+review asks agent/autonomy.py whether its fix may approve itself.
 """
 
 import sqlite3
@@ -239,6 +240,15 @@ def _run(incident_id: str) -> None:
 
     except Exception as exc:  # a failed run must not kill the worker
         nodes.log(f"{incident_id}: run failed: {type(exc).__name__}: {exc}")
+        return
+
+    from nifi_healer.agent import autonomy  # it imports this module
+
+    try:
+        autonomy.consider(incident_id)
+
+    except Exception as exc:  # the review stays open for a person either way
+        nodes.log(f"{incident_id}: autonomy check failed: {type(exc).__name__}: {exc}")
 
 
 def _rediagnose(incident_id: str, decision: dict) -> None:

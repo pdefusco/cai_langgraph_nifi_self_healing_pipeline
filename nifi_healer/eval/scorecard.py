@@ -10,7 +10,8 @@ Each case answers, for one incident:
              never sees). Targets and kinds count, values do not: 4 or 6
              concurrent tasks is tuning, not a different diagnosis.
   review     what the reviewer did: approved it as proposed, approved an
-             edit of it, rejected it, or has yet to decide.
+             edit of it, rejected it, or has yet to decide; or no person
+             did and a trusted fix approved itself (auto-approved).
   result     what the applied fix did: the reviewer's label when there
              is one (RIGHT_FIX, WRONG_FIX, UNCLEAR), else the deciding
              verify windows' verdict. A dry run has none.
@@ -47,7 +48,10 @@ _FROM_VERDICT = {outcomes.IMPROVED: WORKED, outcomes.NO_CHANGE: NO_HELP, outcome
 
 # Reviews, and how the agent's pick compares with the design label.
 APPROVED, EDITED, REJECTED, UNDECIDED, NO_REVIEW = "approved", "edited", "rejected", "undecided", "no review"
-REVIEWS = (APPROVED, EDITED, REJECTED, UNDECIDED, NO_REVIEW)
+# A trusted fix that approved itself (agent/autonomy.py): no person decided, so it is not in the approval rate.
+AUTO = "auto-approved"
+REVIEWS = (APPROVED, EDITED, REJECTED, AUTO, UNDECIDED, NO_REVIEW)
+AUTO_REVIEWER = "autonomy (trusted fix)"
 EXPECTED, ACCEPTABLE, OTHER, UNKNOWN = "expected", "acceptable", "other", "no label"
 MATCHES = (EXPECTED, ACCEPTABLE, OTHER, UNKNOWN)
 
@@ -188,6 +192,9 @@ def cases(record: dict) -> list:
         if decided and decided[-1]["decision"] == "reject":
             review = REJECTED
 
+        elif decided and decided[-1].get("reviewer") == AUTO_REVIEWER:
+            review = AUTO
+
         elif decided:
             review = EDITED if edited else APPROVED
 
@@ -210,7 +217,8 @@ def cases(record: dict) -> list:
                                     ("NO_ACTION" if pick and _valid(pick) else ""),
             "match": match(steps, scenario) if pick else UNKNOWN,
             "fix_steps": [s for s in chosen.get("action") or [] if isinstance(s, dict)] if applied else steps,
-            "review": review, "origin": "reviewer's edit" if edited else "agent as proposed",
+            "review": review, "auto": review == AUTO,
+            "origin": "reviewer's edit" if edited else "agent as proposed",
             "dry_run": bool(last and last["dry_run"] and last["status"] == "DRY_RUN"),
             "applied": bool(applied), "apply_failed": bool(last and last["status"] == "FAILED"),
             "result": result, "result_from": source,

@@ -8,6 +8,13 @@ from nifi_healer.ui.views import window_label
 
 _FIRST, _SECOND, *_LATER = config.VERIFY_WINDOWS
 _WINDOWS = ", ".join(window_label(w) for w in config.VERIFY_WINDOWS)
+_AUTONOMY = (f"""
+
+The one exception, while autonomy is on: a **trusted fix** (a low-risk flow edit that has worked on this process
+group {config.AUTONOMY_AFTER} times in a row with a person's approval) shows a countdown and approves itself after
+{window_label(config.AUTONOMY_VETO_SECONDS)} unless someone approves, rejects or presses **Hold for review** first.
+When the countdown ends, the guardrails are checked again; if one says no, the review is handed back to you with the
+reason.""" if config.AUTONOMY else "")
 
 FLEET = f"""
 The fleet as the poller last read it from CDF DataFlow. It refreshes every second.
@@ -41,7 +48,7 @@ The fleet as the poller last read it from CDF DataFlow. It refreshes every secon
 
 REVIEW = f"""
 Every change the agent wants to make waits here for a person. Nothing is written to the tenant until someone
-approves it{'' if config.ARMED else ', and while writes are disarmed an approval is only a dry run'}.
+approves it{'' if config.ARMED else ', and while writes are disarmed an approval is only a dry run'}.{_AUTONOMY}
 
 **Left: the evidence.** The signals that opened the incident (a KPI over its threshold, an alert, a data imbalance),
 with the KPI values the agent was shown.
@@ -167,7 +174,8 @@ How good the agent is at fixing things, counted from the incidents it handled.
   alternative. The agent never sees this answer. The setting counts, the value does not: 4 or 6 concurrent tasks are
   the same pick.
 - **Cited a case**: its proposal pointed to a past case from memory.
-- **Approved as proposed** (*Review*): what reviewers did: approved as is, approved after editing, or rejected.
+- **Approved as proposed** (*Review*): what reviewers did: approved as is, approved after editing, or rejected. A
+  trusted fix that approved itself is shown as *auto-approved* and left out of these rates.
 - **Faults detected** (Replay only): planted faults that opened an incident within 30 simulated minutes, and how
   often the healthy control stayed quiet.
 - **Fix worked** (*Worked*): of the applied fixes with a clear result, the share that worked. A reviewer's label
@@ -203,5 +211,10 @@ How the app itself is configured and whether its parts are working.
   deployments can ever be touched. Some actions are never
   allowed, such as emptying queues or restarting a deployment, because both hide a backlog instead of fixing it.
 - **Verify**: the measuring windows each fix is judged over ({_WINDOWS}).
+- **Autonomy**: whether trusted fixes approve themselves (`SELFHEAL_AUTONOMY`), and the rule. A fix is trusted on a
+  process group once it has worked there {config.AUTONOMY_AFTER} times in a row with a person's approval; any miss (a
+  rejection, a fix that didn't help or made things worse, a wrong-fix label) takes the trust away. Only low-risk flow
+  edits qualify, at values a person approved. **Trusted fixes** lists them, even while autonomy is off. **Pause
+  autonomy** sends every review back to a person until **Resume autonomy**.
 - **Selftest** checks that both DataFlow APIs and the workload endpoint can be reached.
 """

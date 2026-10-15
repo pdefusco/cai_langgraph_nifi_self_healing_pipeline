@@ -31,7 +31,8 @@ opens a new incident, unless its last one closed less than
 INCIDENT_COOLDOWN_SECONDS ago. Nothing is opened while the deployment is
 mid-change (UPDATING, DEPLOYING, a half-applied version swap) or
 unreadable. `on_incident(incident)` is called for each new incident when
-AUTO_DIAGNOSE is on.
+AUTO_DIAGNOSE is on. `on_tick(client, store)` is called every
+POLL_KPI_SECONDS (agent/autonomy.py's veto windows).
 
 Outcomes. An applied action is judged once per verify window
 (config.VERIFY_WINDOWS: 15 min, 1 h, 12 h) as each closes, every time
@@ -115,10 +116,11 @@ def settled(verdicts: dict) -> tuple:
 
 class Poller:
     def __init__(self, client: Client | None = None, store: Store | None = None,
-                 on_incident=None):
+                 on_incident=None, on_tick=None):
         self.client = client or get_client()
         self.store = store or get_store()
         self.on_incident = on_incident
+        self.on_tick = on_tick
         self.lock = threading.RLock()
         self.cache = {}
         self.heartbeat = {"started_at": None, "loops": 0, "last_loop": None,
@@ -220,6 +222,9 @@ class Poller:
 
                 if self._due(("outcomes", ""), config.POLL_KPI_SECONDS):
                     self._submit(("outcomes", ""), self.evaluate_outcomes)
+
+                if self.on_tick and self._due(("autonomy", ""), config.POLL_KPI_SECONDS):
+                    self._submit(("autonomy", ""), self.on_tick, self.client, self.store)
 
                 with self.lock:
                     self.heartbeat["loops"] += 1
@@ -809,17 +814,21 @@ _POLLER = {"poller": None}
 _POLLER_LOCK = threading.Lock()
 
 
-def start(client: Client | None = None, store: Store | None = None, on_incident=None) -> Poller:
-    """The process's poller, started on first call. Later calls only set `on_incident`."""
+def start(client: Client | None = None, store: Store | None = None, on_incident=None,
+          on_tick=None) -> Poller:
+    """The process's poller, started on first call. Later calls only set `on_incident` and `on_tick`."""
 
     with _POLLER_LOCK:
         if _POLLER["poller"] is None:
-            _POLLER["poller"] = Poller(client, store, on_incident)
+            _POLLER["poller"] = Poller(client, store, on_incident, on_tick)
 
         poller = _POLLER["poller"]
 
         if on_incident is not None:
             poller.on_incident = on_incident
+
+        if on_tick is not None:
+            poller.on_tick = on_tick
 
     return poller.start()
 
