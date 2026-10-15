@@ -21,7 +21,7 @@ import copy
 import json
 
 from flows.builder.lib import check, component_id, walk_groups
-from flows.builder.processors import PROCESSORS, kind_of
+from flows.builder.processors import kind_of, relationships
 from nifi_healer.actions import catalog
 from nifi_healer.flow.inventory import editable_properties, find_group
 from nifi_healer.sim.model import compile_flow
@@ -79,7 +79,6 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
     source = _processor(group, step["target"])
     dlq = _processor(group, step["dlq"])
     wanted = set(catalog.relationships_of(step))
-    spec = PROCESSORS.get(kind_of(source))
     label = source["name"]
 
     if "DLQ" not in dlq["name"].upper():
@@ -88,11 +87,12 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
     if dlq is source:
         raise EditError("a processor cannot be its own DLQ")
 
-    unknown = sorted(wanted - set(spec.relationships if spec else ()))
+    has = relationships(kind_of(source), source.get("properties"))
+    unknown = sorted(wanted - set(has))
 
     if unknown:
         raise EditError(f"{label} has no relationship(s) {', '.join(unknown)}; "
-                        f"it has {', '.join(spec.relationships) if spec else 'none'}")
+                        f"it has {', '.join(has) or 'none'}")
 
     connections = group.setdefault("connections", [])
     outgoing = [c for c in connections if c["source"]["id"] == source["identifier"]]

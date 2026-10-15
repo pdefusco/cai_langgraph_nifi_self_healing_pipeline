@@ -21,7 +21,8 @@ time, which is why KPI component ids are discovered after deployment
 import uuid
 
 import config
-from flows.builder.processors import PROCESSORS, spec_for
+from flows.builder.processors import PROCESSORS, relationships, spec_for
+from nifi_healer.sim import cron
 
 NAMESPACE = uuid.UUID("6f3c1e2a-9b4d-5f8e-a1c7-2d0b4e6f8a13")
 
@@ -37,6 +38,10 @@ SCHEDULED_STATES = {"ENABLED", "DISABLED"}
 # the data; PRIMARY runs it on one, and only a load-balanced connection
 # spreads the work after it.
 EXECUTION_NODES = {"ALL", "PRIMARY"}
+
+# CRON_DRIVEN takes a cron expression as its period (nifi_healer/sim/cron.py
+# says which ones the simulator reads).
+SCHEDULING_STRATEGIES = {"TIMER_DRIVEN", "CRON_DRIVEN"}
 
 COLUMN_SPACING = 420.0
 ROW_SPACING = 200.0
@@ -82,7 +87,7 @@ class ProcessGroup:
                   scheduled_state: str = "ENABLED", retried=(), retry_count: int = 10,
                   backoff: str = "PENALIZE_FLOWFILE", max_backoff: str = "10 mins",
                   penalty: str = "30 sec", yield_duration: str = "1 sec",
-                  execution_node: str = "ALL",
+                  execution_node: str = "ALL", strategy: str = "TIMER_DRIVEN",
                   comments: str = "", position: tuple | None = None) -> dict:
         spec = spec_for(kind)
 
@@ -97,6 +102,9 @@ class ProcessGroup:
 
         if execution_node not in EXECUTION_NODES:
             raise ValueError(f"{name}: unknown execution node {execution_node!r}")
+
+        if strategy not in SCHEDULING_STRATEGIES:
+            raise ValueError(f"{name}: unknown scheduling strategy {strategy!r}")
 
         if position is None:
             position = (0.0, len(self.processors) * ROW_SPACING)
@@ -125,7 +133,7 @@ class ProcessGroup:
             "runDurationMillis": 0,
             "scheduledState": scheduled_state,
             "schedulingPeriod": period,
-            "schedulingStrategy": "TIMER_DRIVEN",
+            "schedulingStrategy": strategy,
             "style": {},
             "type": spec.type,
             "yieldDuration": yield_duration,
@@ -379,6 +387,13 @@ def check(definition: dict) -> dict:
                 problems.append(f"{where}/{name}: no spec for {processor['type']}")
                 continue
 
+            if processor["schedulingStrategy"] == "CRON_DRIVEN":
+                try:
+                    cron.parse(processor["schedulingPeriod"])
+
+                except ValueError as error:
+                    problems.append(f"{where}/{name}: {error}")
+
             if processor["bundle"]["artifact"] != spec.artifact:
                 problems.append(f"{where}/{name}: bundle artifact is not {spec.artifact}")
 
@@ -393,7 +408,7 @@ def check(definition: dict) -> dict:
                     problems.append(f"{where}/{name}: property {key!r} is not a string")
 
             for rel in processor["autoTerminatedRelationships"] + processor["retriedRelationships"]:
-                if rel not in spec.relationships:
+                if rel not in relationships(spec.name, processor["properties"]):
                     problems.append(f"{where}/{name}: unknown relationship {rel!r}")
 
             if not spec.verified:
@@ -417,7 +432,7 @@ def check(definition: dict) -> dict:
                 spec = PROCESSORS.get(source["type"].rsplit(".", 1)[-1])
 
                 for rel in connection["selectedRelationships"]:
-                    if spec and rel not in spec.relationships:
+                    if spec and rel not in relationships(spec.name, source["properties"]):
                         problems.append(f"{where}/{label}: {source['name']} has no {rel!r}")
 
                     if rel in source["autoTerminatedRelationships"]:
@@ -442,7 +457,7 @@ def check(definition: dict) -> dict:
                 for rel in c["selectedRelationships"]
             }
 
-            for rel in spec.relationships:
+            for rel in relationships(spec.name, processor["properties"]):
                 if rel not in connected and rel not in processor["autoTerminatedRelationships"]:
                     problems.append(f"{where}/{processor['name']}: relationship {rel!r} is unhandled")
 

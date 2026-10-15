@@ -17,7 +17,8 @@ import re
 from dataclasses import dataclass, field
 
 from flows.builder.lib import iter_connections, walk_groups
-from flows.builder.processors import PROCESSORS, kind_of
+from flows.builder.processors import PROCESSORS, kind_of, relationships
+from nifi_healer.sim import cron
 
 _DURATION_UNITS = {
     "ms": 0.001, "millis": 0.001, "milliseconds": 0.001,
@@ -82,6 +83,7 @@ class Proc:
     group_name: str
     properties: dict
     period: float
+    cron: str | None             # the expression, when CRON_DRIVEN; period is then unused
     tasks: int
     enabled: bool
     execution_node: str
@@ -151,6 +153,7 @@ def compile_flow(definition: dict, parameters: dict | None = None) -> Model:
                 group_name=group.get("name") or "",
                 properties={k: resolve(v, parameters) for k, v in (raw.get("properties") or {}).items()},
                 period=parse_duration(raw.get("schedulingPeriod"), 1.0),
+                cron=(raw.get("schedulingPeriod") or "") if raw.get("schedulingStrategy") == "CRON_DRIVEN" else None,
                 tasks=max(1, int(raw.get("concurrentlySchedulableTaskCount") or 1)),
                 enabled=raw.get("scheduledState") != "DISABLED",
                 execution_node=raw.get("executionNode") or "ALL",
@@ -208,7 +211,7 @@ def _validate(proc: Proc, processors: dict) -> None:
     if not proc.enabled:
         return
 
-    for rel in spec.relationships:
+    for rel in relationships(proc.kind, proc.properties):
         if rel not in proc.outputs and rel not in proc.auto_terminated:
             proc.problems.append(f"relationship {rel!r} is not connected or auto-terminated")
 
@@ -221,6 +224,62 @@ def _validate(proc: Proc, processors: dict) -> None:
 
     if proc.kind == "InvokeHTTP" and not (proc.properties.get("HTTP URL") or "").strip():
         proc.problems.append("HTTP URL is empty")
+
+    if proc.cron is not None:
+        try:
+            cron.parse(proc.cron)
+
+        except ValueError as error:
+            proc.problems.append(f"CRON schedule: {error}")
+
+    if proc.kind == "ControlRate":
+        try:
+            control_rate(proc)
+
+        except ValueError as error:
+            proc.problems.append(str(error))
+
+
+def control_rate(proc: Proc) -> tuple:
+    """
+    ControlRate's limits: (FlowFiles, bytes) per Time Duration, None where
+    the criteria do not limit it. ValueError when a needed rate is invalid.
+    """
+
+    criteria = (proc.properties.get("Rate Control Criteria") or "data rate").strip().lower()
+    count = size = None
+
+    def rate(key, parse):
+        value = parse(proc.properties.get(key))
+
+        if value <= 0:
+            raise ValueError(f"{key} must be a positive {'size' if parse is _size else 'number'}")
+
+        return value
+
+    if criteria == "flowfile count":
+        count = rate("Maximum Rate", _number)
+
+    elif criteria == "data rate":
+        size = rate("Maximum Rate", _size)
+
+    elif criteria == "data rate or flowfile count":
+        count = rate("Maximum FlowFile Rate", _number)
+        size = rate("Maximum Data Rate", _size)
+
+    return count, size
+
+
+def _number(text) -> float:
+    try:
+        return float(str(text or "").strip())
+
+    except ValueError:
+        return 0.0
+
+
+def _size(text) -> float:
+    return parse_size(text, 0.0)
 
 
 def dynamic_properties(proc: Proc) -> dict:

@@ -12,8 +12,12 @@ from flows.builder.lib import ProcessGroup
 
 def generator(pg: ProcessGroup, name: str, *, period: str = "1 sec", batch: int = 1,
               size: str = "1 KB", text: str | None = None, binary: bool = False,
-              key: str = "gen", execution_node: str = "ALL") -> dict:
-    """GenerateFlowFile: `batch` FlowFiles every `period`, on each node it runs on."""
+              key: str = "gen", execution_node: str = "ALL", strategy: str = "TIMER_DRIVEN") -> dict:
+    """
+    GenerateFlowFile: `batch` FlowFiles every `period`, on each node it
+    runs on. CRON_DRIVEN: `period` is a cron expression, and it fires
+    `batch` FlowFiles on each firing.
+    """
 
     properties = {
         "Batch Size": str(batch),
@@ -26,7 +30,7 @@ def generator(pg: ProcessGroup, name: str, *, period: str = "1 sec", batch: int 
         properties["generate-ff-custom-text"] = text
 
     return pg.processor(key, name, "GenerateFlowFile", properties, period=period,
-                        execution_node=execution_node)
+                        execution_node=execution_node, strategy=strategy)
 
 
 def stage(pg: ProcessGroup, key: str, name: str, *, period: str = "1 sec", tasks: int = 1,

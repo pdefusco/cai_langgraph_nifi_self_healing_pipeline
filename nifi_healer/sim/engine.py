@@ -7,7 +7,8 @@ mechanisms the scenarios inject faults through:
 
   * a timer-driven processor runs each task once per run schedule, one
     FlowFile per run, or as fast as its per-FlowFile latency allows on
-    a 0 sec schedule
+    a 0 sec schedule; a CRON-driven one runs each task once per firing,
+    and a firing missed under back pressure is not made up
   * a processor is not scheduled while any outgoing connection is at
     its back-pressure threshold; a run already started may overshoot
   * FlowFile expiration drops what has waited too long
@@ -16,9 +17,12 @@ mechanisms the scenarios inject faults through:
   * InvokeHTTP to an address nothing answers waits out its connect
     timeout; to a ListenHTTP in the same flow it succeeds
   * MergeContent bins until Minimum Number of Entries or Max Bin Age
-  * CompressContent and hashing are CPU-bound, and share the node's
-    cores; sources on executionNode ALL run on every node, and only a
-    load-balanced connection spreads work after a PRIMARY one
+  * CompressContent, hashing and ReplaceText are CPU-bound, and share
+    the node's cores; sources on executionNode ALL run on every node, and
+    only a load-balanced connection spreads work after a PRIMARY one
+  * DistributeLoad splits by weight over the relationships with room;
+    ControlRate passes at most its rate; SplitText emits one FlowFile per
+    Line Split Count lines of the group's generator text
 
 Every step records one sample per (kind, component name, metric), and
 `chart` answers a window of them as DataFlow does: ~25 buckets anchored
@@ -29,7 +33,9 @@ import math
 import urllib.parse
 from collections import deque
 
-from nifi_healer.sim.model import (compile_flow, dynamic_properties, json_path_lookup,
+from flows.builder.processors import relationships
+from nifi_healer.sim import cron
+from nifi_healer.sim.model import (compile_flow, control_rate, dynamic_properties, json_path_lookup,
                                    parse_duration, parse_json, parse_size)
 
 DT = 15.0                      # simulated seconds per step
@@ -55,6 +61,8 @@ CHEAP_CPU = 0.0005             # core-seconds per FlowFile for the same
 LOCAL_HTTP_LATENCY = 0.05
 GENERATE_BYTES_PER_CORE = 300e6
 HASH_BYTES_PER_CORE = 200e6
+REPLACE_BYTES_PER_CORE = 40e6     # a regular expression over the content
+DEFAULT_BUFFER = 1024 ** 2        # ReplaceText's Maximum Buffer Size
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0"}
 
 
@@ -68,6 +76,22 @@ def compress_rate(level: int) -> float:
         return 25e6
 
     return 60e6
+
+
+def _weight(text) -> float:
+    try:
+        return max(0.0, float(text)) if text not in (None, "") else 1.0
+
+    except ValueError:
+        return 1.0
+
+
+def _count(text) -> int:
+    try:
+        return max(0, int(str(text or 0).strip()))
+
+    except ValueError:
+        return 0
 
 
 class Simulation:
@@ -290,13 +314,31 @@ class Simulation:
         used = cpu["fixed"] + cpu["bound_used"]
         self._record(stats, min(100.0, used / cores * 100.0))
 
+    def _firings(self, proc) -> int:
+        return cron.firings(proc.cron, self.t - DT, self.t)
+
     def _schedule_limit(self, proc, spread: int, latency: float) -> float:
         """FlowFiles the schedule allows this step, ignoring input and CPU."""
+
+        if proc.cron is not None:
+            return proc.tasks * spread * min(self._firings(proc), DT / max(latency, 1e-6))
 
         return proc.tasks * spread * DT / max(proc.period, latency, 1e-6)
 
     def _blocked(self, proc) -> bool:
+        if proc.kind == "DistributeLoad":
+            # It runs while any relationship has room.
+            return all(any(self._full(cid) for cid in proc.outputs.get(rel) or ())
+                       for rel in relationships(proc.kind, proc.properties))
+
         return any(self._full(cid) for cid in self._outgoing(proc))
+
+    def _rel_room(self, proc, rel: str, per_flowfile_bytes: float) -> float:
+        """FlowFiles one relationship can take: its fullest connection's room; unlimited if auto-terminated."""
+
+        rooms = [self._room(cid, per_flowfile_bytes) for cid in proc.outputs.get(rel) or ()]
+
+        return min(rooms) if rooms else float("inf")
 
     def _out_room(self, proc, per_flowfile_bytes: float, multiplier: float = 1.0) -> float:
         rooms = [self._room(cid, per_flowfile_bytes) for cid in self._outgoing(proc)]
@@ -350,12 +392,15 @@ class Simulation:
         if text is not None:
             size = float(len(text.encode()))
 
-        if self._blocked(proc):
+        if proc.cron is not None:
+            runs = 0 if self._blocked(proc) else spread * self._firings(proc)
+
+        elif self._blocked(proc):
             # Not scheduled while back-pressured; fires as soon as it is not.
             state["acc"] = min(1.0, state.get("acc", 1.0) + spread * DT / max(proc.period, 1e-6))
             return
 
-        if proc.period <= 0:
+        elif proc.period <= 0:
             runs = proc.tasks * spread * DT / CHEAP_LATENCY
             state["acc"] = 0.0
 
@@ -577,6 +622,87 @@ class Simulation:
     def _run_CryptographicHashContent(self, proc, spread, state, stat, cpu, avail, avg) -> None:
         count, size = self._cpu_bound(proc, spread, stat, cpu, avail, avg, HASH_BYTES_PER_CORE)
         self._route(proc, {"success": (count, size)}, stat)
+
+    def _run_ReplaceText(self, proc, spread, state, stat, cpu, avail, avg) -> None:
+        count, size = self._cpu_bound(proc, spread, stat, cpu, avail, avg, REPLACE_BYTES_PER_CORE)
+        whole = (proc.properties.get("Evaluation Mode") or "Line-by-Line") == "Entire text"
+        buffer = parse_size(proc.properties.get("Maximum Buffer Size"), DEFAULT_BUFFER)
+
+        # Entire text reads the content into a buffer; what does not fit fails.
+        self._route(proc, {"failure" if whole and avg > buffer else "success": (count, size)}, stat)
+
+    def _run_ControlRate(self, proc, spread, state, stat, cpu, avail, avg) -> None:
+        most, most_bytes = control_rate(proc)
+        window = max(parse_duration(proc.properties.get("Time Duration"), 60.0), 1e-6)
+        n = min(avail, self._schedule_limit(proc, spread, CHEAP_LATENCY), self._out_room(proc, avg))
+
+        # Each node keeps its own rate.
+        if most is not None:
+            n = min(n, most * spread * DT / window)
+
+        if most_bytes is not None and avg > 0:
+            n = min(n, most_bytes * spread * DT / window / avg)
+
+        count, size = self._take_inputs(proc, n)
+        stat["in"] += count
+        cpu["fixed"] += count * CHEAP_CPU / DT
+        self._route(proc, {"success": (count, size)}, stat)
+
+    def _run_DistributeLoad(self, proc, spread, state, stat, cpu, avail, avg) -> None:
+        strategy = (proc.properties.get("Distribution Strategy") or "round robin").strip().lower()
+        rels = relationships(proc.kind, proc.properties)
+        weights = {rel: _weight(proc.properties.get(rel)) if strategy == "round robin" else 1.0 for rel in rels}
+        room = {rel: self._rel_room(proc, rel, avg) for rel in rels}
+        # One run in flight may overshoot a threshold, as in NiFi.
+        open_ = [rel for rel in rels if weights[rel] > 0 and room[rel] > 0]
+        room = {rel: room[rel] + 1.0 for rel in open_}
+        n = min(avail, self._schedule_limit(proc, spread, CHEAP_LATENCY), sum(room.values()))
+        grant = {rel: 0.0 for rel in open_}
+        left = n
+
+        if strategy == "overflow":
+            for rel in open_:
+                grant[rel] = min(left, room[rel])
+                left -= grant[rel]
+
+        while left > 1e-9 and open_:
+            total = sum(weights[rel] for rel in open_)
+
+            for rel in list(open_):
+                give = min(left * weights[rel] / total, room[rel] - grant[rel])
+                grant[rel] += give
+
+                if room[rel] - grant[rel] <= 1e-9:
+                    open_.remove(rel)
+
+            left = n - sum(grant.values())
+
+        count, size = self._take_inputs(proc, n)
+        stat["in"] += count
+        cpu["fixed"] += count * CHEAP_CPU / DT
+        share = {rel: g / n for rel, g in grant.items()} if n > 1e-9 else {}
+        self._route(proc, {rel: (count * f, size * f) for rel, f in share.items()}, stat)
+
+    def _run_SplitText(self, proc, spread, state, stat, cpu, avail, avg) -> None:
+        text = self._source_text(proc)
+        lines = len(text.splitlines()) if text else 1
+        header = _count(proc.properties.get("Header Line Count"))
+        per = _count(proc.properties.get("Line Split Count"))
+        body = max(0, lines - header)
+        fragment = parse_size(proc.properties.get("Maximum Fragment Size"), 0.0)
+
+        if per > 0:
+            splits = math.ceil(body / per)
+
+        else:
+            splits = math.ceil(avg / fragment) if fragment > 0 and avg > 0 else min(body, 1)
+
+        n = min(avail, self._schedule_limit(proc, spread, CHEAP_LATENCY),
+                self._out_room(proc, avg, max(1, splits)))
+        count, size = self._take_inputs(proc, n)
+        stat["in"] += count
+        cpu["fixed"] += count * (1 + splits) * CHEAP_CPU / DT
+        self._route(proc, {"original": (count, size), "splits": (count * splits, size if splits else 0.0)}, stat)
 
     # -----------------------------------------------------------------
     # Samples

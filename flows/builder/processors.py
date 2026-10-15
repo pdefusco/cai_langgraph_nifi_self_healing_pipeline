@@ -166,7 +166,81 @@ PROCESSORS = {
         relationships=("success", "failure"),
         properties={"Hash Algorithm": False},
     ),
+    "DistributeLoad": Spec(
+        name="DistributeLoad",
+        type=_standard("DistributeLoad"),
+        artifact=STANDARD,
+        # "1".."N", from Number of Relationships: see relationships().
+        relationships=("1",),
+        # A dynamic property named for a relationship ("2") is its weight
+        # under round robin.
+        properties={"Number of Relationships": False, "Distribution Strategy": False},
+        dynamic=True,
+    ),
+    "ControlRate": Spec(
+        name="ControlRate",
+        type=_standard("ControlRate"),
+        artifact=STANDARD,
+        relationships=("success", "failure"),
+        properties={
+            "Rate Control Criteria": False,
+            "Maximum Rate": False,
+            "Maximum Data Rate": False,
+            "Maximum FlowFile Rate": False,
+            "Time Duration": False,
+        },
+        editable=("Maximum Rate", "Maximum Data Rate", "Maximum FlowFile Rate", "Time Duration"),
+    ),
+    "SplitText": Spec(
+        name="SplitText",
+        type=_standard("SplitText"),
+        artifact=STANDARD,
+        relationships=("original", "splits", "failure"),
+        properties={
+            "Line Split Count": False,
+            "Maximum Fragment Size": False,
+            "Header Line Count": False,
+            "Remove Trailing Newlines": False,
+        },
+        editable=("Line Split Count",),
+    ),
+    "ReplaceText": Spec(
+        name="ReplaceText",
+        type=_standard("ReplaceText"),
+        artifact=STANDARD,
+        relationships=("success", "failure"),
+        # "Regular Expression" is the key; the UI titles it "Search Value".
+        properties={
+            "Regular Expression": False,
+            "Replacement Value": False,
+            "Replacement Strategy": False,
+            "Evaluation Mode": False,
+            "Maximum Buffer Size": False,
+            "Character Set": False,
+        },
+        editable=("Maximum Buffer Size",),
+    ),
 }
+
+
+def relationships(kind: str, properties: dict | None = None) -> tuple:
+    """A processor's relationships. DistributeLoad's are "1".."N", N from its properties."""
+
+    spec = PROCESSORS.get(kind)
+
+    if spec is None:
+        return ()
+
+    if kind == "DistributeLoad":
+        try:
+            count = int(str((properties or {}).get("Number of Relationships") or 1))
+
+        except ValueError:
+            count = 1
+
+        return tuple(str(n) for n in range(1, max(1, count) + 1))
+
+    return spec.relationships
 
 
 def spec_for(kind: str) -> Spec:

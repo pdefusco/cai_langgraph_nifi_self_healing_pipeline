@@ -11,6 +11,17 @@ the control). It declares:
                      label for evaluation (Phase 3), never shown to the agent.
   acceptable         other fixes that are also correct
   traps              plausible fixes that are wrong, and why
+  kind               how the fault presents (KINDS): classic, one fault where
+                     it shows; cascade, the symptom stages away from the
+                     cause; compound, several faults; intermittent, it comes
+                     and goes; slow_burn, it takes hours to show; control,
+                     nothing is wrong
+  faults             for a compound fault, the fixes that must all be
+                     applied before it clears; one fault has none, and any
+                     of `expected` or `acceptable` clears it
+  detect_within      seconds from planting by which an incident should open
+                     (a control: during which none should)
+  clear_within       seconds after the last fix by which its KPIs are healthy
 
 A *pack* is one deployment: a root process group holding several
 scenarios, and its sizing.
@@ -56,6 +67,9 @@ class Kpi:
         return f"{self.scenario}:{self.kind}:{self.component}:{self.metric}"
 
 
+KINDS = ("classic", "cascade", "compound", "intermittent", "slow_burn", "control")
+
+
 @dataclass(frozen=True)
 class Scenario:
     id: str                  # "S01"
@@ -70,6 +84,26 @@ class Scenario:
     traps: tuple = ()
     parameters: dict = field(default_factory=dict)
     edges: tuple = ()        # (entry names, exit names), when the topology misleads
+    kind: str = ""           # one of KINDS; "" is control for family NONE, else classic
+    faults: tuple = ()
+    detect_within: int = 1800
+    clear_within: int = 900
+
+    def __post_init__(self):
+        if not self.kind:
+            object.__setattr__(self, "kind", "control" if self.family == "NONE" else "classic")
+
+        if self.kind not in KINDS:
+            raise ValueError(f"{self.id}: kind must be one of {', '.join(KINDS)}, got {self.kind!r}")
+
+        if (self.kind == "control") != (self.family == "NONE"):
+            raise ValueError(f"{self.id}: a control, and only a control, has family NONE")
+
+        if self.kind == "compound" and len(self.faults) < 2:
+            raise ValueError(f"{self.id}: a compound fault lists the two or more fixes it needs in faults")
+
+        if self.faults and self.kind != "compound":
+            raise ValueError(f"{self.id}: only a compound fault lists faults")
 
     @property
     def group_name(self) -> str:

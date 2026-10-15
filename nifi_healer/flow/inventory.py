@@ -13,7 +13,7 @@ Sensitive parameter values are masked.
 import re
 
 from flows.builder.lib import walk_groups
-from flows.builder.processors import PROCESSORS, kind_of
+from flows.builder.processors import PROCESSORS, kind_of, relationships
 
 _REFERENCE = re.compile(r"#\{([^}]+)\}")
 
@@ -95,7 +95,7 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
             "retry_count": raw.get("retryCount"),
             "backoff": raw.get("backoffMechanism"),
             "max_backoff": raw.get("maxBackoffPeriod"),
-            "relationships": list(spec.relationships) if spec else [],
+            "relationships": list(relationships(kind, raw.get("properties"))),
             "routed": routed,
             "auto_terminated": list(raw.get("autoTerminatedRelationships") or []),
             "properties": dict(raw.get("properties") or {}),
