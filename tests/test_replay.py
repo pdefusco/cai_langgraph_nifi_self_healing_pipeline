@@ -157,3 +157,9 @@ def test_chosen_scenarios():
 
     with pytest.raises(SystemExit):
         replay.chosen(["S99"])
+
+
+def test_it_waits_as_long_as_the_slowest_fault_takes_to_show():
+    assert replay.window(["S01"]) == replay.DETECT_SECONDS
+    assert replay.window(["S01"], 7200) == 7200
+    assert replay.window(["S01", "S39"]) == packs.SCENARIOS["S39"].detect_within == 86400

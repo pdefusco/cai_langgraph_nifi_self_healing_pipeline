@@ -200,7 +200,8 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   fix, which tests the harness rather than the agent. On CAI, run it as a job (script `cai_job.py`, Arguments
   `-m nifi_healer.eval.replay --trials 3`). **Scorecard → Incidents: Replay** shows its runs, with how many faults
   were detected. `--fixes 3` keeps watching after each fix and diagnoses the next incident, up to three, so a
-  compound fault (p12–p14) is scored as cleared after N fixes.
+  compound fault (p12–p14) is scored as cleared after N fixes. It waits for each fault as long as its scenario's
+  `detect_within`, so a slow burn (p16) or a nightly batch (p17) gets hours of simulated time, not minutes.
 - **Past cases.** Each diagnosis is also shown the most similar past cases (`nifi_healer/rag/memory.py`): what the
   agent proposed, what the reviewer did with it and why, and what the verify windows measured. Only judged fixes and
   rejections count, never the replay's oracle runs. A proposal can cite a case id; the Review Queue lists the cases

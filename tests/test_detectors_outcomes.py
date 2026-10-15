@@ -241,6 +241,27 @@ def test_the_kpi_that_opened_the_incident_decides_too(windows):
     assert [j["signalled"] for j in result["kpis"]] == [False, True]
 
 
+@pytest.mark.parametrize("export_after, verdict", [(0, outcomes.INCONCLUSIVE), (10, outcomes.WORSENED)])
+def test_a_rate_that_fell_with_the_load_is_not_judged_worse(windows, export_after, verdict):
+    # S36: the hourly partner export ends just after the fix, and the validator's rate falls with it.
+    out = kpi("S36", "processor", "S36 Validate Partner Order", "flowfiles_out", above=None, good="up")
+    loads = {("S36 Partner Export", "flowfiles_out"): ([10] * 8, [export_after] * 8),
+             ("S36 Store Orders", "flowfiles_out"): ([5] * 8, [5] * 8),
+             ("S36 Load Orders", "flowfiles_in"): ([12.5] * 8, [5 + export_after] * 8),
+             ("S36 Reject DLQ", "flowfiles_in"): ([0] * 8, [0] * 8)}
+    edges = [dict(kpi("S36", "processor", name, metric, above=None, good="up"), rollup=True)
+             for name, metric in loads]
+    data, started, finished = around_change([7.5] * 8, [0] * 8)
+    series_by_key = {out["key"]: data} | {k["key"]: around_change(*loads[k["component"], k["metric"]])[0]
+                                          for k in edges}
+
+    result = outcomes.evaluate([out] + edges, series_by_key, started, finished)
+    assert result["verdict"] == verdict
+
+    if verdict == outcomes.INCONCLUSIVE:
+        assert "the load into the group fell from 15 to 5" in result["kpis"][0]["reason"]
+
+
 def test_too_few_buckets_is_inconclusive(windows):
     data, started, finished = around_change([1000] * 8, [900])
     result = outcomes.evaluate([kpi()], {kpi()["key"]: data}, started, finished)

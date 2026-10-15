@@ -4,6 +4,12 @@ faults present as the detectors see them, the design fix clears each
 one, and the wrong fixes it names do not. A compound fault clears only
 once all its faults are fixed, and a masked one shows a new signal
 after the first.
+
+A timed fault (intermittent or slow burn) is polled every SCAN seconds
+from midnight UTC instead: it shows within its detect_within, an
+intermittent one clears on its own and comes back, a slow burn warns
+before it breaches, and a fix is judged over a whole detect_within
+after its clear_within, so the next burst or batch is in it.
 """
 
 import copy
@@ -17,11 +23,15 @@ from nifi_healer.kpi import detectors, metrics
 from nifi_healer.sim.engine import Simulation
 
 START = 1_800_000_000.0
-SETTLE = 3600.0         # long enough for every second-wave fault to present
+SETTLE = 3600.0         # long enough for every steady second-wave fault to present
 AFTER_FIX = 1800.0      # the longest clear_within among them
 WAVE_2 = [name for name, pack in packs.PACKS.items() if pack.wave == 2]
 SCOPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTEM"}
 MASKED = {"S31", "S33"}   # the second fault shows only once the first is fixed
+STEADY = ("cascade", "compound")        # faulty from deploy on, and until fixed
+TIMED = ("intermittent", "slow_burn")   # on a schedule, or only after hours
+MIDNIGHT = START - 8 * 3600             # 00:00 UTC: a day's schedule runs from the start
+SCAN = 300.0
 
 
 def _kpi(k) -> dict:
@@ -45,15 +55,42 @@ def _charts(sim: Simulation, kpis: list) -> list:
     return charts
 
 
-def _faulty(sim: Simulation, pack, scenario) -> list:
-    """The scenario's critical signals, as one poll of this simulation finds them."""
+def _signals(sim: Simulation, pack, scenario) -> list:
+    """The scenario's signals, as one poll of this simulation finds them."""
 
     kpis = [_kpi(k) for k in pack.kpis]
     kinds = {p.name: p.kind for p in sim.model.processors.values()}
     found = detectors.detect(pack.name, {"kpis": kpis}, _charts(sim, kpis), [], sim.t, kinds)
 
-    return [s["summary"] for s in found["signals"]
-            if s["scenario"] == scenario.id and s["severity"] == detectors.CRITICAL]
+    return [s for s in found["signals"] if s["scenario"] == scenario.id]
+
+
+def _faulty(sim: Simulation, pack, scenario) -> list:
+    """The scenario's critical signals, as one poll of this simulation finds them."""
+
+    return [s["summary"] for s in _signals(sim, pack, scenario) if s["severity"] == detectors.CRITICAL]
+
+
+def _polls(sim: Simulation, pack, scenario, seconds: float, until_faulty: bool = False) -> list:
+    """
+    [(t, critical summaries, warning types)], polled every SCAN seconds
+    for `seconds` as `sim` moves on; with `until_faulty`, up to the
+    first poll that finds a critical signal.
+    """
+
+    polls, t, end = [], sim.t, sim.t + seconds
+
+    while t < end:
+        t += SCAN
+        sim.advance(t)
+        found = _signals(sim, pack, scenario)
+        polls.append((t, [s["summary"] for s in found if s["severity"] == detectors.CRITICAL],
+                      [s["type"] for s in found if s["severity"] == detectors.WARNING]))
+
+        if until_faulty and polls[-1][1]:
+            break
+
+    return polls
 
 
 @pytest.fixture(scope="module")
@@ -102,15 +139,42 @@ def _after(settled, pack, scenario, steps) -> Simulation:
     return sim
 
 
-def _scenarios(compound: bool) -> list:
-    return [(name, s) for name in WAVE_2 for s in packs.PACKS[name].scenarios
-            if (s.kind == "compound") == compound]
+def _scenarios(*kinds) -> list:
+    return [(name, s) for name in WAVE_2 for s in packs.PACKS[name].scenarios if s.kind in kinds]
 
 
-def _cases(field: str, compound: bool) -> list:
+def _cases(field: str, *kinds) -> list:
     return [pytest.param(name, s.id, i, id=f"{s.id}-{i}")
-            for name, s in _scenarios(compound)
+            for name, s in _scenarios(*kinds)
             for i in range(len(getattr(s, field)))]
+
+
+@pytest.fixture(scope="module")
+def shown():
+    """
+    {timed scenario id: (its simulation at the first poll that finds it
+    faulty, the polls up to it)}, deployed at midnight UTC, built once.
+    """
+
+    sims = {}
+
+    for name, scenario in _scenarios(*TIMED):
+        pack = packs.PACKS[name]
+        sim = Simulation(packs.build(name), dict(pack.parameters), pack.cluster_size, pack.nodes, MIDNIGHT)
+        sims[scenario.id] = sim, _polls(sim, pack, scenario, scenario.detect_within, until_faulty=True)
+
+    return sims
+
+
+def _after_shown(shown, name, scenario, steps) -> list:
+    """The polls over a detect_within, from clear_within after `steps` are applied to the fault as it shows."""
+
+    pack = packs.PACKS[name]
+    sim = copy.deepcopy(shown[scenario.id][0])
+    _apply(sim, scenario, steps)
+    sim.advance(sim.t + scenario.clear_within)
+
+    return _polls(sim, pack, scenario, scenario.detect_within)
 
 
 def test_the_second_wave_is_not_provisioned_by_default():
@@ -137,16 +201,13 @@ def test_each_pack_builds_and_compiles(name):
         assert 10 <= sum(p.group_name == scenario.group_name for p in sim.model.processors.values()) <= 30
 
 
-@pytest.mark.parametrize("name", WAVE_2)
-def test_each_fault_presents(settled, name):
-    pack = packs.PACKS[name]
-
-    for scenario in pack.scenarios:
-        assert _faulty(settled[name], pack, scenario), scenario.id
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id) for n, s in _scenarios(*STEADY)])
+def test_each_fault_presents(settled, name, scenario_id):
+    assert _faulty(settled[name], packs.PACKS[name], packs.SCENARIOS[scenario_id])
 
 
 @pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
-                                               for n, s in _scenarios(False)])
+                                               for n, s in _scenarios("cascade")])
 def test_the_design_fix_clears_the_fault(settled, name, scenario_id):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
     sim = _after(settled, pack, scenario, scenario.expected)
@@ -154,7 +215,7 @@ def test_the_design_fix_clears_the_fault(settled, name, scenario_id):
     assert _faulty(sim, pack, scenario) == []
 
 
-@pytest.mark.parametrize("name, scenario_id, index", _cases("acceptable", False))
+@pytest.mark.parametrize("name, scenario_id, index", _cases("acceptable", "cascade"))
 def test_an_acceptable_fix_clears_it_alone(settled, name, scenario_id, index):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
     sim = _after(settled, pack, scenario, [scenario.acceptable[index]])
@@ -163,7 +224,7 @@ def test_an_acceptable_fix_clears_it_alone(settled, name, scenario_id, index):
 
 
 @pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
-                                               for n, s in _scenarios(True)])
+                                               for n, s in _scenarios("compound")])
 def test_a_compound_fault_clears_once_all_its_faults_are_fixed(settled, name, scenario_id):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
 
@@ -172,7 +233,7 @@ def test_a_compound_fault_clears_once_all_its_faults_are_fixed(settled, name, sc
     assert _faulty(_after(settled, pack, scenario, scenario.faults), pack, scenario) == []
 
 
-@pytest.mark.parametrize("name, scenario_id, index", _cases("faults", True))
+@pytest.mark.parametrize("name, scenario_id, index", _cases("faults", "compound"))
 def test_one_of_its_faults_fixed_alone_does_not(settled, name, scenario_id, index):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
     left = _faulty(_after(settled, pack, scenario, [scenario.faults[index]]), pack, scenario)
@@ -184,9 +245,61 @@ def test_one_of_its_faults_fixed_alone_does_not(settled, name, scenario_id, inde
         assert not set(left) & set(_faulty(settled[name], pack, scenario)), left
 
 
-@pytest.mark.parametrize("name, scenario_id, index", _cases("wrong", False) + _cases("wrong", True))
+@pytest.mark.parametrize("name, scenario_id, index", _cases("wrong", *STEADY))
 def test_a_wrong_fix_does_not(settled, name, scenario_id, index):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
     sim = _after(settled, pack, scenario, [scenario.wrong[index]])
 
     assert _faulty(sim, pack, scenario), scenario.wrong[index]
+
+
+def test_every_second_wave_scenario_is_steady_or_timed():
+    assert {s.kind for _, s in _scenarios(*STEADY, *TIMED)} == set(STEADY + TIMED)
+    assert len(_scenarios(*STEADY, *TIMED)) == sum(len(packs.PACKS[n].scenarios) for n in WAVE_2)
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id) for n, s in _scenarios(*TIMED)])
+def test_a_timed_fault_shows_within_its_detect_within(shown, name, scenario_id):
+    polls = shown[scenario_id][1]
+
+    assert polls[-1][1], f"{scenario_id}: nothing critical in {packs.SCENARIOS[scenario_id].detect_within} s"
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
+                                               for n, s in _scenarios("slow_burn")])
+def test_a_slow_burn_warns_before_it_breaches(shown, name, scenario_id):
+    polls = shown[scenario_id][1]
+
+    # Healthy for its first hour, then a trend warning ahead of the breach.
+    assert polls[-1][0] - MIDNIGHT > 3600
+    assert any("trend_to_breach" in warnings for _, _, warnings in polls[:-1])
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
+                                               for n, s in _scenarios("intermittent")])
+def test_an_intermittent_fault_clears_on_its_own_and_comes_back(shown, name, scenario_id):
+    scenario = packs.SCENARIOS[scenario_id]
+    sim = copy.deepcopy(shown[scenario_id][0])
+    faulty = [bool(critical) for _, critical, _ in _polls(sim, packs.PACKS[name], scenario,
+                                                           2 * scenario.detect_within)]
+
+    assert False in faulty and True in faulty[faulty.index(False):], faulty
+
+
+@pytest.mark.parametrize("name, scenario_id, index",
+                         [pytest.param(n, s.id, -1, id=f"{s.id}-expected") for n, s in _scenarios(*TIMED)]
+                         + _cases("acceptable", *TIMED))
+def test_a_timed_fix_holds_through_the_next_burst(shown, name, scenario_id, index):
+    scenario = packs.SCENARIOS[scenario_id]
+    steps = scenario.expected if index < 0 else [scenario.acceptable[index]]
+    left = [(t, critical) for t, critical, _ in _after_shown(shown, name, scenario, steps) if critical]
+
+    assert left == [], left[:1]
+
+
+@pytest.mark.parametrize("name, scenario_id, index", _cases("wrong", *TIMED))
+def test_a_wrong_timed_fix_does_not(shown, name, scenario_id, index):
+    scenario = packs.SCENARIOS[scenario_id]
+
+    assert any(critical for _, critical, _ in _after_shown(shown, name, scenario, [scenario.wrong[index]])), \
+        scenario.wrong[index]

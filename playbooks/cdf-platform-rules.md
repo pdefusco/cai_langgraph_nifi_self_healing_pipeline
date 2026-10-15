@@ -41,6 +41,11 @@ floor. Compare a window before the change with a window after it, both
 taken from the same chart response. Buckets from separate responses are
 anchored differently and do not line up.
 
+A load that comes in bursts, or once a day, can end just after the change.
+The quiet that follows says nothing either way: the next burst shows
+whether the fix held. A rate that fell with the group's input is not judged
+worse, and a later window decides.
+
 ## Prefer parameter updates for parameterized values
 <!-- actions: UPDATE_PARAMETER -->
 

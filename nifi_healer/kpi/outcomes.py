@@ -30,6 +30,11 @@ any IMPROVED, then NO_CHANGE. Too few buckets on either side of every
 deciding KPI is INCONCLUSIVE. Other KPIs that got worse are reported as
 side effects, and the group's in and out (kpi/rollup.py) alongside.
 
+A rate that fell while the group's input fell by half or more (a burst
+or a nightly batch ended) is INCONCLUSIVE, not WORSENED: the window
+after the change missed the load the fix was for, and a later window,
+which holds the next burst, decides.
+
 The verdict's number is its lift (outcome_lift): how far the deciding
 KPIs moved their good way, from -100% to +100%, so outcomes compare
 without reading each KPI's before and after.
@@ -50,6 +55,10 @@ _EPSILON = 0.05
 # Relative level changes that count, for level and rate KPIs.
 _LEVEL_DROP = 0.2
 _RATE_RISE = 0.1
+
+# The group's input falling by this much (a burst or a batch ended)
+# lowers its rates with no help from the change.
+_LOAD_DROP = 0.5
 
 PERIODS = (("LAST_THIRTY_MINUTES", 1800), ("LAST_ONE_HOUR", 3600),
            ("LAST_TWELVE_HOURS", 12 * 3600), ("LAST_ONE_DAY", 24 * 3600))
@@ -266,18 +275,26 @@ def evaluate(kpis: list, series_by_key: dict, started_at: float, finished_at: fl
     """
 
     judged = []
+    group = group_change(kpis, series_by_key, started_at, finished_at, span)
+    fell = load_fell(group)
 
     # Roll-up KPIs are read only as the group's in and out, below.
     for kpi in (k for k in kpis if not k.get("rollup")):
         before, after = windows(series_by_key.get(kpi["key"]) or [], started_at, finished_at, span)
-        judged.append(dict(judge(kpi, before, after), signalled=kpi.get("key") in signalled))
+        found = dict(judge(kpi, before, after), signalled=kpi.get("key") in signalled)
+
+        # An intermittent load: the window after the change can miss the
+        # next burst, and a later window decides.
+        if fell and found["good"] == "up" and found["verdict"] == WORSENED:
+            found.update(verdict=INCONCLUSIVE, reason=f"{found['reason']}, but {fell}")
+
+        judged.append(found)
 
     deciding = [j for j in judged if j["primary"] or j["signalled"]] or judged
     verdict = combine([j["verdict"] for j in deciding])
     side_effects = [j["kpi"] for j in judged if j not in deciding and j["verdict"] == WORSENED]
 
-    return {"verdict": verdict, "kpis": judged, "side_effects": side_effects,
-            "group": group_change(kpis, series_by_key, started_at, finished_at, span),
+    return {"verdict": verdict, "kpis": judged, "side_effects": side_effects, "group": group,
             "started_at": started_at, "finished_at": finished_at,
             "settle_seconds": span["settle"] if span else config.VERIFY_SETTLE_SECONDS,
             "window_seconds": span["window"] if span else config.VERIFY_WINDOW_SECONDS,
@@ -308,3 +325,15 @@ def group_change(kpis: list, series_by_key: dict, started_at: float, finished_at
         change[f"ratio_{when}"] = out / into if into and out is not None else None
 
     return change
+
+
+def load_fell(group: dict) -> str:
+    """Why the group's input fell by _LOAD_DROP or more across the change, or "" when it did not."""
+
+    into = (group or {}).get("in") or {}
+    before, after = (into.get("before") or {}).get("mean"), (into.get("after") or {}).get("mean")
+
+    if before is None or after is None or before <= 0 or after > before * (1 - _LOAD_DROP):
+        return ""
+
+    return f"the load into the group fell from {before:.3g} to {after:.3g} with it"

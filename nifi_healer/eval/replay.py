@@ -14,7 +14,9 @@ Each trial round, over the packs the chosen scenarios are in:
   1. a fresh mock tenant: the packs imported and deployed, with three
      hours of faulty history (sim/bootstrap.py)
   2. the poller opens an incident per fault, polling and moving the clock
-     on for up to DETECT_SECONDS; the healthy control should open none
+     on for up to DETECT_SECONDS, or the longest detect_within of the
+     scenarios (a slow burn shows after hours, a nightly batch once a
+     day); the healthy control should open none
   3. the agent diagnoses each chosen scenario's incident, AGENT_WORKERS
      at a time
   4. a valid proposal is approved as proposed, by REVIEWER, and applied
@@ -186,13 +188,22 @@ def chosen(scenarios=(), pack_names=()) -> list:
     return [s for s in every if s in wanted] if wanted else every
 
 
+def window(ids: list, seconds: float = DETECT_SECONDS) -> float:
+    """How long to wait for the incidents of `ids`: `seconds`, or the longest detect_within of them."""
+
+    return max([seconds] + [packs.SCENARIOS[s].detect_within for s in ids])
+
+
 def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS) -> dict:
-    """{scenario id: its incident}, polling until every fault has one or `seconds` of sim time pass."""
+    """
+    {scenario id: its incident}, polling until every fault has one or
+    window(ids, seconds) of sim time pass.
+    """
 
     opened = {}
     faults = {s for s in ids if packs.SCENARIOS[s].family != "NONE"}
     poller = Poller(client, store, on_incident=lambda i: opened.setdefault(i.get("scenario"), i))
-    deadline = client.now() + seconds
+    deadline = client.now() + window(ids, seconds)
 
     while True:
         poller.poll_now()
@@ -297,7 +308,8 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
             break
 
         # A closed incident's group opens no new one within the cooldown.
-        found = detect(world, client, store, applied, detect_seconds + config.INCIDENT_COOLDOWN_SECONDS)
+        found = detect(world, client, store, applied,
+                       window(applied, detect_seconds) + config.INCIDENT_COOLDOWN_SECONDS)
 
         for scenario in applied:
             trials[scenario]["cleared"] = scenario not in found
@@ -490,7 +502,8 @@ def main() -> int:
     parser.add_argument("--no-playbook-edits", action="store_true",
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
-                        help="simulated minutes to wait for every fault's incident")
+                        help="simulated minutes to wait for every fault's incident, at least each "
+                             "scenario's detect_within")
     parser.add_argument("--fixes", type=int, default=1,
                         help="fixes a fault may take: above 1, each fixed fault is watched for a new incident")
     args = parser.parse_args()
