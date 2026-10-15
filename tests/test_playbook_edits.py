@@ -389,6 +389,49 @@ def test_a_stale_draft_is_not_approved(drafting):
     assert store.playbook_edit(row["id"])["status"] == "PROPOSED"
 
 
+def test_a_section_id_without_its_playbook_is_resolved(drafting):
+    _, _, store, incidents, install = drafting("p1-throughput")
+    incident_id = incidents["S01"]["id"]
+    bare = SECTION.split("#", 1)[1]                 # the live nemotron reply: the slug alone
+    reply = edit_reply(CPU)
+
+    def wrong(messages):
+        return dict(reply(messages), section_id="no-such-section")
+
+    install(ScriptedLLM(proposal(S01_FIX, cite=[SECTION]), lambda m: dict(reply(m), section_id=bare),
+                        proposal(S02_FIX, cite=[SECTION]), wrong, wrong, reply))
+    graph.start(incident_id)
+    graph.resume(incident_id, {"decision": "reject", "reason": REASON, "reviewer": "ops"})
+    settle()
+
+    [row] = store.playbook_edits()
+    assert (row["status"], row["section_id"], row["problems"]) == ("PROPOSED", SECTION, [])
+    assert row["old_text"] == drafter.sections(ingest.raw_playbooks())[SECTION]["text"]
+    found = drafter.sections(ingest.raw_playbooks())
+    assert drafter.resolve(bare, "", "", found) == SECTION
+    assert drafter.resolve("x", PLAYBOOK, "Raise Concurrent Tasks on the bottleneck processor", found) == SECTION
+
+    # An id that is no section at all: the check names the real ones, twice (the retry), and
+    # Approve refuses it without calling it stale; Draft again stays open.
+    s02 = incidents["S02"]["id"]
+    graph.start(s02)
+    graph.resume(s02, {"decision": "reject", "reason": "it waits between runs", "reviewer": "ops"})
+    settle()
+
+    row = store.playbook_edits(("PROPOSED",))[0]          # newest first
+    assert row["section_id"] == "no-such-section" and SECTION in row["problems"][0]
+    assert "Not approved" in views.approve_playbook_edit(row["id"], reviewer="ops")
+    assert store.playbook_edit(row["id"])["status"] == "PROPOSED"
+    assert playbooks.panel(store, row["id"])["can_redraft"] and "Draft again" in playbooks.panel(store, row["id"])["html"]
+
+    store.update_playbook_edit(row["id"], decided_at=123.0, reviewer="ops")
+    assert views.redraft_playbook_edit(row["id"]).startswith("Drafting")
+    settle()
+    row = store.playbook_edit(row["id"])
+    assert (row["status"], row["section_id"], row["problems"], row["decided_at"]) == ("PROPOSED", SECTION, [], None)
+    assert not playbooks.panel(store, row["id"])["can_redraft"]
+
+
 def test_what_is_not_drafted(drafting, monkeypatch):
     _, _, store, incidents, _ = drafting("p1-throughput")
     incident_id = incidents["S01"]["id"]

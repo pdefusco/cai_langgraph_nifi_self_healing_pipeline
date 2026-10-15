@@ -1165,7 +1165,8 @@ def approve_playbook_edit(edit_id, text: str = "", reviewer: str = "") -> str:
     raws = ingest.raw_playbooks()
     found = drafter.sections(raws)
 
-    if row["section_id"] and (found.get(row["section_id"]) or {}).get("text") != overlay.clean(row["old_text"]):
+    # A section that is not there at all is the draft's mistake, which check() names below.
+    if row["section_id"] in found and found[row["section_id"]]["text"] != overlay.clean(row["old_text"]):
         store.update_playbook_edit(row["id"], status="STALE", decided_at=get_client().now())
 
         return (f"PE-{row['id']} no longer fits: its section changed after it was drafted (another approved edit, "
@@ -1175,7 +1176,7 @@ def approve_playbook_edit(edit_id, text: str = "", reviewer: str = "") -> str:
     problems = drafter.check(dict(row, text=text), raws, found)
 
     if problems:
-        return "Not approved: " + "; ".join(problems)
+        return "Not approved: " + "; ".join(problems) + ". Fix the text, or Draft again."
 
     store.update_playbook_edit(row["id"], status="APPLIED", new_text=text, problems=[],
                                reviewer=(reviewer or "").strip(), decided_at=get_client().now())

@@ -140,8 +140,17 @@ def queue(kind: str, incident_id: str, source_id: int):
     return _submit(edit_id)
 
 
+def redraftable(row: dict) -> bool:
+    """FAILED, STALE, PROPOSED with checks it fails (which the text box may not fix), or cut off by a restart."""
+
+    status = row["status"]
+
+    return status in ("FAILED", "STALE") or (status == "PROPOSED" and bool(row.get("problems"))) or \
+        (status == "DRAFTING" and not drafting(row["id"]))
+
+
 def redraft(edit_id: int):
-    """Draft a FAILED or STALE edit (or one a restart cut off) again from its feedback. Returns the Future."""
+    """Draft an edit again from its feedback (redraftable() says which). Returns the Future."""
 
     store = get_store()
     row = store.playbook_edit(edit_id)
@@ -149,10 +158,11 @@ def redraft(edit_id: int):
     if not row:
         raise ValueError(f"no playbook edit PE-{edit_id}")
 
-    if row["status"] not in ("FAILED", "STALE") and not (row["status"] == "DRAFTING" and not drafting(edit_id)):
-        raise ValueError(f"PE-{edit_id} is {row['status']}: only a failed or stale draft is drafted again")
+    if not redraftable(row):
+        raise ValueError(f"PE-{edit_id} is {row['status']}: only a failed or stale draft, or one that fails "
+                         "its checks, is drafted again")
 
-    store.update_playbook_edit(edit_id, status="DRAFTING", error="")
+    store.update_playbook_edit(edit_id, status="DRAFTING", error="", decided_at=None, reviewer="", reason="")
 
     return _submit(edit_id)
 
@@ -245,10 +255,37 @@ def _title_slug(source: str, raw: str) -> str:
     return overlay.slug(ingest.front_matter(raw).get("title") or os.path.splitext(source)[0])
 
 
-def normalize(edit: PlaybookEdit, found: dict) -> PlaybookEdit:
-    """The playbook from the section id when it was left out, and an existing section's own heading."""
+def resolve(section_id: str, playbook: str, heading: str, found: dict) -> str:
+    """
+    The section id the LLM meant: its own, or (as nemotron writes them) its
+    slug without the playbook in front, or the section of that heading.
+    An id that matches none comes back as it was, for check() to refuse.
+    """
 
-    section_id, playbook = edit.section_id.strip(), edit.playbook.strip()
+    if not section_id or section_id in found:
+        return section_id
+
+    tail = overlay.slug(section_id.rsplit("#", 1)[-1])
+    base = os.path.splitext(playbook)[0] if playbook else section_id.split("#", 1)[0] if "#" in section_id else ""
+
+    for candidate in (f"{base}#{tail}", f"{base}#{overlay.slug(heading)}" if heading else ""):
+        if base and candidate in found:
+            return candidate
+
+    # No playbook to go by: the one section anywhere with that slug.
+    matches = [c for c in found if c.split("#", 1)[1] == tail and (not base or c.startswith(base + "#"))]
+
+    return matches[0] if len(matches) == 1 else section_id
+
+
+def normalize(edit: PlaybookEdit, found: dict) -> PlaybookEdit:
+    """The section id as the index writes it, the playbook from it when it was left out, and its own heading."""
+
+    playbook = edit.playbook.strip()
+    section_id = resolve(edit.section_id.strip(), playbook, edit.heading.strip(), found)
+
+    if section_id in found and not playbook:
+        playbook = found[section_id]["playbook"]
 
     if section_id and not playbook:
         playbook = section_id.split("#", 1)[0] + ".md"
@@ -284,7 +321,9 @@ def check(edit: dict, raws: dict, found: dict | None = None) -> list:
 
     if section_id:
         if found.get(section_id, {}).get("playbook") != playbook:
-            problems.append(f"{playbook} has no section {section_id!r}")
+            ids = [c for c, s in found.items() if s["playbook"] == playbook]
+            problems.append(f"{playbook} has no section {section_id!r}; its sections are "
+                            + ", ".join(ids) + " (or leave section_id empty and give a heading for a new one)")
 
         else:
             old = found[section_id]["text"]

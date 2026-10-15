@@ -102,7 +102,7 @@ def panel(store, edit_id) -> dict:
             "can_edit": status == "PROPOSED", "can_approve": status == "PROPOSED",
             "can_reject": status in ("PROPOSED", "FAILED", "STALE") or cut_off,
             "can_revert": status == "APPLIED",
-            "can_redraft": status in ("FAILED", "STALE") or cut_off, "key": key(store, row["id"])}
+            "can_redraft": drafter.redraftable(row), "key": key(store, row["id"])}
 
 
 # ---------------------------------------------------------------------
@@ -192,7 +192,8 @@ def render(store, row: dict) -> str:
     if row.get("problems"):
         parts.append('<section class="pb-problems"><h4>Checks it fails</h4><ul>'
                      + "".join(f"<li>{_e(p)}</li>" for p in row["problems"])
-                     + "</ul><p>Fix them in the text below before approving.</p></section>")
+                     + "</ul><p>Fix them in the text below before approving, or Draft again (a section that "
+                       "is not there can only be fixed by drafting again).</p></section>")
 
     if row.get("error"):
         parts.append(f'<section class="pb-problems"><h4>Error</h4><p>{_e(row["error"])}</p></section>')
