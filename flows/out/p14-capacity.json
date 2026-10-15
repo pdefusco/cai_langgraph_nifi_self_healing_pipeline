@@ -1,0 +1,850 @@
+{
+  "externalControllerServices": {},
+  "flowContents": {
+    "comments": "Self-healing test pack: Capacity and flow compound fault. Built by flows/build_all.py.",
+    "componentType": "PROCESS_GROUP",
+    "connections": [],
+    "controllerServices": [],
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultFlowFileExpiration": "0 sec",
+    "executionEngine": null,
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "funnels": [],
+    "groupIdentifier": null,
+    "identifier": "1af05237-6e2e-5049-8309-1c9b2a07a879",
+    "inputPorts": [],
+    "instanceIdentifier": null,
+    "labels": [],
+    "logFileSuffix": null,
+    "maxConcurrentTasks": null,
+    "name": "nfh-p14-capacity",
+    "outputPorts": [],
+    "parameterContextName": null,
+    "position": null,
+    "processGroups": [
+      {
+        "comments": "Compression needs about all the CPU an EXTRA_SMALL node has, and S34 Send Notice runs once a second against 4/s: a sizing fault and a flow fault. (symptom: sizing_cpu)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "0219b7f9-373f-5a2c-8c52-cfaf1df2d4d5",
+              "instanceIdentifier": null,
+              "name": "S34 Compress Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "260667cd-c1e1-5fa0-b4e9-dc3510124339",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-to-compress",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "b3630aee-8a3c-543c-9d73-e466fc42be48",
+              "instanceIdentifier": null,
+              "name": "S34 Archive Source",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "3bcece1f-546e-55d9-aecf-87ec483d028d",
+              "instanceIdentifier": null,
+              "name": "S34 Hash Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "98ef1c38-be26-531b-a00d-d85a517ecdef",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-to-hash",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "0219b7f9-373f-5a2c-8c52-cfaf1df2d4d5",
+              "instanceIdentifier": null,
+              "name": "S34 Compress Archive",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "48a8e5e1-04f7-5819-a01c-d359d85bee8c",
+              "instanceIdentifier": null,
+              "name": "S34 Name Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "d077715a-77ce-57ce-baee-03cfb356fc1e",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-hashed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "3bcece1f-546e-55d9-aecf-87ec483d028d",
+              "instanceIdentifier": null,
+              "name": "S34 Hash Archive",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "e229a384-5aed-57a7-9903-f07a5edcdb44",
+              "instanceIdentifier": null,
+              "name": "S34 Index Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "f101f858-dcb6-5b67-8629-4d4f01a2370c",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-named",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "48a8e5e1-04f7-5819-a01c-d359d85bee8c",
+              "instanceIdentifier": null,
+              "name": "S34 Name Archive",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "ca16acf8-b4f5-55af-8546-3b462c1b2444",
+              "instanceIdentifier": null,
+              "name": "S34 Store Archive",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "42baf31a-0471-5f8c-9b8d-31787d7c03ed",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-indexed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "e229a384-5aed-57a7-9903-f07a5edcdb44",
+              "instanceIdentifier": null,
+              "name": "S34 Index Archive",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "f62abf0a-e54e-51c4-b95e-2532130e4818",
+              "instanceIdentifier": null,
+              "name": "S34 Format Notice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "2ccff312-092d-5f40-b653-5017542c5ac3",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-notices",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "933d1f7c-8719-5a98-98e5-9028f4bca45f",
+              "instanceIdentifier": null,
+              "name": "S34 Notice Requests",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "cfdd399e-77cf-5b4f-bb27-0611bde2e112",
+              "instanceIdentifier": null,
+              "name": "S34 Render Notice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "cb5f46e1-1a49-56b1-b9ce-14b54c81bf73",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-formatted",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "f62abf0a-e54e-51c4-b95e-2532130e4818",
+              "instanceIdentifier": null,
+              "name": "S34 Format Notice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "bbe5658c-6668-5155-a079-7b904ce285bc",
+              "instanceIdentifier": null,
+              "name": "S34 Send Notice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "5ac503ae-3e72-5825-9b43-fae21570f90e",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-to-send",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "cfdd399e-77cf-5b4f-bb27-0611bde2e112",
+              "instanceIdentifier": null,
+              "name": "S34 Render Notice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "d863b776-3e7c-53ad-9432-7b7448d58ae9",
+              "instanceIdentifier": null,
+              "name": "S34 Notices Sent",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "62653ade-b03f-52f3-ae35-dc6eb21f0632",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s34-sent",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+              "id": "bbe5658c-6668-5155-a079-7b904ce285bc",
+              "instanceIdentifier": null,
+              "name": "S34 Send Notice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "1af05237-6e2e-5049-8309-1c9b2a07a879",
+        "identifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S34 CPU Starved And Slow Sender",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "b3630aee-8a3c-543c-9d73-e466fc42be48",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Archive Source",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "3",
+              "Data Format": "Binary",
+              "File Size": "10 MB",
+              "Unique FlowFiles": "true"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "2 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 4,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "0219b7f9-373f-5a2c-8c52-cfaf1df2d4d5",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Compress Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Compression Format": "gzip",
+              "Compression Level": "9",
+              "Mode": "compress"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.CompressContent",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 2,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "3bcece1f-546e-55d9-aecf-87ec483d028d",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Hash Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Hash Algorithm": "SHA-256"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.CryptographicHashContent",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "48a8e5e1-04f7-5819-a01c-d359d85bee8c",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Name Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "e229a384-5aed-57a7-9903-f07a5edcdb44",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Index Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "ca16acf8-b4f5-55af-8546-3b462c1b2444",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Store Archive",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "933d1f7c-8719-5a98-98e5-9028f4bca45f",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Notice Requests",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1200.0
+            },
+            "properties": {
+              "Batch Size": "4",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"notice\": \"n-5120\", \"account\": \"acc-118\", \"channel\": \"email\", \"template\": \"archive-ready\"}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "f62abf0a-e54e-51c4-b95e-2532130e4818",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Format Notice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "cfdd399e-77cf-5b4f-bb27-0611bde2e112",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Render Notice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "bbe5658c-6668-5155-a079-7b904ce285bc",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Send Notice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e03fcea9-71e9-5dda-bc60-9d207b4faedf",
+            "identifier": "d863b776-3e7c-53ad-9432-7b7448d58ae9",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S34 Notices Sent",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 2000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      }
+    ],
+    "processors": [],
+    "remoteProcessGroups": [],
+    "scheduledState": null,
+    "statelessFlowTimeout": null,
+    "versionedFlowCoordinates": null
+  },
+  "flowEncodingVersion": "1.0",
+  "latest": false,
+  "parameterContexts": {},
+  "parameterProviders": {}
+}

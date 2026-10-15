@@ -59,7 +59,8 @@ def test_oracle_run_scores_the_design_fixes(replayed):
     assert all(c["match"] == sc.EXPECTED and c["applied"] and c["result"] == sc.WORKED for c in found)
     assert {r["reviewer"] for r in snapshot["record"]["reviews"]} == {replay.REVIEWER}
     assert replay.detection(snapshot) == {"runs": 1, "faults": 2, "detected": 2, "missed": [],
-                                          "controls": 1, "quiet": 1}
+                                          "controls": 1, "quiet": 1, "watched": 0, "cleared": 0,
+                                          "fixes_to_clear": None}
 
     # p5's other faults opened incidents too, but were not trials.
     assert any(i["scenario"] == "S17" for i in snapshot["record"]["incidents"])
@@ -71,6 +72,39 @@ def test_oracle_run_scores_the_design_fixes(replayed):
     assert len(again["runs"]) == 2 and again["now"] >= snapshot["now"]
     assert len(sc.table(replay.cases(again), "Replay run")) == 2
     assert "S01 Slow Consumer" in replay.report(again, again["runs"][1]["id"])
+
+
+def test_a_compound_fault_clears_after_its_second_fix(replayed):
+    run = replay.run(["S30", "S31"], oracle=True, fixes=3)
+    snapshot = replay.load()
+    trials = {t["scenario"]: t for t in snapshot["runs"][0]["trials"]}
+    found = replay.cases(snapshot)
+
+    assert snapshot["runs"][0]["fixes"] == 3
+    assert all(t["fixes"] == 2 and t["cleared"] and len(t["incidents"]) == 2 for t in trials.values())
+    assert trials["S31"]["incident"] == trials["S31"]["incidents"][0]
+
+    # The second incident got the second fault's fix, and was scored against the scenario.
+    assert sorted((c["scenario"], c["fix"], c["match"]) for c in found) == [
+        ("S30", 1, sc.EXPECTED), ("S30", 2, sc.ACCEPTABLE), ("S31", 1, sc.EXPECTED), ("S31", 2, sc.ACCEPTABLE)]
+    assert all(c["applied"] for c in found)
+
+    seen = replay.detection(snapshot)
+    assert (seen["watched"], seen["cleared"], seen["fixes_to_clear"]) == (2, 2, 2)
+    assert "cleared 2 of 2 detected faults, after 2 fix(es) (median)" in replay.report(snapshot, run)
+
+
+def test_the_oracle_fixes_a_compound_fault_one_fault_an_incident():
+    oracle, scenario = replay.OracleLLM(), packs.SCENARIOS["S32"]
+
+    assert oracle.steps(scenario, "INC-1") == [scenario.faults[0]]
+    assert oracle.steps(scenario, "INC-2") == [scenario.faults[1]]
+    assert oracle.steps(scenario, "INC-1") == [scenario.faults[0]]      # asked again, same answer
+    assert oracle.steps(scenario, "INC-3") == [scenario.faults[1]]      # no third fault
+    assert oracle.steps(packs.SCENARIOS["S01"], "INC-4") == list(packs.SCENARIOS["S01"].expected)
+
+    oracle.forget()
+    assert oracle.steps(scenario, "INC-5") == [scenario.faults[0]]
 
 
 def test_an_invalid_proposal_is_left_at_review(replayed):

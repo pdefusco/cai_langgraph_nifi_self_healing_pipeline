@@ -1,0 +1,1695 @@
+{
+  "externalControllerServices": {},
+  "flowContents": {
+    "comments": "Self-healing test pack: Warehouse compound faults. Built by flows/build_all.py.",
+    "componentType": "PROCESS_GROUP",
+    "connections": [],
+    "controllerServices": [],
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultFlowFileExpiration": "0 sec",
+    "executionEngine": null,
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "funnels": [],
+    "groupIdentifier": null,
+    "identifier": "3d522788-f3a6-59ea-aaf6-766a12eb0090",
+    "inputPorts": [],
+    "instanceIdentifier": null,
+    "labels": [],
+    "logFileSuffix": null,
+    "maxConcurrentTasks": null,
+    "name": "nfh-p12-warehouse",
+    "outputPorts": [],
+    "parameterContextName": null,
+    "position": null,
+    "processGroups": [
+      {
+        "comments": "Picking (8/s) and labelling (5/s) each run below the 20/s intake, so the queues in front of both are full, and fixing one leaves the other. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "18594449-92b4-5b04-bade-96f035810ce1",
+              "instanceIdentifier": null,
+              "name": "S30 Parse Order",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "31ccbc57-4fba-59ad-96a8-8de8a095fd49",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-ingest",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "119ba349-ca7f-54fc-a78d-3e6d5ba0f250",
+              "instanceIdentifier": null,
+              "name": "S30 Order Feed",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "448a3d83-da2f-5490-b941-494386823cb7",
+              "instanceIdentifier": null,
+              "name": "S30 Assign Slot",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "da1e5e58-f6f0-5e17-9856-3fcea57955d3",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-parsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "matched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "18594449-92b4-5b04-bade-96f035810ce1",
+              "instanceIdentifier": null,
+              "name": "S30 Parse Order",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "73fdf855-0efc-5e50-aff2-01af10aa9cb9",
+              "instanceIdentifier": null,
+              "name": "S30 Unparsed DLQ",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "9c4fbbe7-0adc-5a5d-9938-70d0ccde600e",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-unparsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "failure",
+              "unmatched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "18594449-92b4-5b04-bade-96f035810ce1",
+              "instanceIdentifier": null,
+              "name": "S30 Parse Order",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "e0db4ebc-d2c8-5f1e-9ce0-5e94255c99dd",
+              "instanceIdentifier": null,
+              "name": "S30 Pick Items",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "a11bcc2d-f3d1-5716-a010-a2676e1a395b",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-to-pick",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "448a3d83-da2f-5490-b941-494386823cb7",
+              "instanceIdentifier": null,
+              "name": "S30 Assign Slot",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "3ef7a4d8-2abf-59ff-8c4b-e0f505135886",
+              "instanceIdentifier": null,
+              "name": "S30 Pack Order",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "86d8f7ea-5b9f-5b10-aa9b-47a66a0aa031",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-picked",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "e0db4ebc-d2c8-5f1e-9ce0-5e94255c99dd",
+              "instanceIdentifier": null,
+              "name": "S30 Pick Items",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "6ce73d72-2705-56f1-bb0a-81aeb089dd42",
+              "instanceIdentifier": null,
+              "name": "S30 Weigh Parcel",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "07546cfb-a52d-59f5-9c20-f0153b98b7d9",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-packed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "3ef7a4d8-2abf-59ff-8c4b-e0f505135886",
+              "instanceIdentifier": null,
+              "name": "S30 Pack Order",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "2d31fe1c-3400-5d83-b786-b0868f45544e",
+              "instanceIdentifier": null,
+              "name": "S30 Label Parcel",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "172f228b-c354-5997-9140-584f3571e85b",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-to-label",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "6ce73d72-2705-56f1-bb0a-81aeb089dd42",
+              "instanceIdentifier": null,
+              "name": "S30 Weigh Parcel",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "73807edd-8e51-5fbd-9fc4-dba487216e99",
+              "instanceIdentifier": null,
+              "name": "S30 Route Carrier",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "99f91665-74c6-5a16-b1ee-9e891cd89d80",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-labelled",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "2d31fe1c-3400-5d83-b786-b0868f45544e",
+              "instanceIdentifier": null,
+              "name": "S30 Label Parcel",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "0d246db6-16ef-5ea1-b5ee-441a7bce9b02",
+              "instanceIdentifier": null,
+              "name": "S30 Notify Dispatch",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "8f3e642a-cb90-58d0-9207-0df293b2f608",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-routed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "73807edd-8e51-5fbd-9fc4-dba487216e99",
+              "instanceIdentifier": null,
+              "name": "S30 Route Carrier",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "47a3eb9b-5471-51db-9f22-4f5dab4ec215",
+              "instanceIdentifier": null,
+              "name": "S30 Ship Parcels",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "0eda4c06-e6fc-56a1-bb43-8d65afc4d493",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s30-notified",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+              "id": "0d246db6-16ef-5ea1-b5ee-441a7bce9b02",
+              "instanceIdentifier": null,
+              "name": "S30 Notify Dispatch",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "3d522788-f3a6-59ea-aaf6-766a12eb0090",
+        "identifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S30 Two Slow Stages In Series",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "119ba349-ca7f-54fc-a78d-3e6d5ba0f250",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Order Feed",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "20",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"order_id\": \"wo-311\", \"lines\": 3, \"zone\": \"B4\", \"priority\": \"standard\"}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "18594449-92b4-5b04-bade-96f035810ce1",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Parse Order",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Destination": "flowfile-attribute",
+              "Return Type": "auto-detect",
+              "order.zone": "$.zone"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "448a3d83-da2f-5490-b941-494386823cb7",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Assign Slot",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "e0db4ebc-d2c8-5f1e-9ce0-5e94255c99dd",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Pick Items",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "125 ms",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "3ef7a4d8-2abf-59ff-8c4b-e0f505135886",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Pack Order",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "6ce73d72-2705-56f1-bb0a-81aeb089dd42",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Weigh Parcel",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "2d31fe1c-3400-5d83-b786-b0868f45544e",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Label Parcel",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "200 ms",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "73807edd-8e51-5fbd-9fc4-dba487216e99",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Route Carrier",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "0d246db6-16ef-5ea1-b5ee-441a7bce9b02",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Notify Dispatch",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "47a3eb9b-5471-51db-9f22-4f5dab4ec215",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Ship Parcels",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "b32ac23c-344f-5e0a-b91a-556c0cceeb4e",
+            "identifier": "73fdf855-0efc-5e50-aff2-01af10aa9cb9",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S30 Unparsed DLQ",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 2000.0
+            },
+            "properties": {
+              "Log Level": "warn"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.LogAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      },
+      {
+        "comments": "The validator is disabled, which stalls the manifests and hides that the customs check behind it auto-terminates 15% of them. (symptom: backpressure)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "93dc9e2b-31bd-54ab-8f02-5b3f1871b5a4",
+              "instanceIdentifier": null,
+              "name": "S31 Validate Manifest",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "738bfa76-ca79-51f9-8746-89bfee4dd500",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-to-validate",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "fcc11718-86db-55e5-92ca-4e8a466cad70",
+              "instanceIdentifier": null,
+              "name": "S31 Manifest Feed",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "ef80143d-7d25-5c4a-82f9-173afdeb1fd6",
+              "instanceIdentifier": null,
+              "name": "S31 Parse Manifest",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "f9d6e29c-d265-525c-9f72-2609d4eacbd2",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-validated",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "93dc9e2b-31bd-54ab-8f02-5b3f1871b5a4",
+              "instanceIdentifier": null,
+              "name": "S31 Validate Manifest",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "c46dec6f-2ff0-5264-9340-4a91bc6971cd",
+              "instanceIdentifier": null,
+              "name": "S31 Assign Dock",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "eec56e7b-f6a8-57c5-baba-6b331b71f0cc",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-parsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "matched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "ef80143d-7d25-5c4a-82f9-173afdeb1fd6",
+              "instanceIdentifier": null,
+              "name": "S31 Parse Manifest",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "6b8b6a62-4bdd-5e5c-81a9-a14fc96f7295",
+              "instanceIdentifier": null,
+              "name": "S31 Parse DLQ",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "88e115dd-1c01-593d-a1ef-434ee6b646fc",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-unparsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "failure",
+              "unmatched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "ef80143d-7d25-5c4a-82f9-173afdeb1fd6",
+              "instanceIdentifier": null,
+              "name": "S31 Parse Manifest",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "4931c7b9-f1ff-5063-a1ec-9bae4df36c50",
+              "instanceIdentifier": null,
+              "name": "S31 Check Customs",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "a3c21208-6216-5e66-bf28-a8ffe2ed1920",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-to-customs",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "c46dec6f-2ff0-5264-9340-4a91bc6971cd",
+              "instanceIdentifier": null,
+              "name": "S31 Assign Dock",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "1ee548d1-0ea8-54e8-80f5-ec8cf3e6def2",
+              "instanceIdentifier": null,
+              "name": "S31 Tag Carrier",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "2a2f5a1f-369c-5623-9ddf-aad95d9bb32d",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-cleared",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "4931c7b9-f1ff-5063-a1ec-9bae4df36c50",
+              "instanceIdentifier": null,
+              "name": "S31 Check Customs",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "cc40183d-81f8-5093-9d32-7f5d8d866ec7",
+              "instanceIdentifier": null,
+              "name": "S31 Rate Freight",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "9cfe9687-5285-5e4d-9e57-3b1c7aa578bb",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-tagged",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "1ee548d1-0ea8-54e8-80f5-ec8cf3e6def2",
+              "instanceIdentifier": null,
+              "name": "S31 Tag Carrier",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "a5858721-436d-5d7b-9bdf-e11695d1d94b",
+              "instanceIdentifier": null,
+              "name": "S31 Book Slot",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "e1acfaa8-ea7f-53f4-9a57-1abd9890d5f9",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-rated",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "cc40183d-81f8-5093-9d32-7f5d8d866ec7",
+              "instanceIdentifier": null,
+              "name": "S31 Rate Freight",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "59c5612c-3182-53d6-81f2-d36afddf1a05",
+              "instanceIdentifier": null,
+              "name": "S31 Store Manifest",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "56c0c379-083c-55a9-9f1d-a24ba02e531f",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s31-booked",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+              "id": "a5858721-436d-5d7b-9bdf-e11695d1d94b",
+              "instanceIdentifier": null,
+              "name": "S31 Book Slot",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "3d522788-f3a6-59ea-aaf6-766a12eb0090",
+        "identifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S31 Masked Failure Behind A Stall",
+        "outputPorts": [],
+        "parameterContextName": null,
+        "position": {
+          "x": 420.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "fcc11718-86db-55e5-92ca-4e8a466cad70",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Manifest Feed",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "10",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"manifest\": \"mf-904\", \"dock\": 7, \"country\": \"CH\", \"hs_code\": \"8471.30\"}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "93dc9e2b-31bd-54ab-8f02-5b3f1871b5a4",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Validate Manifest",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "DISABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "ef80143d-7d25-5c4a-82f9-173afdeb1fd6",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Parse Manifest",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Destination": "flowfile-attribute",
+              "Return Type": "auto-detect",
+              "manifest.country": "$.country"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "c46dec6f-2ff0-5264-9340-4a91bc6971cd",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Assign Dock",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "4931c7b9-f1ff-5063-a1ec-9bae4df36c50",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Check Customs",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 800.0
+            },
+            "properties": {
+              "FlowFile Exception Iterations": "0",
+              "FlowFile Failure Iterations": "3",
+              "FlowFile Rollback Iterations": "0",
+              "FlowFile Success Iterations": "17"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.DebugFlow",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "1ee548d1-0ea8-54e8-80f5-ec8cf3e6def2",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Tag Carrier",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "cc40183d-81f8-5093-9d32-7f5d8d866ec7",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Rate Freight",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "a5858721-436d-5d7b-9bdf-e11695d1d94b",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Book Slot",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "59c5612c-3182-53d6-81f2-d36afddf1a05",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Store Manifest",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "6b8b6a62-4bdd-5e5c-81a9-a14fc96f7295",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Parse DLQ",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1800.0
+            },
+            "properties": {
+              "Log Level": "warn"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.LogAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "e2583ba0-17b9-5bb7-8823-3976e27b0b73",
+            "identifier": "bcd00fc5-703e-501f-833a-7888f0aa2a15",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S31 Customs DLQ",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 2000.0
+            },
+            "properties": {
+              "Log Level": "warn"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "DISABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.LogAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      }
+    ],
+    "processors": [],
+    "remoteProcessGroups": [],
+    "scheduledState": null,
+    "statelessFlowTimeout": null,
+    "versionedFlowCoordinates": null
+  },
+  "flowEncodingVersion": "1.0",
+  "latest": false,
+  "parameterContexts": {},
+  "parameterProviders": {}
+}

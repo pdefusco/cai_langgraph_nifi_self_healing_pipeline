@@ -137,7 +137,8 @@ def _tiles(s: dict, seen: dict | None = None) -> str:
     else:   # the replay approves every valid proposal; what it can count instead is detection
         approved = _tile("Faults detected", pct(seen["detected"] / seen["faults"] if seen["faults"] else None),
                          _of(seen["detected"], seen["faults"], "fault trials")
-                         + (f" · control quiet in {seen['quiet']} of {seen['controls']}" if seen["controls"] else ""))
+                         + (f" · control quiet in {seen['quiet']} of {seen['controls']}" if seen["controls"] else "")
+                         + (f" · cleared {seen['cleared']} of {seen['watched']}" if seen.get("watched") else ""))
 
     return '<div class="sc-tiles">' + "".join((
         _tile("Incidents", str(s["incidents"]),

@@ -6,6 +6,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --pack p1-throughput
     python -m nifi_healer.eval.replay --scenario S17 --oracle  # the design fix, no LLM
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
+    python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
     CAI job: cai_job.py    Arguments: -m nifi_healer.eval.replay --trials 3
 
 Each trial round, over the packs the chosen scenarios are in:
@@ -20,6 +21,11 @@ Each trial round, over the packs the chosen scenarios are in:
      to the mock; an invalid one is left at review
   5. the clock skips past the deciding verify windows (15 min, 1 h) and
      the poller judges each fix
+  6. with `--fixes N` above 1, each scenario a fix was applied to is
+     watched again: a new incident goes back to step 3, up to N fixes,
+     and none within the detect window (after the incident cooldown)
+     means the fault cleared. A compound fault needs a fix per fault;
+     a masked one shows its second fault only once the first is fixed
 
 It never reaches a live tenant. It refuses to approve unless the client
 is the mock, and it keeps its own world, fleet, store, checkpoints and
@@ -54,6 +60,7 @@ import json
 import os
 import re
 import sqlite3
+import statistics
 import sys
 import time
 
@@ -88,16 +95,39 @@ def log(msg: str) -> None:
 
 
 class OracleLLM:
-    """Replies with the incident's scenario's design fix."""
+    """
+    Replies with the incident's scenario's design fix. For a compound
+    fault, one fault's fix per incident, in order: a trial's second
+    incident on the scenario gets the second fault's.
+    """
 
     model_name = "oracle"
 
+    def __init__(self):
+        self.seen = {}          # {scenario id: its incident ids, in the order asked}
+
+    def forget(self) -> None:
+        """A new trial round: its incidents count from the first fault again."""
+
+        self.seen = {}
+
+    def steps(self, scenario, incident_id: str) -> list:
+        if not scenario.faults:
+            return list(scenario.expected)
+
+        asked = self.seen.setdefault(scenario.id, [])
+
+        if incident_id not in asked:
+            asked.append(incident_id)
+
+        return [scenario.faults[min(asked.index(incident_id), len(scenario.faults) - 1)]]
+
     def invoke(self, messages):
         text = "\n".join(prompts.text_of(m) for m in messages)
-        found = re.search(r"\bINC-[\d-]+-(S\d\d)-", text)
-        scenario = packs.SCENARIOS.get(found.group(1)) if found else None
+        found = re.search(r"\b(INC-[\d-]+-(S\d\d)-\w+)", text)
+        scenario = packs.SCENARIOS.get(found.group(2)) if found else None
         reply = {"diagnosis": f"the design fault of {scenario.title if scenario else 'an unknown scenario'}",
-                 "root_cause_component": "", "steps": list(scenario.expected) if scenario else
+                 "root_cause_component": "", "steps": self.steps(scenario, found.group(1)) if scenario else
                  [{"action": "NO_ACTION"}], "rationale": "the scenario's design label",
                  "citations": re.findall(r"^\[([^\]]+)\]", text, re.M)[:1], "confidence": 1.0,
                  "expected_effect": "the scenario's KPIs recover"}
@@ -211,8 +241,35 @@ def judge(world, client, store, incidents: list) -> None:
         poller.evaluate_outcomes()
 
 
-def trial_round(number: int, ids: list, world, client, store, detect_seconds: float = DETECT_SECONDS) -> list:
-    """One trial of each scenario in `ids` on a fresh tenant: [{round, scenario, incident, control, at}]."""
+def attempt(number: int, fix: int, found: dict, world, client, store) -> list:
+    """Diagnose, approve and judge each of {scenario id: incident}; the scenarios a fix was applied to."""
+
+    diagnose(list(found.values()))
+    applied = []
+
+    for scenario, incident in found.items():
+        result = approve(incident["id"])
+        status = store.incident(incident["id"])["status"]
+        log(f"round {number}, fix {fix}: {scenario} {incident['id']}: "
+            + (f"approved, {result['status']}" if result else f"nothing to approve ({status})"))
+
+        if result and result.get("status") == "APPLIED":
+            applied.append(scenario)
+
+    judge(world, client, store, list(found.values()))
+
+    return applied
+
+
+def trial_round(number: int, ids: list, world, client, store, detect_seconds: float = DETECT_SECONDS,
+                fixes: int = 1) -> list:
+    """
+    One trial of each scenario in `ids` on a fresh tenant, with up to `fixes`
+    fixes each: [{round, scenario, incident, incidents, fixes, cleared,
+    control, at}]. `incident` is the first; `cleared` is None unless
+    `fixes` is above 1 (nothing was watched after the fix), and for a
+    missed fault or a control.
+    """
 
     if not _on_mock():
         raise RuntimeError("the replay runs on the mock tenant only")
@@ -222,19 +279,33 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
     found = detect(world, client, store, ids, detect_seconds)
     missed = [s for s in ids if s not in found and packs.SCENARIOS[s].family != "NONE"]
     log(f"round {number}: {len(found)} incident(s)" + (f"; no incident for {', '.join(missed)}" if missed else ""))
+    trials = {s: {"round": number, "scenario": s, "incident": (found.get(s) or {}).get("id"), "incidents": [],
+                  "fixes": 0, "cleared": None, "control": packs.SCENARIOS[s].family == "NONE", "at": at}
+              for s in ids}
 
-    diagnose(list(found.values()))
+    for fix in range(1, fixes + 1):
+        applied = attempt(number, fix, found, world, client, store)
 
-    for scenario, incident in found.items():
-        result = approve(incident["id"])
-        status = store.incident(incident["id"])["status"]
-        log(f"round {number}: {scenario} {incident['id']}: "
-            + (f"approved, {result['status']}" if result else f"nothing to approve ({status})"))
+        for scenario, incident in found.items():
+            trials[scenario]["incidents"].append(incident["id"])
+            trials[scenario]["fixes"] += scenario in applied
 
-    judge(world, client, store, list(found.values()))
+            if fixes > 1 and scenario not in applied:
+                trials[scenario]["cleared"] = False
 
-    return [{"round": number, "scenario": s, "incident": (found.get(s) or {}).get("id"),
-             "control": packs.SCENARIOS[s].family == "NONE", "at": at} for s in ids]
+        if fixes == 1 or not applied:
+            break
+
+        # A closed incident's group opens no new one within the cooldown.
+        found = detect(world, client, store, applied, detect_seconds + config.INCIDENT_COOLDOWN_SECONDS)
+
+        for scenario in applied:
+            trials[scenario]["cleared"] = scenario not in found
+
+        log(f"round {number}, after fix {fix}: " + ", ".join(
+            f"{s} {'cleared' if s not in found else 'open again ' + found[s]['id']}" for s in applied))
+
+    return [trials[s] for s in ids]
 
 
 # ---------------------------------------------------------------------
@@ -275,23 +346,37 @@ def _trials(snapshot: dict, since: float = 0.0) -> list:
 def cases(snapshot: dict, since: float = 0.0) -> list:
     """The Scorecard's cases for the replay's trials, each with its run; the store's other incidents are not."""
 
-    trials = {t["incident"]: t for t in _trials(snapshot, since) if t.get("incident")}
+    trials = {}
 
-    return [dict(c, run=trials[c["incident"]]["run"], round=trials[c["incident"]]["round"])
+    for t in _trials(snapshot, since):
+        for fix, incident in enumerate(t.get("incidents") or [t.get("incident")], 1):
+            if incident:
+                trials[incident] = dict(t, fix=fix)
+
+    return [dict(c, run=trials[c["incident"]]["run"], round=trials[c["incident"]]["round"],
+                 fix=trials[c["incident"]]["fix"])
             for c in sc.cases(snapshot.get("record") or {}) if c["incident"] in trials]
 
 
 def detection(snapshot: dict, since: float = 0.0) -> dict:
-    """How many trials' faults opened an incident, and how many control trials stayed quiet."""
+    """
+    How many trials' faults opened an incident, how many control trials
+    stayed quiet, and of the faults watched after their fixes (--fixes),
+    how many cleared and after how many fixes (the median).
+    """
 
     trials = _trials(snapshot, since)
     faults = [t for t in trials if not t["control"]]
     controls = [t for t in trials if t["control"]]
+    watched = [t for t in faults if t.get("cleared") is not None]
+    cleared = [t["fixes"] for t in watched if t["cleared"]]
 
     return {"runs": len({t["run"] for t in trials}), "faults": len(faults),
             "detected": sum(bool(t["incident"]) for t in faults),
             "missed": sorted({t["scenario"] for t in faults if not t["incident"]}),
-            "controls": len(controls), "quiet": sum(not t["incident"] for t in controls)}
+            "controls": len(controls), "quiet": sum(not t["incident"] for t in controls),
+            "watched": len(watched), "cleared": len(cleared),
+            "fixes_to_clear": statistics.median(cleared) if cleared else None}
 
 
 def report(snapshot: dict, run: str) -> str:
@@ -310,6 +395,10 @@ def report(snapshot: dict, run: str) -> str:
     rows.append(f"detected {seen['detected']} of {seen['faults']} faults"
                 + (f" (missed {', '.join(seen['missed'])})" if seen["missed"] else "")
                 + f"; the control stayed quiet in {seen['quiet']} of {seen['controls']}")
+
+    if seen["watched"]:
+        rows.append(f"cleared {seen['cleared']} of {seen['watched']} detected faults"
+                    + (f", after {seen['fixes_to_clear']:g} fix(es) (median)" if seen["cleared"] else ""))
 
     return "\n".join(rows)
 
@@ -343,9 +432,11 @@ def live_edits(path: str) -> list:
 
 
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
-        detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True) -> str:
+        detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True,
+        fixes: int = 1) -> str:
     """
-    `trials` rounds of `ids` in an isolated mock tenant; returns the run's id. Calls isolate().
+    `trials` rounds of `ids` in an isolated mock tenant, with up to `fixes`
+    fixes a fault; returns the run's id. Calls isolate().
     The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`.
     """
 
@@ -366,15 +457,16 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         runs = previous.get("runs") or []
         entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
                  "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
-                 "scenarios": ids, "trials": [], "started_at": time.time(), "finished_at": None}
+                 "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
         runs.append(entry)
         log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
-            + ("" if memory else ", no memory")
+            + (f", up to {fixes} fixes each" if fixes > 1 else "") + ("" if memory else ", no memory")
             + (f", {len(edits)} approved playbook edit(s)" if edits else "") + f" in {directory}")
         now = previous.get("now") or 0.0
 
         for number in range(1, trials + 1):
-            entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds)
+            getattr(llm.chat_model(), "forget", lambda: None)()
+            entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds, fixes)
             now = max(now, client.now())
             save(directory, runs, now)
 
@@ -399,11 +491,13 @@ def main() -> int:
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
                         help="simulated minutes to wait for every fault's incident")
+    parser.add_argument("--fixes", type=int, default=1,
+                        help="fixes a fault may take: above 1, each fixed fault is watched for a new incident")
     args = parser.parse_args()
 
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
-                 not args.no_playbook_edits)
+                 not args.no_playbook_edits, max(1, args.fixes))
     print(report(load(args.dir), run_id), flush=True)
 
     return 0

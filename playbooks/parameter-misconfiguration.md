@@ -44,6 +44,19 @@ correct value from the table. When a parameter is not in the table, do not
 guess a value: propose NO_ACTION and say which parameter needs an owner's
 input.
 
+## Runbook: correct values for the nfh-p13-billing context
+<!-- actions: UPDATE_PARAMETER -->
+
+The billing context's production values, used as the table above is.
+
+| Parameter context | Parameter | Correct value | Notes |
+|---|---|---|---|
+| nfh-p13-billing | `s32.max.rate` | `50` | Invoices per second the billing throttle passes. A value such as 5 throttles the feed to a tenth and fills the queue in front of the throttle. |
+| nfh-p13-billing | `s33.copies` | `1` | Copies per usage record. Values such as 50 are load-test settings and flood the rater behind the fan-out. |
+
+A parameter fix leaves any flow fault in the same group: a slow stage
+behind the throttle is a separate flow edit, and a separate proposal.
+
 ## Processor properties set to the wrong value
 <!-- actions: SET_PROCESSOR_PROPERTY -->
 

@@ -14,7 +14,7 @@ import config
 from flows.builder.lib import ProcessGroup, flow_definition, parameter_context
 from flows.scenarios import (p1_throughput, p2_backpressure, p3_errors, p4_dataloss_latency,
                              p5_parameters, p6_p7_sizing, p8_orders, p9_clickstream,
-                             p10_iot, p11_payments)
+                             p10_iot, p11_payments, p12_warehouse, p13_billing, p14_capacity)
 
 PACKS = {
     pack.name: pack
@@ -30,6 +30,9 @@ PACKS = {
         p9_clickstream.PACK,
         p10_iot.PACK,
         p11_payments.PACK,
+        p12_warehouse.PACK,
+        p13_billing.PACK,
+        p14_capacity.PACK,
     )
 }
 

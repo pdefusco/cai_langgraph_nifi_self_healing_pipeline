@@ -1,7 +1,9 @@
 """
 The second-wave packs in the simulator: each builds and compiles, its
 faults present as the detectors see them, the design fix clears each
-one, and the wrong fixes it names do not.
+one, and the wrong fixes it names do not. A compound fault clears only
+once all its faults are fixed, and a masked one shows a new signal
+after the first.
 """
 
 import copy
@@ -19,6 +21,7 @@ SETTLE = 3600.0         # long enough for every second-wave fault to present
 AFTER_FIX = 1800.0      # the longest clear_within among them
 WAVE_2 = [name for name, pack in packs.PACKS.items() if pack.wave == 2]
 SCOPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTEM"}
+MASKED = {"S31", "S33"}   # the second fault shows only once the first is fixed
 
 
 def _kpi(k) -> dict:
@@ -60,29 +63,53 @@ def settled():
     sims = {}
 
     for name in WAVE_2:
-        definition = packs.build(name)
-        sim = Simulation(definition, {}, "EXTRA_SMALL", 1, START)
+        pack = packs.PACKS[name]
+        sim = Simulation(packs.build(name), dict(pack.parameters), pack.cluster_size, pack.nodes, START)
         sim.advance(START + SETTLE)
-        sims[name] = (definition, sim)
+        sims[name] = sim
 
     return sims
 
 
-def _after(settled, pack, scenario, step) -> Simulation:
-    definition, sim = settled[pack.name]
-    sim = copy.deepcopy(sim)
-    edited, changes = edits.apply(definition, scenario.group_name, [dict(step)])
-    assert changes, step
-    sim.configure(edited, {}, "EXTRA_SMALL", 1)
+def _apply(sim: Simulation, scenario, steps) -> None:
+    """Each step as its family applies it: a parameter, the deployment's size, or a flow edit."""
+
+    definition, parameters = sim.definition, dict(sim.parameters)
+    size, nodes, flow = sim.cluster_size, sim.nodes, []
+
+    for step in steps:
+        if step["action"] == "UPDATE_PARAMETER":
+            parameters[step["parameter"]] = step["value"]
+
+        elif step["action"] == "SCALE_DEPLOYMENT":
+            size, nodes = step["cluster_size"], step["nodes"]
+
+        else:
+            flow.append(dict(step))
+
+    if flow:
+        definition, changes = edits.apply(definition, scenario.group_name, flow)
+        assert changes, flow
+
+    sim.configure(definition, parameters, size, nodes)
+
+
+def _after(settled, pack, scenario, steps) -> Simulation:
+    sim = copy.deepcopy(settled[pack.name])
+    _apply(sim, scenario, steps)
     sim.advance(sim.t + AFTER_FIX)
 
     return sim
 
 
-def _cases(field: str) -> list:
+def _scenarios(compound: bool) -> list:
+    return [(name, s) for name in WAVE_2 for s in packs.PACKS[name].scenarios
+            if (s.kind == "compound") == compound]
+
+
+def _cases(field: str, compound: bool) -> list:
     return [pytest.param(name, s.id, i, id=f"{s.id}-{i}")
-            for name in WAVE_2
-            for s in packs.PACKS[name].scenarios
+            for name, s in _scenarios(compound)
             for i in range(len(getattr(s, field)))]
 
 
@@ -98,10 +125,11 @@ def test_the_second_wave_is_not_provisioned_by_default():
 def test_each_pack_builds_and_compiles(name):
     definition = packs.build(name)
 
+    pack = packs.PACKS[name]
     assert check(definition)["problems"] == []
-    assert packs.PACKS[name].cluster_size == "EXTRA_SMALL"
+    assert (pack.cluster_size, pack.nodes) == ("EXTRA_SMALL", 1)
 
-    sim = Simulation(definition, {}, "EXTRA_SMALL", 1, START)
+    sim = Simulation(definition, dict(pack.parameters), pack.cluster_size, pack.nodes, START)
     groups = {p.group_name for p in sim.model.processors.values()}
     assert groups == {s.group_name for s in packs.PACKS[name].scenarios}
 
@@ -114,21 +142,51 @@ def test_each_fault_presents(settled, name):
     pack = packs.PACKS[name]
 
     for scenario in pack.scenarios:
-        assert _faulty(settled[name][1], pack, scenario), scenario.id
+        assert _faulty(settled[name], pack, scenario), scenario.id
 
 
-@pytest.mark.parametrize("name, scenario_id, index", _cases("expected") + _cases("acceptable"))
-def test_the_design_fix_clears_the_fault(settled, name, scenario_id, index):
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
+                                               for n, s in _scenarios(False)])
+def test_the_design_fix_clears_the_fault(settled, name, scenario_id):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
-    fixes = scenario.expected + scenario.acceptable
-    sim = _after(settled, pack, scenario, fixes[index])
+    sim = _after(settled, pack, scenario, scenario.expected)
 
     assert _faulty(sim, pack, scenario) == []
 
 
-@pytest.mark.parametrize("name, scenario_id, index", _cases("wrong"))
+@pytest.mark.parametrize("name, scenario_id, index", _cases("acceptable", False))
+def test_an_acceptable_fix_clears_it_alone(settled, name, scenario_id, index):
+    pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
+    sim = _after(settled, pack, scenario, [scenario.acceptable[index]])
+
+    assert _faulty(sim, pack, scenario) == []
+
+
+@pytest.mark.parametrize("name, scenario_id", [pytest.param(n, s.id, id=s.id)
+                                               for n, s in _scenarios(True)])
+def test_a_compound_fault_clears_once_all_its_faults_are_fixed(settled, name, scenario_id):
+    pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
+
+    assert len(scenario.faults) >= 2 and scenario.expected == scenario.faults[:1]
+    assert scenario.faults[1] in scenario.acceptable
+    assert _faulty(_after(settled, pack, scenario, scenario.faults), pack, scenario) == []
+
+
+@pytest.mark.parametrize("name, scenario_id, index", _cases("faults", True))
+def test_one_of_its_faults_fixed_alone_does_not(settled, name, scenario_id, index):
+    pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
+    left = _faulty(_after(settled, pack, scenario, [scenario.faults[index]]), pack, scenario)
+
+    assert left, scenario.faults[index]
+
+    if scenario.id in MASKED and index == 0:
+        # What is left was not visible before: the masked fault, not the stall.
+        assert not set(left) & set(_faulty(settled[name], pack, scenario)), left
+
+
+@pytest.mark.parametrize("name, scenario_id, index", _cases("wrong", False) + _cases("wrong", True))
 def test_a_wrong_fix_does_not(settled, name, scenario_id, index):
     pack, scenario = packs.PACKS[name], packs.SCENARIOS[scenario_id]
-    sim = _after(settled, pack, scenario, scenario.wrong[index])
+    sim = _after(settled, pack, scenario, [scenario.wrong[index]])
 
     assert _faulty(sim, pack, scenario), scenario.wrong[index]

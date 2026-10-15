@@ -1,0 +1,1679 @@
+{
+  "externalControllerServices": {},
+  "flowContents": {
+    "comments": "Self-healing test pack: Billing compound faults. Built by flows/build_all.py.",
+    "componentType": "PROCESS_GROUP",
+    "connections": [],
+    "controllerServices": [],
+    "defaultBackPressureDataSizeThreshold": "1 GB",
+    "defaultBackPressureObjectThreshold": 10000,
+    "defaultFlowFileExpiration": "0 sec",
+    "executionEngine": null,
+    "flowFileConcurrency": "UNBOUNDED",
+    "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+    "funnels": [],
+    "groupIdentifier": null,
+    "identifier": "c3f458cc-bf4e-582c-a79e-89735becf68b",
+    "inputPorts": [],
+    "instanceIdentifier": null,
+    "labels": [],
+    "logFileSuffix": null,
+    "maxConcurrentTasks": null,
+    "name": "nfh-p13-billing",
+    "outputPorts": [],
+    "parameterContextName": "nfh-p13-billing",
+    "position": null,
+    "processGroups": [
+      {
+        "comments": "s32.max.rate is 5, a tenth of production, and S32 Post Invoice runs every 500 ms (2/s) against 10/s of invoices: a parameter fault and a flow fault. (symptom: backlog)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "28e12d98-f2ad-5a63-9c8d-824f0f90ea1b",
+              "instanceIdentifier": null,
+              "name": "S32 Parse Invoice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "9a0d4953-9798-5758-a17d-ea8a0856b433",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-ingest",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "a7a40fa1-1e88-5f80-b9ac-5a88af6f8ab3",
+              "instanceIdentifier": null,
+              "name": "S32 Invoice Feed",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "623714a8-5583-5c79-9583-702b0ef0fa51",
+              "instanceIdentifier": null,
+              "name": "S32 Apply Tax",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "b9f1b91a-cedf-5bb2-b239-a792ccc2f31d",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-parsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "matched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "28e12d98-f2ad-5a63-9c8d-824f0f90ea1b",
+              "instanceIdentifier": null,
+              "name": "S32 Parse Invoice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "6220294f-a40c-5b0d-81ee-cff3c80d7f43",
+              "instanceIdentifier": null,
+              "name": "S32 Unparsed DLQ",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "17f34320-0209-5c85-9345-310092d74e16",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-unparsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "failure",
+              "unmatched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "28e12d98-f2ad-5a63-9c8d-824f0f90ea1b",
+              "instanceIdentifier": null,
+              "name": "S32 Parse Invoice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "0ca6cab2-03e5-5bbc-9175-48742dc051a8",
+              "instanceIdentifier": null,
+              "name": "S32 Convert Currency",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "100c7068-a093-57f2-b4b4-3576c2597ba7",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-taxed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "623714a8-5583-5c79-9583-702b0ef0fa51",
+              "instanceIdentifier": null,
+              "name": "S32 Apply Tax",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "d9771e16-23a8-5ba4-ae60-5bbd23004683",
+              "instanceIdentifier": null,
+              "name": "S32 Billing Throttle",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "68ac3fbb-6d20-54fc-95aa-7b38b41a0bed",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-to-throttle",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "0ca6cab2-03e5-5bbc-9175-48742dc051a8",
+              "instanceIdentifier": null,
+              "name": "S32 Convert Currency",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "1bc1f392-ee08-5f3d-b71d-5c6630a1dd40",
+              "instanceIdentifier": null,
+              "name": "S32 Number Invoice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "3bcaecd6-8ebe-5928-a3a5-67e5ed87e0e8",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-throttled",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "d9771e16-23a8-5ba4-ae60-5bbd23004683",
+              "instanceIdentifier": null,
+              "name": "S32 Billing Throttle",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "f44e9667-33a5-52f4-b92f-aa7a0289137c",
+              "instanceIdentifier": null,
+              "name": "S32 Post Invoice",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "df7e3027-f196-5a7c-b55f-a0a8a8a4cbac",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-to-post",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "1bc1f392-ee08-5f3d-b71d-5c6630a1dd40",
+              "instanceIdentifier": null,
+              "name": "S32 Number Invoice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "488429d7-e669-5cb1-ac2d-ed537c9b51b5",
+              "instanceIdentifier": null,
+              "name": "S32 Render Statement",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "3d1589c8-096b-5946-b061-b41cc0b81aef",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-posted",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "f44e9667-33a5-52f4-b92f-aa7a0289137c",
+              "instanceIdentifier": null,
+              "name": "S32 Post Invoice",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "93c47fda-de7b-5d8c-8d9e-fb2d2f107404",
+              "instanceIdentifier": null,
+              "name": "S32 Notify Account",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "382a7c7e-5242-553e-beb2-b61f90e9e000",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-rendered",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "488429d7-e669-5cb1-ac2d-ed537c9b51b5",
+              "instanceIdentifier": null,
+              "name": "S32 Render Statement",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "e4d7e364-a9b1-5b21-b391-997842b77413",
+              "instanceIdentifier": null,
+              "name": "S32 Ledger Entries",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "9c95db40-8690-57d4-b762-fe123de29576",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s32-notified",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "47cc8a41-b536-54f9-bee3-5218db894d74",
+              "id": "93c47fda-de7b-5d8c-8d9e-fb2d2f107404",
+              "instanceIdentifier": null,
+              "name": "S32 Notify Account",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "c3f458cc-bf4e-582c-a79e-89735becf68b",
+        "identifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S32 Throttle Parameter And Slow Poster",
+        "outputPorts": [],
+        "parameterContextName": "nfh-p13-billing",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "a7a40fa1-1e88-5f80-b9ac-5a88af6f8ab3",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Invoice Feed",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "10",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"invoice\": \"inv-20931\", \"account\": \"acc-118\", \"amount\": 310.00, \"terms\": \"net30\"}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "28e12d98-f2ad-5a63-9c8d-824f0f90ea1b",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Parse Invoice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Destination": "flowfile-attribute",
+              "Return Type": "auto-detect",
+              "invoice.account": "$.account"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "623714a8-5583-5c79-9583-702b0ef0fa51",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Apply Tax",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "0ca6cab2-03e5-5bbc-9175-48742dc051a8",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Convert Currency",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "failure"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "d9771e16-23a8-5ba4-ae60-5bbd23004683",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Billing Throttle",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 800.0
+            },
+            "properties": {
+              "Maximum Rate": "#{s32.max.rate}",
+              "Rate Control Criteria": "flowfile count",
+              "Time Duration": "1 sec"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.ControlRate",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "1bc1f392-ee08-5f3d-b71d-5c6630a1dd40",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Number Invoice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "f44e9667-33a5-52f4-b92f-aa7a0289137c",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Post Invoice",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "500 ms",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "488429d7-e669-5cb1-ac2d-ed537c9b51b5",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Render Statement",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "93c47fda-de7b-5d8c-8d9e-fb2d2f107404",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Notify Account",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "e4d7e364-a9b1-5b21-b391-997842b77413",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Ledger Entries",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "47cc8a41-b536-54f9-bee3-5218db894d74",
+            "identifier": "6220294f-a40c-5b0d-81ee-cff3c80d7f43",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S32 Unparsed DLQ",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 2000.0
+            },
+            "properties": {
+              "Log Level": "warn"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.LogAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      },
+      {
+        "comments": "The meter gate is disabled, which stalls the usage records and hides that s33.copies is still 50, the load-test value, which floods the rater once they flow. (symptom: backpressure)",
+        "componentType": "PROCESS_GROUP",
+        "connections": [
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "eee19372-4387-5dc2-9b14-529ade770f01",
+              "instanceIdentifier": null,
+              "name": "S33 Meter Gate",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "5273c8ac-13d0-5edb-bdac-18c2ea6f59d6",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-to-gate",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "dc5585fd-6e47-5ad4-8b3d-a588173d52fd",
+              "instanceIdentifier": null,
+              "name": "S33 Usage Feed",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "ba3e26b3-f6c5-50d1-8381-b640205479b8",
+              "instanceIdentifier": null,
+              "name": "S33 Parse Usage",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "10f32b2d-f570-5b8b-97f8-e5700c190aa9",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-gated",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "eee19372-4387-5dc2-9b14-529ade770f01",
+              "instanceIdentifier": null,
+              "name": "S33 Meter Gate",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "2b4b6ec0-f907-599b-ad23-d01aab2d98a7",
+              "instanceIdentifier": null,
+              "name": "S33 Fan Out Usage",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "7a2654b8-d8e6-5e0c-80b0-965881bce33c",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-parsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "matched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "ba3e26b3-f6c5-50d1-8381-b640205479b8",
+              "instanceIdentifier": null,
+              "name": "S33 Parse Usage",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "3d6a01e6-3c0a-5fd4-a72b-0bc480955416",
+              "instanceIdentifier": null,
+              "name": "S33 Unparsed DLQ",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "f0579471-31f8-5bf7-8179-8760c9dea2ea",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-unparsed",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "failure",
+              "unmatched"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "ba3e26b3-f6c5-50d1-8381-b640205479b8",
+              "instanceIdentifier": null,
+              "name": "S33 Parse Usage",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 2000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "2f00ea68-fa92-5073-8809-1d3533260acb",
+              "instanceIdentifier": null,
+              "name": "S33 Rate Usage",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "69adae80-fc5f-5e86-97bb-25ded28d30ed",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-copies",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "2b4b6ec0-f907-599b-ad23-d01aab2d98a7",
+              "instanceIdentifier": null,
+              "name": "S33 Fan Out Usage",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "40fe607f-a8e4-590b-af28-21343cbad09f",
+              "instanceIdentifier": null,
+              "name": "S33 Apply Tier",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "1d8ee04d-c1f9-55e5-8198-be5f6c98044f",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-rated",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "2f00ea68-fa92-5073-8809-1d3533260acb",
+              "instanceIdentifier": null,
+              "name": "S33 Rate Usage",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "5d3a358b-f8f1-5b0e-a405-cf920981b54b",
+              "instanceIdentifier": null,
+              "name": "S33 Apply Credits",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "19c6431e-7a8c-5989-98f0-86c5dafa317c",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-tiered",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "40fe607f-a8e4-590b-af28-21343cbad09f",
+              "instanceIdentifier": null,
+              "name": "S33 Apply Tier",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "327ec4cc-0b43-5d16-93a1-28e82df37e69",
+              "instanceIdentifier": null,
+              "name": "S33 Aggregate Account",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "92c4f1ae-0143-5f06-a225-86d129c925bd",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-credited",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "5d3a358b-f8f1-5b0e-a405-cf920981b54b",
+              "instanceIdentifier": null,
+              "name": "S33 Apply Credits",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          },
+          {
+            "backPressureDataSizeThreshold": "1 GB",
+            "backPressureObjectThreshold": 10000,
+            "bends": [],
+            "comments": null,
+            "componentType": "CONNECTION",
+            "destination": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "acf04597-49f7-5bc4-b836-1bd5831aedf0",
+              "instanceIdentifier": null,
+              "name": "S33 Usage Invoiced",
+              "type": "PROCESSOR"
+            },
+            "flowFileExpiration": "0 sec",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "24b6e756-b448-533f-9132-0d93e737eb56",
+            "instanceIdentifier": null,
+            "labelIndex": 1,
+            "loadBalanceCompression": "DO_NOT_COMPRESS",
+            "loadBalanceStrategy": "DO_NOT_LOAD_BALANCE",
+            "name": "s33-aggregated",
+            "partitioningAttribute": null,
+            "position": null,
+            "prioritizers": [],
+            "selectedRelationships": [
+              "success"
+            ],
+            "source": {
+              "comments": null,
+              "groupId": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+              "id": "327ec4cc-0b43-5d16-93a1-28e82df37e69",
+              "instanceIdentifier": null,
+              "name": "S33 Aggregate Account",
+              "type": "PROCESSOR"
+            },
+            "zIndex": 0
+          }
+        ],
+        "controllerServices": [],
+        "defaultBackPressureDataSizeThreshold": "1 GB",
+        "defaultBackPressureObjectThreshold": 10000,
+        "defaultFlowFileExpiration": "0 sec",
+        "executionEngine": null,
+        "flowFileConcurrency": "UNBOUNDED",
+        "flowFileOutboundPolicy": "STREAM_WHEN_AVAILABLE",
+        "funnels": [],
+        "groupIdentifier": "c3f458cc-bf4e-582c-a79e-89735becf68b",
+        "identifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+        "inputPorts": [],
+        "instanceIdentifier": null,
+        "labels": [],
+        "logFileSuffix": null,
+        "maxConcurrentTasks": null,
+        "name": "S33 Masked Copy Flood",
+        "outputPorts": [],
+        "parameterContextName": "nfh-p13-billing",
+        "position": {
+          "x": 420.0,
+          "y": 0.0
+        },
+        "processGroups": [],
+        "processors": [
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "dc5585fd-6e47-5ad4-8b3d-a588173d52fd",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Usage Feed",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "properties": {
+              "Batch Size": "2",
+              "Data Format": "Text",
+              "File Size": "1 KB",
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"account\": \"acc-118\", \"meter\": \"api-calls\", \"units\": 1200, \"period\": \"2026-10\"}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "1 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.GenerateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "eee19372-4387-5dc2-9b14-529ade770f01",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Meter Gate",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "DISABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "ba3e26b3-f6c5-50d1-8381-b640205479b8",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Parse Usage",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 400.0
+            },
+            "properties": {
+              "Destination": "flowfile-attribute",
+              "Return Type": "auto-detect",
+              "usage.meter": "$.meter"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "2b4b6ec0-f907-599b-ad23-d01aab2d98a7",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Fan Out Usage",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 600.0
+            },
+            "properties": {
+              "Number of Copies": "#{s33.copies}"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.DuplicateFlowFile",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "2f00ea68-fa92-5073-8809-1d3533260acb",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Rate Usage",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 800.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "50 ms",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "40fe607f-a8e4-590b-af28-21343cbad09f",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Apply Tier",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1000.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "5d3a358b-f8f1-5b0e-a405-cf920981b54b",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Apply Credits",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1200.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "327ec4cc-0b43-5d16-93a1-28e82df37e69",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Aggregate Account",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1400.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-update-attribute-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "acf04597-49f7-5bc4-b836-1bd5831aedf0",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Usage Invoiced",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1600.0
+            },
+            "properties": {
+              "Store State": "Do not store state"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.attributes.UpdateAttribute",
+            "yieldDuration": "1 sec"
+          },
+          {
+            "annotationData": null,
+            "autoTerminatedRelationships": [
+              "success"
+            ],
+            "backoffMechanism": "PENALIZE_FLOWFILE",
+            "bulletinLevel": "WARN",
+            "bundle": {
+              "artifact": "nifi-standard-nar",
+              "group": "org.apache.nifi",
+              "version": "2.6.0.4.12.0.2-1"
+            },
+            "comments": "",
+            "componentType": "PROCESSOR",
+            "concurrentlySchedulableTaskCount": 1,
+            "executionNode": "ALL",
+            "groupIdentifier": "7eee9988-f54d-5b02-9e3b-3ba863629f65",
+            "identifier": "3d6a01e6-3c0a-5fd4-a72b-0bc480955416",
+            "instanceIdentifier": null,
+            "maxBackoffPeriod": "10 mins",
+            "name": "S33 Unparsed DLQ",
+            "penaltyDuration": "30 sec",
+            "position": {
+              "x": 0.0,
+              "y": 1800.0
+            },
+            "properties": {
+              "Log Level": "warn"
+            },
+            "propertyDescriptors": {},
+            "retriedRelationships": [],
+            "retryCount": 10,
+            "runDurationMillis": 0,
+            "scheduledState": "ENABLED",
+            "schedulingPeriod": "0 sec",
+            "schedulingStrategy": "TIMER_DRIVEN",
+            "style": {},
+            "type": "org.apache.nifi.processors.standard.LogAttribute",
+            "yieldDuration": "1 sec"
+          }
+        ],
+        "remoteProcessGroups": [],
+        "scheduledState": null,
+        "statelessFlowTimeout": null,
+        "versionedFlowCoordinates": null
+      }
+    ],
+    "processors": [],
+    "remoteProcessGroups": [],
+    "scheduledState": null,
+    "statelessFlowTimeout": null,
+    "versionedFlowCoordinates": null
+  },
+  "flowEncodingVersion": "1.0",
+  "latest": false,
+  "parameterContexts": {
+    "nfh-p13-billing": {
+      "componentType": "PARAMETER_CONTEXT",
+      "description": "Parameters for nfh-p13-billing.",
+      "identifier": "e911c7f3-88b0-5364-9e72-804c9fe3e6ff",
+      "inheritedParameterContexts": [],
+      "instanceIdentifier": null,
+      "name": "nfh-p13-billing",
+      "parameters": [
+        {
+          "description": "",
+          "name": "s32.max.rate",
+          "provided": false,
+          "sensitive": false,
+          "value": "5"
+        },
+        {
+          "description": "",
+          "name": "s33.copies",
+          "provided": false,
+          "sensitive": false,
+          "value": "50"
+        }
+      ]
+    }
+  },
+  "parameterProviders": {}
+}
