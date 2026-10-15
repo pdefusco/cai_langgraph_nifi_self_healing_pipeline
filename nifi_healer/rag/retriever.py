@@ -51,6 +51,27 @@ def invalidate() -> None:
     _ready.clear()
 
 
+def edition() -> str:
+    """The approved playbook edits the search reads (overlay.edition); "" for the files alone."""
+
+    return ingest.edition()
+
+
+def rebuild() -> None:
+    """After a playbook edit is approved or reverted: build again now, so no diagnosis waits for it."""
+
+    invalidate()
+
+    def run():
+        try:
+            ensure()
+
+        except Exception as exc:  # the next search tries again
+            ingest.log(f"rebuild failed: {exc}")
+
+    threading.Thread(target=run, name="playbook-rebuild", daemon=True).start()
+
+
 # ---------------------------------------------------------------------
 # Query building
 # ---------------------------------------------------------------------

@@ -79,9 +79,59 @@ PROMPT_VERSION = hashlib.sha256(
     (SYSTEM + USER + FEEDBACK + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 
-def agent_version(model_id: str) -> str:
-    # Without its past cases the same prompt is a different agent (the replay's baseline).
-    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory")
+def agent_version(model_id: str, playbooks: str = "") -> str:
+    # Without its past cases the same prompt is a different agent (the replay's baseline), and so it is
+    # with approved playbook edits (`playbooks`, their rag/overlay.edition); none leaves the name as it was.
+    return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory") \
+        + (f"/playbooks:{playbooks}" if playbooks else "")
+
+
+# ---------------------------------------------------------------------
+# Drafting a playbook edit from a reviewer's feedback (rag/drafter.py)
+# ---------------------------------------------------------------------
+
+DRAFT_SYSTEM = """You maintain the internal playbooks a remediation agent for Apache NiFi 2.6 flows in Cloudera DataFlow
+reads before it proposes a fix. A reviewer turned down a fix the agent based on these playbooks, and said why. Decide
+whether the playbook advice led the agent wrong, and if it did, draft the smallest edit of one section that would
+have led it right. A person reviews your edit before the agent ever reads it.
+
+Rules:
+- Edit one section: give the full new body of an existing section (by its id), or add a section to one playbook
+  (section_id "" and a new heading). Prefer the section the agent relied on.
+- Change the advice the feedback contradicts, minimally; keep the rest of the section, and its
+  <!-- symptoms: --> and <!-- actions: --> lines. No markdown heading lines (# or ##) in the text.
+- Write general guidance that holds for any flow: no incident ids, CRNs or deployment names, and no values that are
+  right only for this incident.
+- Name only these actions: {actions}. Never advise restarting the deployment or emptying queues
+  (STOP_AND_EMPTY_QUEUES).
+- The platform rules (cdf-platform-rules.md) are not edited here.
+- If the feedback is about this incident only (a value the reviewer prefers, a timing, a fault the playbooks already
+  describe correctly), do not edit: reply with skip true and say why in the rationale.
+
+Reply with only a JSON object, no prose and no code fence:
+{{
+  "skip": false,
+  "playbook": "<file name>.md",
+  "section_id": "<the id of the section you rewrite, or empty for a new section>",
+  "heading": "<the new section's heading; the existing heading otherwise>",
+  "text": "<the section's full new body, markdown>",
+  "rationale": "what the feedback showed the playbook got wrong, and how the edit fixes it, in two sentences"
+}}"""
+
+DRAFT_USER = """{feedback}
+
+The playbook sections the agent relied on, as it read them:
+{cited}
+{open}
+Every section you may edit (id: heading):
+{toc}"""
+
+DRAFT_FEEDBACK = """
+Your edit cannot be used as it is. Fix these problems and reply again with the full JSON object:
+{problems}
+"""
+
+DRAFT_VERSION = hashlib.sha256((DRAFT_SYSTEM + DRAFT_USER + DRAFT_FEEDBACK + REPAIR).encode()).hexdigest()[:10]
 
 
 def system_prompt() -> str:

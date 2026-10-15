@@ -254,6 +254,11 @@ MEMORY_TOP_K = _int("SELFHEAL_MEMORY_TOP_K", 3)
 PRIORS = _bool("SELFHEAL_PRIORS", True)
 PRIORS_TOP_K = _int("SELFHEAL_PRIORS_TOP_K", 5)
 
+# A rejection, or a WRONG_FIX label, has the LLM draft an edit of the
+# playbook section the agent relied on (rag/drafter.py), for a person to
+# approve on the Playbooks tab. Off: nothing is drafted.
+DRAFT_PLAYBOOK_EDITS = _bool("SELFHEAL_DRAFT_PLAYBOOK_EDITS", True)
+
 # ---------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------

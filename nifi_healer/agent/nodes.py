@@ -11,7 +11,7 @@ The graph's nodes. Each takes the state and returns the fields it changed.
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv
     human_review          interrupt(): approve | reject | edit | rediagnose
     apply_remediation     executor.execute (dry run unless SELFHEAL_ARMED)
-    record_feedback       a rejection, with its reason
+    record_feedback       a rejection, with its reason, queued for a playbook edit (rag/drafter.py)
     record_no_action      the agent says leave it alone
 
 The store gets the durable record (proposals, reviews, actions, incident
@@ -31,7 +31,7 @@ from nifi_healer.agent import prompts
 from nifi_healer.agent.schemas import Proposal
 from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
-from nifi_healer.rag import memory, priors, retriever
+from nifi_healer.rag import drafter, memory, priors, retriever
 from nifi_healer.sim.world import groups_from_definition
 from nifi_healer.store.db import get_store
 
@@ -193,7 +193,7 @@ def diagnose_and_propose(state: dict) -> dict:
         return {"error": f"LLM unavailable: {reason}"}
 
     model = llm.chat_model()
-    version = prompts.agent_version(getattr(model, "model_name", "") or config.LLM_MODEL_ID)
+    version = prompts.agent_version(getattr(model, "model_name", "") or config.LLM_MODEL_ID, retriever.edition())
     messages = [SystemMessage(content=prompts.system_prompt()),
                 HumanMessage(content=prompts.user_prompt(incident, state["context"], state.get("playbooks") or [],
                                                          state.get("feedback"), state.get("memory")))]
@@ -388,8 +388,18 @@ def _wait_for(client, incident: dict):
 
 
 def record_feedback(state: dict) -> dict:
-    _status(state["incident_id"], "REJECTED")
-    log(f"{state['incident_id']}: rejected: {state['review'].get('reason')}")
+    incident_id = state["incident_id"]
+    _status(incident_id, "REJECTED")
+    log(f"{incident_id}: rejected: {state['review'].get('reason')}")
+
+    try:  # the reason, drafted into a playbook edit for review (rag/drafter.py)
+        rejected = [r for r in get_store().reviews(incident_id) if r["decision"] == "reject"]
+
+        if rejected:
+            drafter.queue(drafter.REJECT, incident_id, rejected[-1]["id"])
+
+    except Exception as exc:  # never fails the rejection
+        log(f"{incident_id}: could not queue a playbook edit: {exc}")
 
     return {}
 

@@ -209,6 +209,13 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   groups with the same symptom (`nifi_healer/rag/priors.py`), counted over the same cases. A proposal that already
   failed twice on its group gets a warning. The agent's prompt leaves them out: in the replay they did not change
   how often its fixes worked, with or without past cases.
+- **Playbook edits.** A rejection, or a wrong-fix label in History, has the LLM draft an edit to the playbook section
+  the agent relied on (`nifi_healer/rag/drafter.py`). It waits on the **Playbooks** tab, with its reason and diff,
+  until a person approves (or changes, rejects, later reverts) it. Approved edits are kept in the app's database and
+  laid over `playbooks/*.md` when they are indexed (`nifi_healer/rag/overlay.py`), so the clone stays clean; the
+  agent version gains `/playbooks:<fingerprint>`, and the replay reads them too (`--no-playbook-edits` for the
+  files alone). **Make the applied edits permanent** gives them as a patch to commit. The platform rules are never
+  edited. `SELFHEAL_DRAFT_PLAYBOOK_EDITS=false` turns drafting off.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.

@@ -39,6 +39,11 @@ shows whether it learns. `--no-memory` is the baseline (its agent
 version ends /no-memory). Runs before 2026-10-14 could also leave out
 the fix track records (/no-priors); the agent no longer sees them.
 
+The agent reads the playbooks with the app's approved edits (the
+Playbooks tab, rag/overlay.py), read from the app's store, so a replay
+tests the agent as it stands (its version ends /playbooks:<edition>).
+`--no-playbook-edits` reads the files alone.
+
 The pacing guards (cooldown, actions per window) are off: every round is
 a fresh tenant, and a pack's faults are fixed one after another, which on
 a live tenant would take a day.
@@ -48,6 +53,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 
@@ -73,7 +79,8 @@ RECORD = "record.json"
 # Every config setting isolate() changes.
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
-            "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY")
+            "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
+            "DRAFT_PLAYBOOK_EDITS")
 
 
 def log(msg: str) -> None:
@@ -117,6 +124,7 @@ def isolate(directory: str):
     config.VERIFY_WINDOWS = config.VERIFY_WINDOWS[:2]   # the deciding ones
     config.PROPOSE_ROLLBACKS = False
     config.AUTO_DIAGNOSE = True              # the poller hands each new incident to detect()
+    config.DRAFT_PLAYBOOK_EDITS = False      # nobody rejects here, and its edits are not the app's
 
     worlds._WORLD = None
     world = worlds.get_world()
@@ -309,38 +317,73 @@ def _pct(rate) -> str:
     return "-" if rate is None else f"{rate * 100:.0f}%"
 
 
-def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
-        detect_seconds: float = DETECT_SECONDS, memory: bool = True) -> str:
-    """`trials` rounds of `ids` in an isolated mock tenant; returns the run's id. Calls isolate()."""
+def live_edits(path: str) -> list:
+    """The app's approved playbook edits, read from its store without writing to it; none if it has none."""
 
+    if not path or not os.path.exists(path):
+        return []
+
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+
+        try:
+            return [dict(row) for row in connection.execute(
+                "SELECT id, playbook, section_id, heading, old_text, new_text FROM playbook_edits "
+                "WHERE status = 'APPLIED' ORDER BY id")]
+
+        finally:
+            connection.close()
+
+    except sqlite3.Error as exc:  # an older store, before playbook edits
+        log(f"no playbook edits read from {path}: {exc}")
+
+        return []
+
+
+def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
+        detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True) -> str:
+    """
+    `trials` rounds of `ids` in an isolated mock tenant; returns the run's id. Calls isolate().
+    The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`.
+    """
+
+    edits = live_edits(config.DB_PATH) if playbook_edits else []
     directory = directory or config.REPLAY_DIR
     world = isolate(directory)
     config.MEMORY = memory
     client, store = clients.get_client(), db.get_store()
+    ingest.use_edits(edits)
 
-    if oracle:
-        llm.set_chat_model(OracleLLM())
+    try:
+        if oracle:
+            llm.set_chat_model(OracleLLM())
 
-    model = getattr(llm.chat_model(), "model_name", "") or config.LLM_MODEL_ID
-    previous = load(directory) or {}
-    runs = previous.get("runs") or []
-    entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
-             "agent_version": prompts.agent_version(model), "memory": memory, "scenarios": ids, "trials": [],
-             "started_at": time.time(), "finished_at": None}
-    runs.append(entry)
-    log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
-        + ("" if memory else ", no memory") + f" in {directory}")
-    now = previous.get("now") or 0.0
+        retriever.ensure()
+        model = getattr(llm.chat_model(), "model_name", "") or config.LLM_MODEL_ID
+        previous = load(directory) or {}
+        runs = previous.get("runs") or []
+        entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
+                 "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
+                 "scenarios": ids, "trials": [], "started_at": time.time(), "finished_at": None}
+        runs.append(entry)
+        log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
+            + ("" if memory else ", no memory")
+            + (f", {len(edits)} approved playbook edit(s)" if edits else "") + f" in {directory}")
+        now = previous.get("now") or 0.0
 
-    for number in range(1, trials + 1):
-        entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds)
-        now = max(now, client.now())
+        for number in range(1, trials + 1):
+            entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds)
+            now = max(now, client.now())
+            save(directory, runs, now)
+
+        entry["finished_at"] = time.time()
         save(directory, runs, now)
 
-    entry["finished_at"] = time.time()
-    save(directory, runs, now)
+        return entry["id"]
 
-    return entry["id"]
+    finally:
+        ingest.use_edits(None)
 
 
 def main() -> int:
@@ -351,12 +394,15 @@ def main() -> int:
     parser.add_argument("--oracle", action="store_true", help="answer with the design fix instead of the LLM")
     parser.add_argument("--dir", default="", help=f"where the replay keeps its tenant (default {config.REPLAY_DIR})")
     parser.add_argument("--no-memory", action="store_true", help="show the agent no past cases (the baseline)")
+    parser.add_argument("--no-playbook-edits", action="store_true",
+                        help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
                         help="simulated minutes to wait for every fault's incident")
     args = parser.parse_args()
 
     ids = chosen(args.scenario, args.pack)
-    run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory)
+    run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
+                 not args.no_playbook_edits)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0

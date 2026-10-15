@@ -7,6 +7,8 @@ Counts come from eval/scorecard.py; a reviewer's label on a fix counts
 over the verdict measured for it.
 """
 
+import re
+
 from nifi_healer.eval import replay, scorecard as sc
 from nifi_healer.kpi import metrics
 from nifi_healer.ui.monitor import _e, _when, short
@@ -219,12 +221,16 @@ _REVIEW_BARS = (sc.APPROVED, sc.EDITED, sc.REJECTED, sc.UNDECIDED)
 
 _FLAGS = (("/no-memory", "memory off"), ("/no-priors", "track records off"))
 
+# prompts.agent_version's last segment, when approved playbook edits were read.
+_EDITION = re.compile(r"/playbooks:([0-9a-f]+)$")
+
 
 def agent_name(version: str) -> tuple:
     """
     ("instructions fa8c5675be", "nemotron-3-super-120b-a12b · memory on")
     from prompt:fa8c5675be/model:nvidia/nemotron-3-super-120b-a12b; the
-    model id has slashes of its own, so the flags come off its end.
+    model id has slashes of its own, so the flags come off its end (the
+    playbook edition first, it is last).
     """
 
     if not version.startswith("prompt:") or "/model:" not in version:
@@ -232,6 +238,10 @@ def agent_name(version: str) -> tuple:
 
     prompt, model = version[len("prompt:"):].split("/model:", 1)
     flags = []
+    edited = _EDITION.search(model)
+
+    if edited:
+        model = model[:edited.start()]
 
     for flag, words in _FLAGS * 2:
         if model.endswith(flag):
@@ -240,6 +250,9 @@ def agent_name(version: str) -> tuple:
 
     if "memory off" not in flags:
         flags.insert(0, "memory on")
+
+    if edited:
+        flags.append(f"playbooks edited {edited.group(1)}")
 
     model = "oracle (the design fix, no LLM)" if model == "oracle" else model.rsplit("/", 1)[-1]
 

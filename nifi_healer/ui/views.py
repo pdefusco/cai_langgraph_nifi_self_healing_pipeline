@@ -19,7 +19,7 @@ from nifi_healer.agent import graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi import rollup
 from nifi_healer.kpi.detectors import group_name
-from nifi_healer.rag import priors
+from nifi_healer.rag import drafter, ingest, overlay, priors, retriever
 from nifi_healer.store.db import CLOSED_STATUSES, get_store
 
 DEPLOYMENT_HEADERS = ["Pack", "State", "Flow", "CPU %", "Memory %", "Cores", "Active alerts",
@@ -33,6 +33,8 @@ OUTCOME_HEADERS = ["KPI", "Decides", "Before (mean · last)", "After (mean · la
                    "Trend /min", "Verdict", "Why"]
 
 QUEUE_STATUSES = ("PENDING_REVIEW", "NEW", "DIAGNOSING", "APPLYING")
+
+DRAFTING_NOTE = "A playbook edit will be drafted from your reason: see the Playbooks tab."
 
 STATUS_MARK = {"ok": "ok", "breaching": "BREACHING", "warning": "warning", "imbalance": "IMBALANCE",
                "alert": "ALERT", "missing": "no chart"}
@@ -644,7 +646,9 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
                 else "Edited steps failed validation: " + "; ".join(plan.get("problems") or []))
 
     if decision == "reject":
-        return f"{incident_id} rejected."
+        drafted = config.DRAFT_PLAYBOOK_EDITS and not rollback.is_rollback(get_store().incident(incident_id))
+
+        return f"{incident_id} rejected." + (f" {DRAFTING_NOTE}" if drafted else "")
 
     result = state.get("result") or {}
 
@@ -920,9 +924,14 @@ def label_fix(incident_id: str | None, action_id, label: str, reason: str, revie
     if not (reason or "").strip():
         return "A reason is required: what the measurement missed, or why the fix was right or wrong."
 
-    store.add_label(incident_id, action["id"], label, reason.strip(), (reviewer or "").strip(), get_client().now())
+    label_id = store.add_label(incident_id, action["id"], label, reason.strip(), (reviewer or "").strip(),
+                               get_client().now())
+    message = f"Recorded action {action['id']} as **{LABELS[label]}**. Its measured verdicts are unchanged."
 
-    return f"Recorded action {action['id']} as **{LABELS[label]}**. Its measured verdicts are unchanged."
+    if label == "WRONG_FIX" and _queue_draft(drafter.WRONG_FIX, incident_id, label_id):
+        message += " " + DRAFTING_NOTE
+
+    return message
 
 
 def parse_start(text: str, finished_at: float) -> float | None:
@@ -1108,3 +1117,140 @@ def propose_rollback(incident_id: str | None, action_id, reason: str, reviewer: 
 
     return (f"Opened {incident['id']} to roll back action {action['id']}. It goes to the Review Queue, "
             "to approve or reject like any fix.")
+
+
+# ---------------------------------------------------------------------
+# Playbook edits (rag/drafter.py drafts them; ui/playbooks.py shows them)
+# ---------------------------------------------------------------------
+
+
+def _queue_draft(kind: str, incident_id: str, source_id) -> bool:
+    try:
+        return drafter.queue(kind, incident_id, source_id) is not None
+
+    except Exception as exc:  # drafting never fails the feedback it drafts from
+        print(f"[ui] {incident_id}: could not queue a playbook edit: {exc}", flush=True)
+
+        return False
+
+
+def _playbook_edit(store, edit_id) -> tuple:
+    """(the edit, "") or (None, why not)."""
+
+    try:
+        row = store.playbook_edit(int(edit_id))
+
+    except (TypeError, ValueError):
+        row = None
+
+    return (row, "") if row else (None, "Pick a playbook edit first.")
+
+
+def approve_playbook_edit(edit_id, text: str = "", reviewer: str = "") -> str:
+    """
+    Apply a proposed edit to what the agent reads, with the reviewer's
+    text if they changed it. It is checked again against the sections as
+    they read now; a section changed since the draft makes it STALE.
+    """
+
+    store = get_store()
+    row, problem = _playbook_edit(store, edit_id)
+
+    if problem:
+        return problem
+
+    if row["status"] != "PROPOSED":
+        return f"PE-{row['id']} is {row['status']}: only a proposed edit can be approved."
+
+    raws = ingest.raw_playbooks()
+    found = drafter.sections(raws)
+
+    if row["section_id"] and (found.get(row["section_id"]) or {}).get("text") != overlay.clean(row["old_text"]):
+        store.update_playbook_edit(row["id"], status="STALE", decided_at=get_client().now())
+
+        return (f"PE-{row['id']} no longer fits: its section changed after it was drafted (another approved edit, "
+                "or a new version of the file). Draft it again to rewrite the section as it reads now.")
+
+    text = overlay.clean(text) or overlay.clean(row["new_text"])
+    problems = drafter.check(dict(row, text=text), raws, found)
+
+    if problems:
+        return "Not approved: " + "; ".join(problems)
+
+    store.update_playbook_edit(row["id"], status="APPLIED", new_text=text, problems=[],
+                               reviewer=(reviewer or "").strip(), decided_at=get_client().now())
+    retriever.rebuild()
+
+    return (f"Approved PE-{row['id']}: the agent reads the new **{row['heading']}** from its next diagnosis"
+            + (" (with your changes)" if text != overlay.clean(row["new_text"]) else "") + ".")
+
+
+def reject_playbook_edit(edit_id, reason: str, reviewer: str = "") -> str:
+    store = get_store()
+    row, problem = _playbook_edit(store, edit_id)
+
+    if problem:
+        return problem
+
+    if row["status"] not in ("PROPOSED", "FAILED", "STALE") and not (
+            row["status"] == "DRAFTING" and not drafter.drafting(row["id"])):
+        return f"PE-{row['id']} is {row['status']}: only an open draft can be rejected."
+
+    if not (reason or "").strip():
+        return "A reason is required: what is wrong with the edit."
+
+    store.update_playbook_edit(row["id"], status="REJECTED", reason=reason.strip(),
+                               reviewer=(reviewer or "").strip(), decided_at=get_client().now())
+
+    return f"Rejected PE-{row['id']}. The playbook stays as it was."
+
+
+def revert_playbook_edit(edit_id, reason: str, reviewer: str = "") -> str:
+    """Take an applied edit out of what the agent reads (its later edits of the same section first)."""
+
+    store = get_store()
+    row, problem = _playbook_edit(store, edit_id)
+
+    if problem:
+        return problem
+
+    if row["status"] != "APPLIED":
+        return f"PE-{row['id']} is {row['status']}: only an applied edit can be reverted."
+
+    if not (reason or "").strip():
+        return "A reason is required: why the agent should stop reading this edit."
+
+    later = [e for e in store.applied_playbook_edits()
+             if e["id"] > row["id"] and drafter.target_id(e) == drafter.target_id(row)]
+
+    if later:
+        return (f"PE-{later[-1]['id']} rewrote this section after PE-{row['id']}; "
+                "revert " + ", ".join(f"PE-{e['id']}" for e in reversed(later)) + " first.")
+
+    store.update_playbook_edit(row["id"], status="REVERTED", reason=reason.strip(),
+                               reviewer=(reviewer or "").strip(), decided_at=get_client().now())
+    retriever.rebuild()
+
+    return f"Reverted PE-{row['id']}: the agent reads **{row['heading']}** as it was before, from its next diagnosis."
+
+
+def redraft_playbook_edit(edit_id) -> str:
+    store = get_store()
+    row, problem = _playbook_edit(store, edit_id)
+
+    if problem:
+        return problem
+
+    try:
+        drafter.redraft(row["id"])
+
+    except ValueError as exc:
+        return str(exc)
+
+    return f"Drafting PE-{row['id']} again in the background; this list shows it when it is done."
+
+
+def playbook_patch() -> str:
+    """The applied edits as a patch to playbooks/*.md, for `git apply` from the repository root."""
+
+    return overlay.patch(config.PLAYBOOKS_DIR, get_store().applied_playbook_edits())

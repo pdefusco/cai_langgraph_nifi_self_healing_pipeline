@@ -70,7 +70,10 @@ def _columns(fields: dict) -> dict:
 
 
 _JSON_FIELDS = {"alerts", "signals", "action", "citations", "validation", "edits", "argv",
-                "result", "details"}
+                "result", "details", "sources", "problems"}
+
+# A playbook edit still waiting on the drafter or a reviewer.
+OPEN_EDITS = ("DRAFTING", "PROPOSED")
 
 
 class Store:
@@ -511,6 +514,9 @@ class Store:
                                               "label": label, "reason": reason, "reviewer": reviewer,
                                               "created_at": now})
 
+    def label(self, label_id: int) -> dict | None:
+        return self._one("SELECT * FROM action_labels WHERE id = ?", (label_id,))
+
     def labels(self, incident_id: str = "") -> dict:
         """{action id: its latest label row}, of one incident or all."""
 
@@ -518,6 +524,42 @@ class Store:
             if incident_id else self._all("SELECT * FROM action_labels ORDER BY id")
 
         return {r["action_id"]: r for r in rows}
+
+    # -- playbook edits ---------------------------------------------------
+
+    def add_playbook_edit(self, trigger_kind: str, incident_id: str, source_id: int, now: float,
+                          **fields) -> int | None:
+        """The new edit's id; None when this source was already drafted."""
+
+        try:
+            return self._insert("playbook_edits", {"status": "DRAFTING", "trigger_kind": trigger_kind,
+                                                   "incident_id": incident_id, "source_id": source_id,
+                                                   "created_at": now, **fields})
+
+        except sqlite3.IntegrityError:
+            return None
+
+    def update_playbook_edit(self, edit_id: int, **fields) -> None:
+        self._update("playbook_edits", "id", edit_id, fields)
+
+    def playbook_edit(self, edit_id) -> dict | None:
+        return self._one("SELECT * FROM playbook_edits WHERE id = ?", (edit_id,))
+
+    def playbook_edits(self, statuses=None) -> list:
+        """Newest first."""
+
+        if statuses:
+            marks = ", ".join("?" for _ in statuses)
+
+            return self._all(f"SELECT * FROM playbook_edits WHERE status IN ({marks}) ORDER BY id DESC",
+                             tuple(statuses))
+
+        return self._all("SELECT * FROM playbook_edits ORDER BY id DESC")
+
+    def applied_playbook_edits(self) -> list:
+        """The edits the overlay applies, oldest first: a later edit of a section reads the earlier one's text."""
+
+        return self._all("SELECT * FROM playbook_edits WHERE status = 'APPLIED' ORDER BY id")
 
     def record(self, since: float = 0.0) -> dict:
         """Every incident opened at or after `since`, with all its rows, by table: the scorecard's reads."""

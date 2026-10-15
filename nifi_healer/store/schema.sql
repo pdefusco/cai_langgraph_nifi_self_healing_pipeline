@@ -172,3 +172,33 @@ CREATE TABLE IF NOT EXISTS action_labels (
     reviewer            TEXT,
     created_at          REAL NOT NULL
 );
+
+-- A playbook edit drafted from a reviewer's rejection or WRONG_FIX label
+-- (rag/drafter.py). An APPLIED edit overlays playbooks/*.md when Chroma is
+-- built (rag/overlay.py); the files themselves are never written.
+-- old_text is the section's body as the drafter saw it: the overlay
+-- applies an edit only while the section still reads that way.
+CREATE TABLE IF NOT EXISTS playbook_edits (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    status              TEXT NOT NULL,      -- DRAFTING | PROPOSED | FAILED | SKIPPED | APPLIED | REJECTED
+                                            -- | SUPERSEDED | REVERTED | STALE | MERGED
+    trigger_kind        TEXT NOT NULL,      -- reject | wrong_fix
+    incident_id         TEXT NOT NULL REFERENCES incidents (id),
+    source_id           INTEGER NOT NULL,   -- the review (reject) or action label (wrong_fix)
+    sources_json        TEXT,               -- [{kind, incident_id, id}], this one and those folded in
+    playbook            TEXT,               -- the file name, backlog-slow-consumer.md
+    section_id          TEXT,               -- its chunk id; "" for a new section
+    heading             TEXT,
+    old_text            TEXT,
+    new_text            TEXT,
+    rationale           TEXT,
+    problems_json       TEXT,
+    drafted_by          TEXT,
+    error               TEXT,
+    reviewer            TEXT,
+    reason              TEXT,
+    created_at          REAL NOT NULL,
+    decided_at          REAL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS playbook_edits_source ON playbook_edits (trigger_kind, source_id);

@@ -88,6 +88,33 @@ Every incident, newest first, with what was done and what it achieved.
 - **Propose a rollback**: opens a new incident that undoes the fix. It goes through the Review Queue like any other.
 """
 
+PLAYBOOKS = """
+The playbooks are the internal runbooks (`playbooks/*.md`) the agent searches before it proposes a fix. When a
+reviewer rejects a proposal, or labels an applied fix a wrong fix in History, the LLM reads their reason and drafts an
+edit to the playbook section the agent relied on. Nothing changes what the agent reads until a person approves it here.
+
+**An edit**
+- **Why it was drafted**: the incident, what the agent proposed and cited, and the reviewer's reason. A later draft of
+  the same section takes over an open one and carries its reasons along, so a section has one open draft.
+- **The change**: the section's text before and after. Struck lines go, marked lines are added.
+- **Checks it fails**: what the agent must not read: the platform rules (`cdf-platform-rules.md`, never edited here),
+  an action outside the catalog, newly advising to empty queues or restart a deployment, a CRN or an incident id.
+
+**What you can do**
+- **Approve** applies the text in the box (change it first if you like). The agent reads it from its next diagnosis.
+- **Reject** drops the draft and needs a reason. **Revert** takes an applied edit back out. **Draft again** retries a
+  draft that failed, or one whose section changed since.
+
+**Status**
+- **PROPOSED**: waiting for you. **SKIPPED**: the LLM judged the feedback to be about that incident only.
+- **STALE**: the section changed after the draft (another edit, or a new version of the file in git).
+- **MERGED**: the file in git already has the edit, so nothing is applied twice.
+
+**Where approved edits live**: in the app's own database, laid over the files whenever the playbooks are indexed;
+the files in git are not touched. **Make the applied edits permanent** gives them as a patch to commit. The Scorecard
+names the agent with *playbooks edited* and a fingerprint of the approved edits, so before and after can be compared.
+"""
+
 MONITOR = """
 The KPIs over time, with every change marked, so you can see what each change did.
 
@@ -129,6 +156,8 @@ How good the agent is at fixing things, counted from the incidents it handled.
   the best result the measurements allow.
 - **Memory on/off**: whether the agent was shown past cases. The replay turns it off to measure what memory adds.
   *Track records off* appears only on older runs, from when the agent was also shown fix success rates.
+- **Playbooks edited**: the agent read playbook edits approved on the Playbooks tab; the fingerprint names the set
+  of edits, so each approval or revert starts a new version.
 
 **Tiles and columns**
 - **Incidents**: how many, including those on the **healthy control** (S19, a group with nothing wrong, where the

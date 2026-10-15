@@ -29,6 +29,8 @@ import yaml
 
 import config
 from nifi_healer import llm
+from nifi_healer.rag import overlay
+from nifi_healer.store import db
 
 PLAYBOOKS = "nifi_playbooks"
 BEST_PRACTICES = "nifi_best_practices"
@@ -40,14 +42,16 @@ _COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 _lock = threading.Lock()
 _client = None
+_edition = {"value": ""}
+# The replay reads the app's approved edits, not its own store's (use_edits).
+_override = {"edits": None}
 
 
 def log(msg: str) -> None:
     print(f"[rag] {msg}", flush=True)
 
 
-def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+slug = overlay.slug
 
 
 def tags(values) -> str:
@@ -74,33 +78,32 @@ def parse(path: str) -> list:
     """The chunks of one playbook: [{id, collection, text, metadata}]."""
 
     with open(path, encoding="utf-8") as handle:
-        raw = handle.read()
+        return parse_text(os.path.basename(path), handle.read())
+
+
+def front_matter(raw: str) -> dict:
+    match = _FRONT.match(raw)
+
+    return (yaml.safe_load(match.group(1)) if match else None) or {}
+
+
+def parse_text(source: str, raw: str) -> list:
+    """The chunks of a playbook's markdown, named `source` (its file name)."""
 
     match = _FRONT.match(raw)
-    front = yaml.safe_load(match.group(1)) if match else {}
+    front = front_matter(raw)
     body = raw[match.end():] if match else raw
-    source = os.path.basename(path)
     title = front.get("title") or os.path.splitext(source)[0]
     collection = front.get("collection") or PLAYBOOKS
 
     if collection not in COLLECTIONS:
         raise ValueError(f"{source}: unknown collection {collection!r}")
 
-    sections, heading, lines = [], title, []
-
-    for line in body.splitlines():
-        if line.startswith("## "):
-            sections.append((heading, lines))
-            heading, lines = line[3:].strip(), []
-
-        elif not line.startswith("# "):
-            lines.append(line)
-
-    sections.append((heading, lines))
+    head, rest = overlay.split(body)
     chunks = []
 
-    for heading, lines in sections:
-        text = "\n".join(lines)
+    for heading, text in [(title, head)] + rest:
+        text = "\n".join(line for line in text.splitlines() if not line.startswith("# "))
         found = {"symptoms": front.get("symptoms") or [], "actions": front.get("actions") or []}
 
         for name, values in _TAG.findall(text):
@@ -125,11 +128,61 @@ def parse(path: str) -> list:
     return chunks
 
 
-def load(playbooks_dir: str = "") -> list:
-    chunks = []
+def use_edits(edits: list | None) -> None:
+    """Read these approved edits instead of the store's (None: the store's again)."""
+
+    _override["edits"] = None if edits is None else list(edits)
+
+
+def applied_edits() -> list:
+    """The approved playbook edits (rag/overlay.py); none if the store can't be read."""
+
+    if _override["edits"] is not None:
+        return list(_override["edits"])
+
+    try:
+        return db.get_store().applied_playbook_edits()
+
+    except Exception as exc:  # the files alone are still the playbooks
+        log(f"playbook edits unavailable: {exc}")
+
+        return []
+
+
+def raw_playbooks(playbooks_dir: str = "", edits: list | None = None, states: dict | None = None) -> dict:
+    """{file name: its markdown with the approved edits applied}; `states` collects each edit's."""
+
+    edits = applied_edits() if edits is None else edits
+    out = {}
 
     for path in sorted(glob.glob(os.path.join(playbooks_dir or config.PLAYBOOKS_DIR, "*.md"))):
-        chunks.extend(parse(path))
+        source = os.path.basename(path)
+
+        with open(path, encoding="utf-8") as handle:
+            raw = handle.read()
+
+        mine = [e for e in edits if e.get("playbook") == source]
+
+        if mine:
+            raw, found = overlay.apply(raw, mine)
+
+            if states is not None:
+                states.update(found)
+
+        out[source] = raw
+
+    if states is not None:
+        # An edit for a playbook that is gone has nothing to apply to.
+        states.update({e["id"]: overlay.STALE for e in edits if e["id"] not in states})
+
+    return out
+
+
+def load(playbooks_dir: str = "", edits: list | None = None, states: dict | None = None) -> list:
+    chunks = []
+
+    for source, raw in raw_playbooks(playbooks_dir, edits, states).items():
+        chunks.extend(parse_text(source, raw))
 
     seen = set()
 
@@ -195,10 +248,37 @@ def current(name: str, chunks: list, embedder_id: str) -> bool:
                 == fingerprint(chunks, embedder_id))
 
 
+def edition() -> str:
+    """The approved edits in the collections last built (overlay.edition): "" for the files alone."""
+
+    return _edition["value"]
+
+
+def _note(states: dict) -> None:
+    """An edit git now has (MERGED) or that no longer fits its section (STALE) stops applying."""
+
+    if _override["edits"] is not None:  # another store's edits: theirs to record
+        return
+
+    try:
+        store = db.get_store()
+
+        for edit_id, state in states.items():
+            if state != overlay.APPLIED:
+                store.update_playbook_edit(edit_id, status=state)
+                log(f"playbook edit {edit_id}: {state.lower()}")
+
+    except Exception as exc:  # best effort: the overlay already skipped it
+        log(f"could not record playbook edit states: {exc}")
+
+
 def ingest(force: bool = False, playbooks_dir: str = "") -> dict:
     """{collection: sections written, or 0 when it was already current}."""
 
-    chunks = load(playbooks_dir)
+    edits, states = applied_edits(), {}
+    chunks = load(playbooks_dir, edits, states)
+    _note(states)
+    _edition["value"] = overlay.edition(edits, states)
     embedder = llm.embedder()
     written = {}
 

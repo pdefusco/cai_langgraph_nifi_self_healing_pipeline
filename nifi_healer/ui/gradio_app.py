@@ -1,5 +1,5 @@
 """
-The review app: Fleet, Review Queue, History, Monitor, System.
+The review app: Fleet, Review Queue, History, Playbooks, Monitor, Scorecard, System.
 
     python app.py            # CAI Application script; binds CDSW_APP_PORT on 127.0.0.1
 
@@ -31,7 +31,7 @@ from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
 from nifi_healer.store.db import get_store
-from nifi_healer.ui import legend, monitor, scorecard, views
+from nifi_healer.ui import legend, monitor, playbooks, scorecard, views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
@@ -401,6 +401,71 @@ def propose_rollback(incident_id, action_id, reason, reviewer, request: gr.Reque
                       incident_id)
 
 
+@_timed
+def refresh_playbooks(view, selected):
+    return _new_choices(playbooks.choices(get_store(), view, keep=selected), selected)
+
+
+def _edit_panel(edit_id) -> tuple:
+    """The edit's panel, its text box, its four buttons and its key."""
+
+    p = playbooks.panel(get_store(), edit_id)
+
+    return (p["html"], gr.Textbox(value=p["text"], interactive=p["can_edit"]),
+            gr.Button(interactive=p["can_approve"]), gr.Button(interactive=p["can_reject"]),
+            gr.Button(interactive=p["can_revert"]), gr.Button(interactive=p["can_redraft"]), p["key"])
+
+
+@_timed
+def select_playbook_edit(edit_id):
+    return _edit_panel(edit_id)
+
+
+@_timed
+def follow_playbook_edit(edit_id, seen):
+    """Re-render only when the edit changed (a draft finishing), so a text being edited stays."""
+
+    if playbooks.key(get_store(), edit_id) == seen:
+        return (gr.skip(),) * 7
+
+    return _edit_panel(edit_id)
+
+
+_PLAYBOOK_DECISIONS = {
+    "approve": lambda edit_id, text, reason, who: views.approve_playbook_edit(edit_id, text, who),
+    "reject": lambda edit_id, text, reason, who: views.reject_playbook_edit(edit_id, reason, who),
+    "revert": lambda edit_id, text, reason, who: views.revert_playbook_edit(edit_id, reason, who),
+    "redraft": lambda edit_id, text, reason, who: views.redraft_playbook_edit(edit_id),
+}
+
+
+def _playbook_decision(decision):
+    @_timed
+    def handler(view, edit_id, text, reason, reviewer, shown=None, request: gr.Request = None):
+        login, permission = caller(request)
+
+        if permission.upper() == "RO":
+            message = (f"{login or 'You'} can only view this project, so nothing was changed; "
+                       "a project collaborator with write access decides on playbook edits.")
+
+        elif shown and shown.split("|", 1)[0] != str(edit_id):
+            message = "The panel was showing another edit; it now shows this one, and nothing was sent. Decide again."
+
+        else:
+            message = _PLAYBOOK_DECISIONS[decision](edit_id, text, reason, (reviewer or "").strip() or login)
+
+        return (message, *_edit_panel(edit_id),
+                gr.update(choices=playbooks.choices(get_store(), view, keep=edit_id), value=edit_id),
+                views.playbook_patch())
+
+    return handler
+
+
+@_timed
+def playbook_patch():
+    return views.playbook_patch()
+
+
 def _monitor_model(pack, span, change):
     entry = fleet.deployed_packs().get(pack or "")
 
@@ -657,6 +722,58 @@ def build() -> gr.Blocks:
             rollback_btn.click(propose_rollback, inputs=[history_pick, fix_pick, rollback_reason, fix_reviewer],
                                outputs=corrected)
 
+        with gr.Tab("Playbooks"):
+            _legend(legend.PLAYBOOKS)
+
+            with gr.Row():
+                pb_view = gr.Radio(list(playbooks.VIEWS), value=playbooks.DEFAULT_VIEW, label="Show", scale=2)
+                pb_pick = gr.Dropdown(label="Playbook edit", choices=[], scale=5, allow_custom_value=True)
+                pb_refresh = gr.Button("Refresh", scale=1)
+
+            pb_html = gr.HTML()
+            pb_text = gr.Textbox(label="The section's new text (change it before approving if you like)", lines=10,
+                                 max_lines=30, interactive=False)
+
+            with gr.Row():
+                pb_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
+                pb_reason = gr.Textbox(label="Reason (required to reject or revert)", scale=3)
+
+            with gr.Row():
+                pb_approve = gr.Button("Approve", variant="primary", interactive=False)
+                pb_reject = gr.Button("Reject", variant="stop", interactive=False)
+                pb_revert = gr.Button("Revert", interactive=False)
+                pb_redraft = gr.Button("Draft again", interactive=False)
+
+            pb_result = gr.Markdown()
+
+            with gr.Accordion("Make the applied edits permanent", open=False):
+                gr.Markdown("The applied edits as a patch to `playbooks/`. Save it as `playbooks.patch` in a clone of "
+                            "the repository, run `git apply playbooks.patch`, commit and push, then pull on the app "
+                            "(`pull_and_restart.py`). The app then finds each edit already in the file and marks "
+                            "it MERGED, so nothing is applied twice. Empty while no edit is applied.")
+                pb_patch = gr.Code(language=None, label="playbooks.patch", interactive=False)
+
+            pb_panel = [pb_html, pb_text, pb_approve, pb_reject, pb_revert, pb_redraft]
+            pb_seen = gr.State("")
+            pb_timer = gr.Timer(5.0)
+
+            pb_pick.change(select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
+            pb_view.change(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick])
+            pb_refresh.click(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
+                select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen]).then(
+                playbook_patch, outputs=[pb_patch])
+            pb_timer.tick(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick],
+                          show_progress="hidden").then(
+                follow_playbook_edit, inputs=[pb_pick, pb_seen], outputs=pb_panel + [pb_seen],
+                show_progress="hidden")
+
+            pb_inputs = [pb_view, pb_pick, pb_text, pb_reason, pb_reviewer, pb_seen]
+            pb_outputs = [pb_result] + pb_panel + [pb_seen, pb_pick, pb_patch]
+            pb_approve.click(_playbook_decision("approve"), inputs=pb_inputs, outputs=pb_outputs)
+            pb_reject.click(_playbook_decision("reject"), inputs=pb_inputs, outputs=pb_outputs)
+            pb_revert.click(_playbook_decision("revert"), inputs=pb_inputs, outputs=pb_outputs)
+            pb_redraft.click(_playbook_decision("redraft"), inputs=pb_inputs, outputs=pb_outputs)
+
         with gr.Tab("Monitor"):
             _legend(legend.MONITOR)
 
@@ -741,6 +858,10 @@ def build() -> gr.Blocks:
         demo.load(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick])
         demo.load(who_is_reviewing, outputs=[reviewer])
         demo.load(who_is_reviewing, outputs=[fix_reviewer])
+        demo.load(who_is_reviewing, outputs=[pb_reviewer])
+        demo.load(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
+            select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
+        demo.load(playbook_patch, outputs=[pb_patch])
         demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
             select_review, inputs=[queue_pick], outputs=panel + [seen])
         demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail]).then(
@@ -757,4 +878,4 @@ def main() -> None:
     startup()
     build().queue(default_concurrency_limit=4).launch(
         server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
-        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS)
+        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS + playbooks.CSS)

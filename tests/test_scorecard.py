@@ -278,7 +278,7 @@ def test_scorecard_from_the_store_and_its_html(agent):
 def test_every_tab_has_a_plain_legend():
     from nifi_healer.ui import legend
 
-    texts = [legend.FLEET, legend.REVIEW, legend.HISTORY, legend.MONITOR, legend.SCORECARD, legend.SYSTEM]
+    texts = [legend.FLEET, legend.REVIEW, legend.HISTORY, legend.PLAYBOOKS, legend.MONITOR, legend.SCORECARD, legend.SYSTEM]
     assert all(t.strip() and "{" not in t for t in texts)
     for term in ("Agent version", "Instructions", "not a commit", "oracle", "Memory on/off", "Lift", "middle half",
                  "healthy control", "Replay"):
