@@ -18,6 +18,8 @@ guardrails later compare against:
                          then find the charts
     reset_pack           back to the faulty baseline: flow version,
                          parameters, sizing (each through the guardrails)
+    replant_steps        one scenario's fault again, the rest left as it
+                         is (chaos.py); run_steps runs either
     teardown_pack        dfworkload terminate-deployment, then df delete-flow
     verify_registration  the recorded CRNs, read back live
     adopt                rebuild a lost fleet entry, by exact name
@@ -29,6 +31,7 @@ Ported from SIB provision/01_import_flow.py, 02_create_deployment.py and
 03_configure_kpi.py.
 """
 
+import copy
 import json
 import os
 
@@ -473,30 +476,118 @@ def reset_steps(client: Client, pack_name: str, flow_only: bool = False) -> list
         return steps
 
     if pack.parameters:
-        configuration = require(client.flow_configuration(deployment, flow),
-                                f"read flow configuration for {pack_name}")
-        groups = []
+        steps += _parameter_steps(client, pack_name, deployment, flow, pack.parameters)
 
-        for group in configuration.get("parameterGroups") or []:
-            changed = [{"name": p["name"], "value": pack.parameters[p["name"]]}
-                       for p in group.get("parameters") or []
-                       if p.get("name") in pack.parameters
-                       and p.get("value") != pack.parameters[p["name"]]]
+    return steps + _sizing_steps(client, pack_name, deployment)
 
-            if changed:
-                groups.append({"name": group["name"], "parameters": changed})
 
-        if groups:
-            names = ", ".join(p["name"] for g in groups for p in g["parameters"])
-            steps.append((f"parameters {names} -> baseline", "dfworkload", "parameters", groups))
+def _parameter_steps(client: Client, pack_name: str, deployment: str, flow: str, wanted: dict) -> list:
+    """The step that sets each of `wanted` ({name: value}) that differs, if any."""
 
+    configuration = require(client.flow_configuration(deployment, flow),
+                            f"read flow configuration for {pack_name}")
+    groups = []
+
+    for group in configuration.get("parameterGroups") or []:
+        changed = [{"name": p["name"], "value": wanted[p["name"]]}
+                   for p in group.get("parameters") or []
+                   if p.get("name") in wanted and p.get("value") != wanted[p["name"]]]
+
+        if changed:
+            groups.append({"name": group["name"], "parameters": changed})
+
+    if not groups:
+        return []
+
+    names = ", ".join(p["name"] for g in groups for p in g["parameters"])
+
+    return [(f"parameters {names} -> baseline", "dfworkload", "parameters", groups)]
+
+
+def _sizing_steps(client: Client, pack_name: str, deployment: str) -> list:
+    """The step back to the pack's sizing, if the deployment has another."""
+
+    pack = packs.PACKS[pack_name]
     sizing = require(client.deployment_configuration(deployment), f"read sizing for {pack_name}")
     size = (sizing.get("clusterSize") or {}).get("name")
     nodes = sizing.get("staticNodeCount")
 
-    if size != pack.cluster_size or nodes != pack.nodes:
-        steps.append((f"sizing {size} x{nodes} -> {pack.cluster_size} x{pack.nodes}",
-                      "dfworkload", "sizing", None))
+    if size == pack.cluster_size and nodes == pack.nodes:
+        return []
+
+    return [(f"sizing {size} x{nodes} -> {pack.cluster_size} x{pack.nodes}", "dfworkload", "sizing", None)]
+
+
+def _sized(scenario) -> bool:
+    """Whether the deployment's size is part of the scenario's fault, or of a fix it accepts."""
+
+    fixes = tuple(scenario.expected) + tuple(scenario.faults) + tuple(scenario.acceptable)
+
+    return scenario.family == "SIZING" or any(s.get("action") == "SCALE_DEPLOYMENT" for s in fixes)
+
+
+def replant_steps(client: Client, pack_name: str, scenario_id: str) -> list:
+    """
+    [(label, plane, kind, value)] that plant one scenario's fault again
+    and leave the rest of the pack as it is: its process group as the
+    baseline has it (imported as a new version of the deployed flow with
+    only that group swapped back), its own parameters' baseline values,
+    and the pack's sizing when a size is part of its fault or its fixes.
+    Empty when the fault is already in place.
+    """
+
+    from nifi_healer.flow import edits
+    from nifi_healer.flow.inventory import find_group
+
+    scenario = packs.PACKS[pack_name].scenario(scenario_id)
+    entry = fleet.pack(pack_name)
+    deployment, flow = entry.get("deployment_crn"), entry.get("deployed_flow_crn")
+
+    if not (deployment and flow and entry.get("baseline_flow_version_crn")):
+        raise SystemExit(f"{pack_name}: no deployment or baseline recorded.")
+
+    facts = client.flow_facts(deployment, flow)
+
+    if facts.get("error"):
+        raise SystemExit(f"{pack_name}: could not read the deployed flow: {facts['error']}")
+
+    deployed = client.flow_definition(facts["flow_version_crn"])
+    baseline = client.flow_definition(entry["baseline_flow_version_crn"])
+
+    for definition, what in ((deployed, "the deployed version"), (baseline, "the baseline")):
+        if "error" in definition:
+            raise SystemExit(f"{pack_name}: could not read {what}: {definition['error']}")
+
+    name = scenario.group_name
+    have, want = find_group(deployed, name), find_group(baseline, name)
+
+    if have is None or want is None:
+        raise SystemExit(f"{pack_name}: {name!r} is not in both the deployed version and the baseline.")
+
+    steps = []
+
+    if json.dumps(have, sort_keys=True) != json.dumps(want, sort_keys=True):
+        replanted = copy.deepcopy(deployed)
+        group = find_group(replanted, name)
+        group.clear()
+        group.update(copy.deepcopy(want))
+        validation = edits.validate_edit(deployed, replanted, group_name=name)
+
+        # The swap must touch that group and nothing else.
+        if not validation["ok"]:
+            raise SystemExit(f"{pack_name}: re-planting {scenario_id}: {'; '.join(validation['problems'])}")
+
+        steps.append((f"{name} -> baseline ({len(validation['diff'])} change(s))", "df", "import", {
+            "definition": replanted,
+            "file": f"replant-{scenario_id}-{int(client.now())}.json",
+            "comments": f"nifi-healer: {scenario_id} back to its baseline",
+        }))
+
+    if scenario.parameters:
+        steps += _parameter_steps(client, pack_name, deployment, flow, dict(scenario.parameters))
+
+    if _sized(scenario):
+        steps += _sizing_steps(client, pack_name, deployment)
 
     return steps
 
@@ -504,9 +595,34 @@ def reset_steps(client: Client, pack_name: str, flow_only: bool = False) -> list
 def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None,
                flow_only: bool = False) -> list:
     """
-    Apply `reset_steps`, each through the guardrails, waiting between
-    them because each write needs a settled deployment. Returns the
-    audit records. `wait()` replaces the polling (the mock settles).
+    Apply `reset_steps` (run_steps). Returns the audit records; raises
+    on a refusal or a failed write.
+    """
+
+    records = run_steps(client, pack_name, reset_steps(client, pack_name, flow_only), dry_run, wait)
+    last = records[-1] if records else {}
+
+    if last.get("refused"):
+        raise SystemExit(f"{pack_name}: refused: {last['reason']}")
+
+    if records and not dry_run and not last.get("performed"):
+        require(last.get("result") or {"error": "the request failed"}, last["step"])
+
+    if not records:
+        log(f"  [reset] {pack_name} is already at its baseline")
+
+    return records
+
+
+def run_steps(client: Client, pack_name: str, steps: list, dry_run: bool = True, wait=None,
+              tag: str = "reset", imported=None) -> list:
+    """
+    Run `reset_steps` or `replant_steps`, each through the guardrails,
+    waiting between them because each write needs a settled deployment.
+    Returns the audit records, and stops after the first one refused or
+    failed. `wait()` replaces the polling (the mock settles);
+    `imported(crn, version)` hears of a flow version imported, before
+    the deployment is changed to it.
     """
 
     from nifi_healer.cdp import guardrails
@@ -517,13 +633,27 @@ def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None,
     wait = wait or (lambda: _wait_for_flow(client, deployment, flow))
     records = []
 
-    for label, plane, kind, value in reset_steps(client, pack_name, flow_only):
-        log(f"  [reset] {label}")
+    for label, plane, kind, value in steps:
+        log(f"  [{tag}] {label}")
 
         # Configuration versions are read immediately before each write.
         if kind == "version":
             record = guardrails.change_flow_version(client, pack_name, deployment, flow, value,
                                                     dry_run=dry_run)
+
+        elif kind == "import":
+            record = _import_version(client, pack_name, deployment, entry["flow_crn"], value, dry_run)
+
+            if record.get("performed"):
+                records.append(dict(record, step=f"{label}: import", kind="import"))
+
+                if imported:
+                    imported(record["imported"], record.get("version"))
+
+                record = dict(guardrails.change_flow_version(client, pack_name, deployment, flow,
+                                                             record["imported"], dry_run=False),
+                              imported=record["imported"])
+                kind = "version"
 
         elif kind == "parameters":
             configuration = require(client.flow_configuration(deployment, flow), "read configuration")
@@ -545,25 +675,64 @@ def reset_pack(client: Client, pack_name: str, dry_run: bool = True, wait=None,
                 "--static-node-count", pack.nodes,
             ], plane=plane, dry_run=dry_run)
 
-        record["step"] = label
+        record.update(step=label, kind=kind)
         records.append(record)
 
         if record.get("refused"):
-            raise SystemExit(f"{pack_name}: refused: {record['reason']}")
+            break
 
         if dry_run:
-            log("    would run: " + command_line(record["argv"]))
+            log("    would run: " + command_line(_shown(record["argv"])))
             continue
 
         if not record.get("performed"):
-            require(record.get("result") or {"error": "the request failed"}, label)
+            break
 
         wait()
 
-    if not records:
-        log(f"  [reset] {pack_name} is already at its baseline")
-
     return records
+
+
+def _shown(argv: list) -> list:
+    """argv to log: parameter groups by name only, never their values."""
+
+    out = list(argv)
+
+    for i, arg in enumerate(out[:-1]):
+        if arg == "--parameter-groups":
+            groups = json.loads(out[i + 1])
+            out[i + 1] = ", ".join(p["name"] for g in groups for p in g["parameters"]) + " (values not shown)"
+
+    return out
+
+
+def _import_version(client: Client, pack_name: str, deployment: str, flow_crn: str, value: dict,
+                    dry_run: bool) -> dict:
+    """Import value["definition"] as a new version of the pack's flow; the record carries its CRN."""
+
+    from nifi_healer.cdp import guardrails
+
+    os.makedirs(config.EDITS_DIR, exist_ok=True)
+    path = os.path.join(config.EDITS_DIR, value["file"])
+
+    with open(path, "w") as handle:
+        json.dump(value["definition"], handle, indent=2, sort_keys=True)
+
+    record = guardrails.act(client, pack_name, deployment, [
+        "import-flow-definition-version", "--flow-crn", flow_crn, "--file", path,
+        "--comments", value["comments"],
+    ], plane="df", dry_run=dry_run)
+
+    if not record.get("performed"):
+        return record
+
+    result = record.get("result") or {}
+    crn = _version_crn(result)
+
+    if not crn:
+        return dict(record, performed=False, result={"error": f"the import returned no flow version CRN: {result}"})
+
+    return dict(record, imported=crn, version=result.get("version"))
 
 
 # ---------------------------------------------------------------------

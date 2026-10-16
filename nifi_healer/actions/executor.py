@@ -164,12 +164,17 @@ def rebased(client: Client, store, incident: dict) -> dict:
 def _walk_back(store, deployment_crn: str, current: str, base: str) -> tuple:
     """
     Follow `current` back through the versions this app's own applied
-    actions deployed, until `base` or a version they did not deploy.
-    Returns (where it stopped, {deployed version: action}).
+    actions, or its chaos injector, deployed, until `base` or a
+    version they did not deploy. Returns (where it stopped, {deployed
+    version: action}); a plant stands in as an action by "this app".
     """
 
-    ours = {a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=deployment_crn)
-            if a["status"] == "APPLIED" and a.get("to_flow_version_crn")}
+    ours = {r["to_flow_version_crn"]: {"to_flow_version_crn": r["to_flow_version_crn"],
+                                       "from_flow_version_crn": r.get("from_flow_version_crn"),
+                                       "incident_id": "this app"}
+            for r in store.injections(deployment_crn=deployment_crn) if r.get("to_flow_version_crn")}
+    ours.update({a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=deployment_crn)
+                 if a["status"] == "APPLIED" and a.get("to_flow_version_crn")})
     crn, seen = current, set()
 
     while crn != base and crn in ours and crn not in seen:

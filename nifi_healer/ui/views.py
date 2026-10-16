@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 
 import config
-from nifi_healer import llm
+from nifi_healer import chaos, llm
 from nifi_healer.actions import executor, rollback
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
@@ -1256,6 +1256,7 @@ def system(snapshot: dict, client) -> str:
         ("Verify", f"settle {config.VERIFY_SETTLE_SECONDS}s, window {config.VERIFY_WINDOW_SECONDS}s"),
         ("Autonomy", _autonomy_state(store)),
         ("Trusted fixes", trusted),
+        ("Chaos", _chaos_state(store, snapshot["now"])),
         ("Data", f"`{config.DB_PATH}`, checkpoints `{config.CHECKPOINT_PATH}`, Chroma `{config.CHROMA_DIR}`"),
     ]
 
@@ -1296,6 +1297,55 @@ def set_autonomy(paused: bool, by: str = "") -> str:
     autonomy.unpause(store, by, now)
 
     return "Autonomy resumed: trusted low-risk fixes approve themselves after their veto window."
+
+
+def _chaos_state(store, now: float) -> str:
+    rule = (f"re-plants a scenario's fault {config.CHAOS_REST / 3600:g} h after its last one ended, at most one "
+            f"every {config.CHAOS_TICK}s across the fleet and {config.CHAOS_PER_DAY} a day per deployment, "
+            f"{config.CHAOS_SPACING // 60} min apart")
+    state = chaos.state(store)
+
+    if state == "off":
+        return f"off (set SELFHEAL_CHAOS=true in the project env): {rule}"
+
+    if state == "paused":
+        held = chaos.paused(store)
+        return f"**paused** by {held.get('updated_by') or 'someone'} at {clock(held.get('updated_at'))}: {rule}"
+
+    try:
+        found = chaos.next_candidate(store, now)
+
+    except Exception as exc:  # the tab still renders without it
+        return f"**on**: {rule} · next unavailable ({exc})"
+
+    if found is None:
+        upcoming = "nothing to plant"
+
+    else:
+        upcoming = (f"next {found['pack']} › {found['group']}"
+                    + (f" (not yet: {found['blocked']})" if found["blocked"] else " (on the next tick)"))
+
+    started = chaos.since(store)
+
+    return (f"**on**{' since ' + clock(started) if started is not None else ''}"
+            f"{'' if config.ARMED else ' (disarmed: dry runs)'}: {rule} · {upcoming}")
+
+
+def set_chaos(paused: bool, by: str = "") -> str:
+    """Pause or resume the chaos injector (System tab). Returns a line for the UI."""
+
+    if not config.CHAOS:
+        return "Chaos is off; set SELFHEAL_CHAOS=true in the project env to use it."
+
+    store, now, by = get_store(), get_client().now(), by.strip() or "a reviewer"
+
+    if paused:
+        chaos.pause(store, by, now)
+        return "Chaos paused: no fault is planted until it is resumed."
+
+    chaos.unpause(store, by, now)
+
+    return "Chaos resumed: a rested scenario's fault is planted again on a coming tick."
 
 
 def propose_rollback(incident_id: str | None, action_id, reason: str, reviewer: str = "") -> str:

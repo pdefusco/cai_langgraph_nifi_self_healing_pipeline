@@ -70,7 +70,7 @@ def _columns(fields: dict) -> dict:
 
 
 _JSON_FIELDS = {"alerts", "signals", "action", "citations", "validation", "edits", "argv",
-                "result", "details", "sources", "problems"}
+                "result", "details", "sources", "problems", "steps"}
 
 # A playbook edit still waiting on the drafter or a reviewer.
 OPEN_EDITS = ("DRAFTING", "PROPOSED")
@@ -610,6 +610,33 @@ class Store:
                               "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
                               "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
                               (key, value, updated_by, now))
+
+    # -- chaos injections ----------------------------------------------------
+
+    def add_injection(self, pack: str, deployment_crn: str, scenario: str, family: str, status: str,
+                      at: float, **fields) -> int:
+        return self._insert("chaos_injections", dict(fields, pack=pack, deployment_crn=deployment_crn,
+                                                     scenario=scenario, family=family, status=status, at=at))
+
+    def update_injection(self, injection_id: int, **fields) -> None:
+        self._update("chaos_injections", "id", injection_id, fields)
+
+    def injections(self, pack: str = "", deployment_crn: str = "", scenario: str = "",
+                   since: float = 0.0, statuses=None) -> list:
+        """Oldest first."""
+
+        sql, params = "SELECT * FROM chaos_injections WHERE at >= ?", [since]
+
+        for column, value in (("pack", pack), ("deployment_crn", deployment_crn), ("scenario", scenario)):
+            if value:
+                sql += f" AND {column} = ?"
+                params.append(value)
+
+        if statuses:
+            sql += f" AND status IN ({', '.join('?' for _ in statuses)})"
+            params += list(statuses)
+
+        return self._all(sql + " ORDER BY at, id", params)
 
     # -- the app's health, and retention -----------------------------------
 

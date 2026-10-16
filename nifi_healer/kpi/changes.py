@@ -15,7 +15,9 @@ Only the event that marks a change as done is kept:
 
 An event says what changed, not the values or (usefully) who: the agent's
 own actions say that. A change within an applied action's time window,
-of the action's family, is the agent's; any other is an operator's.
+of the action's family, is the agent's; one within a chaos injection's
+(chaos.py), of a kind it changed, is the injector's; any other is an
+operator's.
 """
 
 DONE = {
@@ -38,6 +40,10 @@ _NOISE_PREFIXES = ("updating", "activating", "preparing", "provisioning", "impor
 _SIZING_WORDS = ("scal", "resiz", "node count", "nodes", "cluster size")
 
 FAMILY_KINDS = {"FLOW_EDIT": "flow_version", "PARAMETER": "parameters", "SIZING": "sizing"}
+
+# A chaos injection's step kinds (provisioning.run_steps) as changes; an
+# import alone changes nothing deployed.
+STEP_KINDS = {"version": "flow_version", "parameters": "parameters", "sizing": "sizing"}
 
 # How far around an action an event of its family is counted as the
 # action's: before its start (clock skew) and after its finish (a change
@@ -90,16 +96,17 @@ def from_events(events: list) -> list:
     return out
 
 
-def attribute(changes: list, actions: list) -> list:
+def attribute(changes: list, actions: list, injections: list = ()) -> list:
     """
-    Each change with its source: [{t, kind, name, source: agent | operator
-    | platform, action}], oldest first. An applied action with no event
-    to match (an event log that has not caught up, or a change kind CDF
-    names differently) still appears, at its finish.
+    Each change with its source: [{t, kind, name, source: agent | chaos |
+    operator | platform, action, injection}], oldest first. An applied
+    action or a planted injection with no event to match (an event log
+    that has not caught up, or a change kind CDF names differently) still
+    appears, at its finish. `injections` are chaos_injections rows.
     """
 
     out = [dict(c, source="platform" if c["kind"] in ("created", "kpis") else "operator",
-                action=None) for c in sorted(changes, key=lambda c: c["t"])]
+                action=None, injection=None) for c in sorted(changes, key=lambda c: c["t"])]
     applied = [a for a in actions if a.get("status") == "APPLIED" and not a.get("dry_run")
                and a.get("started_at")]
 
@@ -115,6 +122,24 @@ def attribute(changes: list, actions: list) -> list:
 
         else:
             out.append({"event_crn": None, "t": finished, "kind": kind or "other",
-                        "name": action.get("action_type"), "source": "agent", "action": action})
+                        "name": action.get("action_type"), "source": "agent", "action": action,
+                        "injection": None})
+
+    # Every step an injection performed, though a later one failed.
+    for row in sorted(injections, key=lambda r: r["at"]):
+        finished = row.get("finished_at") or row["at"]
+        kinds = list(dict.fromkeys(STEP_KINDS[s.get("kind")] for s in row.get("steps") or []
+                                   if s.get("performed") and s.get("kind") in STEP_KINDS))
+
+        for kind in kinds:
+            candidates = [c for c in out if c["action"] is None and c["injection"] is None
+                          and c["kind"] == kind and row["at"] - MATCH_BEFORE <= c["t"] <= finished + MATCH_AFTER]
+
+            if candidates:
+                min(candidates, key=lambda c: abs(c["t"] - finished)).update(source="chaos", injection=row)
+
+            else:
+                out.append({"event_crn": None, "t": finished, "kind": kind, "name": f"chaos {row['scenario']}",
+                            "source": "chaos", "action": None, "injection": row})
 
     return sorted(out, key=lambda c: c["t"])

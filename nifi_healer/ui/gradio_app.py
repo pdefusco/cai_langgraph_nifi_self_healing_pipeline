@@ -595,6 +595,20 @@ def _autonomy_switch(paused: bool):
     return handler
 
 
+def _chaos_switch(paused: bool):
+    @_timed
+    def handler(request: gr.Request = None):
+        login, permission = caller(request)
+
+        if permission.upper() == "RO":
+            return (f"{login or 'You'} can only view this project, so chaos was left as it is; "
+                    "a project collaborator with write access pauses or resumes it."), refresh_system()
+
+        return views.set_chaos(paused, login), refresh_system()
+
+    return handler
+
+
 def poll_now():
     current = poller_module.get()
 
@@ -901,6 +915,8 @@ def build() -> gr.Blocks:
                 selftest_btn = gr.Button("Selftest")
                 pause_btn = gr.Button("Pause autonomy", visible=config.AUTONOMY)
                 unpause_btn = gr.Button("Resume autonomy", visible=config.AUTONOMY)
+                chaos_pause_btn = gr.Button("Pause chaos", visible=config.CHAOS)
+                chaos_resume_btn = gr.Button("Resume chaos", visible=config.CHAOS)
 
             with gr.Row(visible=config.MOCK):
                 minutes = gr.Slider(1, 120, value=20, step=1, label="Fast-forward the mock clock (minutes)")
@@ -917,6 +933,8 @@ def build() -> gr.Blocks:
             selftest_btn.click(selftest, outputs=[selftest_out])
             pause_btn.click(_autonomy_switch(True), outputs=[system_result, system_md])
             unpause_btn.click(_autonomy_switch(False), outputs=[system_result, system_md])
+            chaos_pause_btn.click(_chaos_switch(True), outputs=[system_result, system_md])
+            chaos_resume_btn.click(_chaos_switch(False), outputs=[system_result, system_md])
             forward_btn.click(fast_forward, inputs=[minutes], outputs=[system_result]).then(
                 refresh_system, outputs=[system_md])
 

@@ -62,9 +62,10 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import config
+from flows import packs
 from flows.builder.lib import iter_processors
 from flows.builder.processors import kind_of
-from nifi_healer import fleet
+from nifi_healer import chaos, fleet
 from nifi_healer.actions import rollback
 from nifi_healer.cdp.client import Client, get_client, is_half_applied
 from nifi_healer.kpi import changes, detectors, metrics, outcomes, rollup
@@ -261,6 +262,9 @@ class Poller:
 
                 if self.on_tick and self._due(("autonomy", ""), config.POLL_KPI_SECONDS):
                     self._submit(("autonomy", ""), self.on_tick, self.client, self.store)
+
+                if config.CHAOS and self._due(("chaos", ""), config.CHAOS_TICK):
+                    self._submit(("chaos", ""), chaos.tick, self.client, self.store)
 
                 if self._due(("app_health", ""), HEALTH_EVERY):
                     self._submit(("app_health", ""), self.sample_health)
@@ -806,13 +810,14 @@ class Poller:
         """
         The later changes, oldest first, that could move this fix's KPIs
         before its window ends at `end`: an operator's (its reach is
-        unknown), or the agent's on the same process group or on the
-        deployment's size. The agent's edits elsewhere in the flow restart
-        only their own components, so they do not cut it.
+        unknown), or the agent's or the chaos injector's on the same
+        process group or on the deployment's size. Their edits elsewhere in
+        the flow restart only their own components, so they do not cut it.
         """
 
         crn = action["deployment_crn"]
-        found = changes.attribute(self.store.changes(crn), self.store.actions(deployment_crn=crn))
+        found = changes.attribute(self.store.changes(crn), self.store.actions(deployment_crn=crn),
+                                  self.store.injections(deployment_crn=crn))
         out = []
 
         for change in found:
@@ -833,6 +838,14 @@ class Poller:
                 if other.get("family") == "SIZING" or group == incident.get("process_group"):
                     out.append({"t": change["t"], "source": "agent", "kind": change["kind"],
                                 "action_id": other["id"], "text": f"the agent's {other.get('action_type')}"})
+
+            elif change["source"] == "chaos" and change.get("injection"):
+                scenario = packs.SCENARIOS.get(change["injection"]["scenario"])
+
+                # Worded like any change of this app's: the agent reads outcomes.
+                if change["kind"] == "sizing" or (scenario and scenario.group_name == incident.get("process_group")):
+                    out.append({"t": change["t"], "source": "chaos", "kind": change["kind"],
+                                "text": "a later change by this app"})
 
         return sorted(out, key=lambda c: c["t"])
 

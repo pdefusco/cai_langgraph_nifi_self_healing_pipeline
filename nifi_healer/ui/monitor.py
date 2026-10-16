@@ -345,6 +345,26 @@ def _operator_segment(change: dict, versions: list, flow, used: set) -> dict:
     return out
 
 
+def _chaos_segment(change: dict, versions: list, by_crn: dict, flow, used: set) -> dict:
+    """A change the chaos injector made: its scenario's fault planted again."""
+
+    row = change["injection"]
+    known = change["kind"] == "flow_version" and row.get("to_flow_version_crn") in by_crn
+    out = dict(_operator_segment(dict(change, kind="other") if known else change, versions, flow, used),
+               source="chaos", who="Chaos")
+    steps = "; ".join(s["label"] for s in row.get("steps") or [] if s.get("performed") and s.get("label"))
+    out["what"] = f"Re-planted {row['scenario']}" + (f": {steps}" if steps else "")
+
+    if known:
+        used.add(row["to_flow_version_crn"])
+        out["flow"] = by_crn[row["to_flow_version_crn"]]
+
+    out["short"] = _clip(f"{row['scenario']} re-planted" + (f" · v{out['flow']}" if change["kind"] == "flow_version"
+                                                            and out["flow"] is not None else ""), 24)
+
+    return out
+
+
 def _segments(store, pack: str, found: list, origin: float) -> tuple:
     """(segments, minor changes): every stretch since the first record, oldest first."""
 
@@ -366,6 +386,9 @@ def _segments(store, pack: str, found: list, origin: float) -> tuple:
 
         if change.get("action"):
             segment = _agent_segment(store, change, by_crn, flow, used, cache)
+
+        elif change.get("injection"):
+            segment = _chaos_segment(change, versions, by_crn, flow, used)
 
         else:
             segment = _operator_segment(change, versions, flow, used)
@@ -415,7 +438,8 @@ def _incidents(store, pack: str, crn: str, since: float, end: float, now: float)
 def model(store, pack: str, entry: dict, now: float, span: str = DEFAULT_RANGE, selected=None) -> dict:
     crn = entry.get("deployment_crn") or ""
     kpis = entry.get("kpis") or []
-    found = change_log.attribute(store.changes(crn), store.actions(deployment_crn=crn))
+    found = change_log.attribute(store.changes(crn), store.actions(deployment_crn=crn),
+                                 store.injections(deployment_crn=crn))
     first = store.first_sample_at(crn)
     times = [t for t in [first] + [c["t"] for c in found] if t is not None]
     origin = min(times) if times else None
@@ -552,7 +576,8 @@ def _origin(store, crn: str, found: list):
 
 def _fleet_row(store, pack: str, entry: dict, since: float, step: float, n: int, now: float) -> dict:
     crn = entry.get("deployment_crn") or ""
-    found = change_log.attribute(store.changes(crn), store.actions(deployment_crn=crn))
+    found = change_log.attribute(store.changes(crn), store.actions(deployment_crn=crn),
+                                 store.injections(deployment_crn=crn))
     origin = _origin(store, crn, found)
     segments, _ = _segments(store, pack, found, origin if origin is not None else since)
     grid = store.history(crn, since, step)
@@ -793,6 +818,7 @@ LEGEND = (
     '<div class="mx-legend">'
     '<span><i class="mx-key-agent"></i>Agent change</span>'
     '<span><i class="mx-key-operator"></i>Operator change</span>'
+    '<span><i class="mx-key-chaos"></i>Chaos re-plant</span>'
     '<span><i class="mx-key-minor"></i>Alert rules updated</span>'
     '<span><i class="mx-key-thr"></i>Alert threshold</span>'
     '<span><i class="mx-key-bad"></i>Over threshold</span>'
@@ -1110,6 +1136,7 @@ FLEET_LEGEND = (
     '<span><i class="mx-key-s"></i>no data</span>'
     '<span><i class="mx-key-agent"></i>Agent change</span>'
     '<span><i class="mx-key-operator"></i>Operator change</span>'
+    '<span><i class="mx-key-chaos"></i>Chaos re-plant</span>'
     '<span><i class="mx-inc mx-open"></i>open incident</span>'
     '<span><i class="mx-inc mx-improved"></i>resolved</span>'
     '<span><i class="mx-inc mx-nochange"></i>other closed</span>'
@@ -1415,6 +1442,7 @@ CSS = """
   --mx-line:var(--border-color-primary);--mx-grid:color-mix(in srgb,var(--border-color-primary) 55%,transparent);
   --mx-accent:var(--color-accent);--mx-accent-tint:color-mix(in srgb,var(--color-accent) 14%,transparent);
   --mx-operator:#c98419;--mx-operator-tint:color-mix(in srgb,#c98419 16%,transparent);
+  --mx-chaos:#8a5cc7;--mx-chaos-tint:color-mix(in srgb,#8a5cc7 16%,transparent);
   --mx-good:#2f9e6a;--mx-good-tint:color-mix(in srgb,#2f9e6a 16%,transparent);
   --mx-bad:#d9493e;--mx-bad-tint:color-mix(in srgb,#d9493e 14%,transparent);
   --mx-neutral-tint:color-mix(in srgb,var(--body-text-color-subdued) 18%,transparent);
@@ -1433,6 +1461,7 @@ CSS = """
 .mx-legend i{display:inline-block;flex:none}
 .mx-key-agent{width:10px;height:10px;border-radius:50%;background:var(--mx-accent)}
 .mx-key-operator{width:10px;height:10px;background:var(--mx-operator)}
+.mx-key-chaos{width:9px;height:9px;transform:rotate(45deg);background:var(--mx-chaos)}
 .mx-key-minor{width:2px;height:10px;background:var(--mx-muted)}
 .mx-key-thr{width:18px;border-top:1px dashed var(--mx-bad)}
 .mx-key-bad{width:18px;border-top:2px solid var(--mx-bad)}
@@ -1463,7 +1492,7 @@ CSS = """
 .mx-area{fill:var(--mx-fill);stroke:none}
 .mx-thr{stroke:var(--mx-bad);stroke-width:1;stroke-dasharray:2 3;opacity:.7}
 .mx-chg{stroke-width:1;stroke-dasharray:3 3;opacity:.55}
-.mx-chg.mx-agent{stroke:var(--mx-accent)}.mx-chg.mx-operator{stroke:var(--mx-operator)}
+.mx-chg.mx-agent{stroke:var(--mx-accent)}.mx-chg.mx-operator{stroke:var(--mx-operator)}.mx-chg.mx-chaos{stroke:var(--mx-chaos)}
 .mx-chg.mx-sel{stroke-dasharray:none;opacity:1;stroke-width:1.5}
 .mx-band{position:absolute;top:0;bottom:0;padding:16px 6px 0;font-size:11px;color:var(--mx-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mx-band b{color:var(--mx-ink);font-weight:600}
@@ -1472,6 +1501,7 @@ CSS = """
 .mx .mx-mk{all:unset;position:absolute;top:2px;width:11px;height:11px;transform:translateX(-50%);cursor:pointer;z-index:2;box-shadow:0 0 0 2px var(--mx-surface)}
 .mx .mx-mk.mx-agent{border-radius:50%;background:var(--mx-accent)}
 .mx .mx-mk.mx-operator{background:var(--mx-operator)}
+.mx .mx-mk.mx-chaos{width:9px;height:9px;top:3px;transform:translateX(-50%) rotate(45deg);background:var(--mx-chaos)}
 .mx .mx-mk.mx-sel{box-shadow:0 0 0 2px var(--mx-surface),0 0 0 3.5px var(--mx-ink)}
 .mx .mx-mk:focus-visible{outline:2px solid var(--mx-accent);outline-offset:3px}
 .mx-minor{position:absolute;top:3px;width:2px;height:9px;transform:translateX(-50%);background:var(--mx-muted);opacity:.7}
@@ -1486,6 +1516,7 @@ CSS = """
 .mx-chip{font:500 10px/1 var(--font);letter-spacing:.04em;padding:3px 6px;border-radius:3px;background:var(--mx-surface-2);color:var(--mx-ink);white-space:nowrap}
 .mx-chip.mx-decides,.mx-chip.mx-agent{background:var(--mx-accent-tint);color:var(--mx-accent)}
 .mx-chip.mx-operator{background:var(--mx-operator-tint);color:var(--mx-operator)}
+.mx-chip.mx-chaos{background:var(--mx-chaos-tint);color:var(--mx-chaos)}
 .mx-chip.mx-v-IMPROVED{background:var(--mx-good-tint);color:var(--mx-good)}
 .mx-chip.mx-v-WORSENED{background:var(--mx-bad-tint);color:var(--mx-bad)}
 .mx-chip.mx-v-NO_CHANGE,.mx-chip.mx-v-INCONCLUSIVE,.mx-chip.mx-v-pending{background:var(--mx-neutral-tint)}

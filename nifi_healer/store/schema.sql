@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS flow_versions (
     pack                TEXT NOT NULL,
     flow_crn            TEXT,
     version             INTEGER,
-    source              TEXT,               -- baseline | agent | external
+    source              TEXT,               -- baseline | agent | chaos | external
     incident_id         TEXT,
     comments            TEXT,
     first_seen_at       REAL
@@ -239,3 +239,24 @@ CREATE TABLE IF NOT EXISTS health_samples (
 
 CREATE INDEX IF NOT EXISTS health_samples_by_time
     ON health_samples (t);
+
+-- Every fault the chaos injector (chaos.py) planted again, or tried to:
+-- the soak's ground truth. Never read by the agent. steps_json holds each
+-- step's label and kind; labels name parameters, never their values.
+CREATE TABLE IF NOT EXISTS chaos_injections (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    pack                TEXT NOT NULL,
+    deployment_crn      TEXT NOT NULL,
+    scenario            TEXT NOT NULL,
+    family              TEXT,
+    status              TEXT NOT NULL,      -- PLANTED | DRY_RUN | REFUSED | FAILED | UNCHANGED
+    at                  REAL NOT NULL,
+    finished_at         REAL,
+    from_flow_version_crn TEXT,
+    to_flow_version_crn TEXT,
+    steps_json          TEXT,
+    detail              TEXT
+);
+
+CREATE INDEX IF NOT EXISTS chaos_injections_by_deployment
+    ON chaos_injections (deployment_crn, at);

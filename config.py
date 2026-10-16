@@ -155,6 +155,17 @@ AUTONOMY = _bool("SELFHEAL_AUTONOMY", MOCK)
 AUTONOMY_AFTER = max(1, _int("SELFHEAL_AUTONOMY_AFTER", 3))
 AUTONOMY_VETO_SECONDS = max(0, _int("SELFHEAL_AUTONOMY_VETO", 600))
 
+# The chaos injector (chaos.py): once a scenario's fault has cleared and
+# rested CHAOS_REST, it is planted again, one plant per tick across the
+# fleet, at most CHAOS_PER_DAY a day and CHAOS_SPACING apart on any one
+# deployment. Off unless set; the System tab can pause it. The tick is
+# wall seconds; rest, spacing and the day are the tenant's clock.
+CHAOS = _bool("SELFHEAL_CHAOS", False)
+CHAOS_TICK = max(1, _int("SELFHEAL_CHAOS_TICK", 30 if MOCK else 600))
+CHAOS_REST = max(0, _int("SELFHEAL_CHAOS_REST", 14400))
+CHAOS_PER_DAY = max(1, _int("SELFHEAL_CHAOS_PER_DAY", 3))
+CHAOS_SPACING = max(0, _int("SELFHEAL_CHAOS_SPACING", 7200))
+
 # ---------------------------------------------------------------------
 # Polling and verification
 # ---------------------------------------------------------------------

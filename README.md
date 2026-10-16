@@ -218,6 +218,13 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   itself after a 10-minute veto window in which anyone can approve, reject or **Hold** it
   (`nifi_healer/agent/autonomy.py`). Any miss takes the trust away; rollbacks, edits and warned reviews always wait
   for a person. On for the mock, off on live until `SELFHEAL_AUTONOMY=true`; **System → Pause autonomy** stops it.
+- **Chaos and fault episodes.** With `SELFHEAL_CHAOS=true` the app plants a fixed scenario's fault again once its
+  deployment is quiet and the scenario has rested 4 h (`nifi_healer/chaos.py`): only that process group swapped back
+  to the baseline as a new version, or only its parameters or sizing. One plant per tick across the fleet, at most 3
+  a day and 2 h apart per deployment, never on a control; disarmed it is a dry run, and **System → Pause chaos**
+  stops it. Each try is in the `chaos_injections` ledger (no parameter values, no user names), which the agent never
+  reads; the Monitor shows a plant as a chaos change. `nifi_healer/eval/soak.py` follows each plant to its detection,
+  decision, fixes and clearing, and counts false alarms.
 - **Playbook edits.** A rejection, or a wrong-fix label in History, has the LLM draft an edit to the playbook section
   the agent relied on (`nifi_healer/rag/drafter.py`). It waits on the **Playbooks** tab, with its reason and diff,
   until a person approves (or changes, rejects, later reverts) it. Approved edits are kept in the app's database and
