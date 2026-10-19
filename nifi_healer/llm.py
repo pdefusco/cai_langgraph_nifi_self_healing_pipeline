@@ -356,7 +356,9 @@ def probe() -> tuple:
             result = (True, "")
 
         else:
-            body = exc.read().decode("utf-8", "replace")[:160].strip()
+            # A gateway may answer with an HTML page: its text, on one line, fits a table cell.
+            body = re.sub(r"<[^>]*>", " ", exc.read().decode("utf-8", "replace"))
+            body = " ".join(body.replace("|", "/").split())[:160]
             result = (False, f"the endpoint answered {exc.code}" + (f": {body}" if body else ""))
 
     except (urllib.error.URLError, OSError) as exc:

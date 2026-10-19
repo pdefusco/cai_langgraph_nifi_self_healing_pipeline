@@ -191,6 +191,13 @@ def test_probe_reports_a_rejected_token_and_rechecks_after_a_minute(minted, monk
     clock.now += 61
     assert llm.probe() == (True, "") and len(seen) == 2
 
+    # A gateway's HTML page is reported as one line of its text.
+    answers.append(_http_error(401, b"<html>\n<head><title>Error</title></head>\n<body><h2>HTTP ERROR 401"
+                                    b" Unauthorized</h2>\n<table><tr><th>URI:</th><td>/x|y</td></tr></table>"))
+    clock.now += 61
+    ok, reason = llm.probe()
+    assert not ok and reason == "the endpoint answered 401: Error HTTP ERROR 401 Unauthorized URI: /x/y"
+
 
 def test_probe_skips_an_installed_model():
     llm.set_chat_model(object())
