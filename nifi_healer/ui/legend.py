@@ -200,6 +200,43 @@ How good the agent is at fixing things, counted from the incidents it handled.
 - **To resolve**: the median time from an incident opening to it being resolved.
 """
 
+SOAK = f"""
+How the agent holds up over days of faults planted on purpose.
+
+**Where the faults come from**
+- With `SELFHEAL_CHAOS` on, the chaos injector plants a scenario's fault again on a quiet deployment: no open
+  incident, no review waiting, nothing being applied or verified. It plants at most one fault a tick across the fleet,
+  at most {config.CHAOS_PER_DAY} a day on a deployment and {window_label(config.CHAOS_SPACING)} apart, and only after
+  the scenario's last episode ended {window_label(config.CHAOS_REST)} ago. Healthy controls are never planted.
+- The **soak** starts at chaos's first tick. Nothing from before it counts.
+- The agent never sees what was planted. Its prompts, memory and playbooks don't read the injector's ledger.
+
+**Episodes**
+- An **episode** follows one planted fault: the incident it opened, the first proposal, the review, every fix
+  applied, until its KPIs stay healthy for the scenario's clear window after the last fix.
+- **Status**: *cleared*; *missed* (no incident within twice the time the scenario should take to show); *gave up*
+  (not cleared within a day); else *open*. A rate leaves out what is still open.
+- Click an incident to open it in History.
+
+**Tiles and columns**
+- **Detected** and **Time to detect**: the share of plants that opened an incident, and the median time from the plant
+  to it.
+- **Picked the design fix**: the first proposal chose the fix the scenario was built to need.
+- **Cleared**, **Time to clear** and **Fixes**: the share cleared, the median time from the plant to healthy, and the
+  median fixes it took. A compound fault can take two.
+- **Review wait**: the median time from the proposal to its approval or rejection. **Approved by autonomy**: the share
+  of those decisions trusted fixes made by themselves.
+- **False alarms**: incidents no planted fault explains: on a healthy control, or on a group with no open episode.
+- **Regressions**: fixes measured worse in a later window; **Rollbacks**: those rolled back.
+- **By fault kind**: *classic* (one fault, one fix), *cascade* (the symptom shows stages away from its cause),
+  *compound* (two faults at once), *intermittent* (bursts that come and go), *slow burn* (shows only after hours),
+  *control* (healthy, so only false alarms).
+- **By day**: each fault counts on the UTC day it was planted. Time to clear and the autonomy share should improve as
+  the track record grows.
+
+**App health** charts the app itself over the last week, one point an hour (as on the System tab).
+"""
+
 SYSTEM = f"""
 How the app itself is configured and whether its parts are working.
 

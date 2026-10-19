@@ -31,7 +31,7 @@ from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
 from nifi_healer.runtime import poller as poller_module
 from nifi_healer.store.db import get_store
-from nifi_healer.ui import legend, monitor, playbooks, scorecard, views
+from nifi_healer.ui import legend, monitor, playbooks, scorecard, soak, views
 
 _started = threading.Event()
 _start_lock = threading.Lock()
@@ -581,6 +581,22 @@ def show_health():
     return monitor.render_health(monitor.health_model(get_store(), time.time()))
 
 
+@_timed
+def show_soak():
+    return soak.render(soak.model(get_store(), get_client().now()))
+
+
+def open_in_history(evt: gr.EventData):
+    """An episode's incident clicked on the Soak tab: History, at that incident."""
+
+    pick = (getattr(evt, "_data", None) or {}).get("pick")
+
+    if not pick:
+        return gr.skip(), gr.skip()
+
+    return gr.Tabs(selected="history"), gr.update(value=str(pick))
+
+
 def _autonomy_switch(paused: bool):
     @_timed
     def handler(request: gr.Request = None):
@@ -655,288 +671,300 @@ def build() -> gr.Blocks:
                     f"{'**ARMED**' if config.ARMED else 'disarmed (dry runs)'}"
                     + (" · autonomy on (trusted low-risk fixes approve themselves)" if config.AUTONOMY else ""))
 
-        with gr.Tab("Fleet"):
-            _legend(legend.FLEET)
+        with gr.Tabs() as tabs:
+            with gr.Tab("Fleet"):
+                _legend(legend.FLEET)
 
-            fleet_header = gr.Markdown()
-            deployment_table = gr.Dataframe(headers=views.DEPLOYMENT_HEADERS, interactive=False, wrap=True,
-                                            label="Deployments")
-            group_table = gr.Dataframe(headers=views.GROUP_HEADERS, interactive=False, wrap=True,
-                                       max_height=420, label="Process groups (in and out: FlowFiles per bucket)")
+                fleet_header = gr.Markdown()
+                deployment_table = gr.Dataframe(headers=views.DEPLOYMENT_HEADERS, interactive=False, wrap=True,
+                                                label="Deployments")
+                group_table = gr.Dataframe(headers=views.GROUP_HEADERS, interactive=False, wrap=True,
+                                           max_height=420, label="Process groups (in and out: FlowFiles per bucket)")
 
-            with gr.Accordion("KPIs", open=True):
-                fleet_table = gr.Dataframe(headers=views.FLEET_HEADERS, interactive=False, wrap=True,
-                                           max_height=520)
-
-            with gr.Row():
-                kpi_pick = gr.Dropdown(label="KPI chart", choices=[], scale=3, allow_custom_value=True)
-
-            kpi_plot = gr.LinePlot(x="time", y="value", color="series", height=300, label="KPI")
-            fleet_outputs = [fleet_header, deployment_table, group_table, fleet_table, kpi_plot]
-            fleet_timer = gr.Timer(1.0)
-            choices_timer = gr.Timer(15.0)
-            fleet_timer.tick(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs, show_progress="hidden")
-            choices_timer.tick(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick],
-                               show_progress="hidden")
-            kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
-
-        with gr.Tab("Review Queue"):
-            _legend(legend.REVIEW)
-
-            with gr.Row():
-                queue_pack = gr.Dropdown(label="Deployment", choices=[("All deployments", "")], value="",
-                                         scale=2)
-                queue_pick = gr.Dropdown(label="Incident", choices=[], scale=4, allow_custom_value=True)
-                queue_refresh = gr.Button("Refresh", scale=1)
-
-            queue_line = gr.Markdown()
-
-            with gr.Row():
-                with gr.Column(scale=2):
-                    evidence = gr.Markdown()
-
-                with gr.Column(scale=3):
-                    proposal = gr.Markdown()
-
-            diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True, label="Change")
-            commands = gr.Code(language="shell", label="Exact cdp commands", interactive=False)
-            steps = gr.Code(language="json", label="Steps (edit, then Submit edit to re-validate)",
-                            interactive=False)
-
-            with gr.Row():
-                reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
-                reason = gr.Textbox(label="Reason (required to reject)", scale=3)
-
-            with gr.Row():
-                approve_btn = gr.Button("Approve", variant="primary", interactive=False)
-                edit_btn = gr.Button("Submit edit", interactive=False)
-                reject_btn = gr.Button("Reject", variant="stop", interactive=False)
-                diagnose_btn = gr.Button("Diagnose", interactive=False)
-                hold_btn = gr.Button("Hold for review", visible=False)
-
-            review_result = gr.Markdown()
-            panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn,
-                     hold_btn]
-            seen = gr.State("")
-            queue_timer = gr.Timer(5.0)
-            packs_timer = gr.Timer(30.0)
-            follow_timer = gr.Timer(3.0)
-
-            queue_pick.change(select_review, inputs=[queue_pick], outputs=panel + [seen])
-            queue_pack.change(filter_queue, inputs=[queue_pack, queue_pick], outputs=[queue_pick, queue_line])
-            queue_refresh.click(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line]).then(
-                refresh_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick]).then(
-                select_review, inputs=[queue_pick], outputs=panel + [seen])
-            queue_timer.tick(tick_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick, queue_line],
-                             show_progress="hidden")
-            packs_timer.tick(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line],
-                             show_progress="hidden")
-            follow_timer.tick(follow_review, inputs=[queue_pick, seen], outputs=panel + [seen],
-                              show_progress="hidden")
-
-            # seen goes in so a decision can tell the panel the reviewer read
-            # was for the incident the dropdown now names.
-            decision_inputs = [queue_pick, reviewer, reason, steps, seen]
-            decision_outputs = [review_result] + panel + [queue_pick, seen]
-            approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
-            edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
-            reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
-            hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
-            diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
-
-        with gr.Tab("History"):
-            _legend(legend.HISTORY)
-
-            history_refresh = gr.Button("Refresh")
-            history_table = gr.Dataframe(headers=views.HISTORY_HEADERS, interactive=False, wrap=True,
-                                         max_height=420)
-            history_pick = gr.Dropdown(label="Incident", choices=[], allow_custom_value=True)
-            history_detail = gr.Markdown()
-
-            # The measured verdicts stay as measured: a reviewer labels the fix
-            # (the scorecard counts the label), re-measures a window, say from
-            # after another fault cleared, or proposes undoing the fix.
-            with gr.Accordion("Correct the outcome, or undo the fix", open=False):
-                fix_pick = gr.Dropdown(label="Applied fix", choices=[], allow_custom_value=True)
+                with gr.Accordion("KPIs", open=True):
+                    fleet_table = gr.Dataframe(headers=views.FLEET_HEADERS, interactive=False, wrap=True,
+                                               max_height=520)
 
                 with gr.Row():
-                    fix_label = gr.Radio(views.label_choices(), label="Your call on the fix", scale=2)
-                    fix_reason = gr.Textbox(label="Reason (required)", scale=3)
-                    fix_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank",
-                                              scale=1)
+                    kpi_pick = gr.Dropdown(label="KPI chart", choices=[], scale=3, allow_custom_value=True)
 
-                label_btn = gr.Button("Save label")
+                kpi_plot = gr.LinePlot(x="time", y="value", color="series", height=300, label="KPI")
+                fleet_outputs = [fleet_header, deployment_table, group_table, fleet_table, kpi_plot]
+                fleet_timer = gr.Timer(1.0)
+                choices_timer = gr.Timer(15.0)
+                fleet_timer.tick(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs, show_progress="hidden")
+                choices_timer.tick(refresh_kpi_choices, inputs=[kpi_pick], outputs=[kpi_pick],
+                                   show_progress="hidden")
+                kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
+
+            with gr.Tab("Review Queue"):
+                _legend(legend.REVIEW)
 
                 with gr.Row():
-                    fix_window = gr.Dropdown(views.window_choices(), value=config.VERIFY_WINDOWS[0],
-                                             label="Window to re-check", scale=1)
-                    fix_start = gr.Textbox(label="Measure from (UTC)", scale=2,
-                                           placeholder="blank: when the fix finished · +30 · 14:05 · "
-                                                       "2026-10-12 14:05")
+                    queue_pack = gr.Dropdown(label="Deployment", choices=[("All deployments", "")], value="",
+                                             scale=2)
+                    queue_pick = gr.Dropdown(label="Incident", choices=[], scale=4, allow_custom_value=True)
+                    queue_refresh = gr.Button("Refresh", scale=1)
 
-                recheck_btn = gr.Button("Re-check")
+                queue_line = gr.Markdown()
 
-                # Undo the fix: a rollback incident, approved or rejected in the Review Queue.
                 with gr.Row():
-                    rollback_reason = gr.Textbox(label="Why undo it (required)", scale=4)
-                    rollback_btn = gr.Button("Propose a rollback", scale=1)
+                    with gr.Column(scale=2):
+                        evidence = gr.Markdown()
 
-                correction_result = gr.Markdown()
+                    with gr.Column(scale=3):
+                        proposal = gr.Markdown()
 
-            history_refresh.click(refresh_history, inputs=[history_pick],
-                                  outputs=[history_table, history_pick, history_detail]).then(
-                pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
-            history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
-            history_pick.change(pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
-            corrected = [correction_result, history_table, history_detail]
-            label_btn.click(label_fix, inputs=[history_pick, fix_pick, fix_label, fix_reason, fix_reviewer],
-                            outputs=corrected)
-            recheck_btn.click(recheck, inputs=[history_pick, fix_pick, fix_window, fix_start, fix_reviewer],
-                              outputs=corrected)
-            rollback_btn.click(propose_rollback, inputs=[history_pick, fix_pick, rollback_reason, fix_reviewer],
-                               outputs=corrected)
+                diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True, label="Change")
+                commands = gr.Code(language="shell", label="Exact cdp commands", interactive=False)
+                steps = gr.Code(language="json", label="Steps (edit, then Submit edit to re-validate)",
+                                interactive=False)
 
-        with gr.Tab("Playbooks"):
-            _legend(legend.PLAYBOOKS)
+                with gr.Row():
+                    reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
+                    reason = gr.Textbox(label="Reason (required to reject)", scale=3)
 
-            with gr.Row():
-                pb_view = gr.Radio(list(playbooks.VIEWS), value=playbooks.DEFAULT_VIEW, label="Show", scale=2)
-                pb_pick = gr.Dropdown(label="Playbook edit", choices=[], scale=5, allow_custom_value=True)
-                pb_refresh = gr.Button("Refresh", scale=1)
+                with gr.Row():
+                    approve_btn = gr.Button("Approve", variant="primary", interactive=False)
+                    edit_btn = gr.Button("Submit edit", interactive=False)
+                    reject_btn = gr.Button("Reject", variant="stop", interactive=False)
+                    diagnose_btn = gr.Button("Diagnose", interactive=False)
+                    hold_btn = gr.Button("Hold for review", visible=False)
 
-            pb_html = gr.HTML()
-            pb_text = gr.Textbox(label="The section's new text (change it before approving if you like)", lines=10,
-                                 max_lines=30, interactive=False)
+                review_result = gr.Markdown()
+                panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn,
+                         hold_btn]
+                seen = gr.State("")
+                queue_timer = gr.Timer(5.0)
+                packs_timer = gr.Timer(30.0)
+                follow_timer = gr.Timer(3.0)
 
-            with gr.Row():
-                pb_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
-                pb_reason = gr.Textbox(label="Reason (required to reject or revert)", scale=3)
+                queue_pick.change(select_review, inputs=[queue_pick], outputs=panel + [seen])
+                queue_pack.change(filter_queue, inputs=[queue_pack, queue_pick], outputs=[queue_pick, queue_line])
+                queue_refresh.click(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line]).then(
+                    refresh_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick]).then(
+                    select_review, inputs=[queue_pick], outputs=panel + [seen])
+                queue_timer.tick(tick_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick, queue_line],
+                                 show_progress="hidden")
+                packs_timer.tick(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line],
+                                 show_progress="hidden")
+                follow_timer.tick(follow_review, inputs=[queue_pick, seen], outputs=panel + [seen],
+                                  show_progress="hidden")
 
-            with gr.Row():
-                pb_approve = gr.Button("Approve", variant="primary", interactive=False)
-                pb_reject = gr.Button("Reject", variant="stop", interactive=False)
-                pb_revert = gr.Button("Revert", interactive=False)
-                pb_redraft = gr.Button("Draft again", interactive=False)
+                # seen goes in so a decision can tell the panel the reviewer read
+                # was for the incident the dropdown now names.
+                decision_inputs = [queue_pick, reviewer, reason, steps, seen]
+                decision_outputs = [review_result] + panel + [queue_pick, seen]
+                approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
+                edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
+                reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
+                hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
+                diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
-            pb_result = gr.Markdown()
+            with gr.Tab("History", id="history"):
+                _legend(legend.HISTORY)
 
-            with gr.Accordion("Make the applied edits permanent", open=False):
-                gr.Markdown("The applied edits as a patch to `playbooks/`. Save it as `playbooks.patch` in a clone of "
-                            "the repository, run `git apply playbooks.patch`, commit and push, then pull on the app "
-                            "(`pull_and_restart.py`). The app then finds each edit already in the file and marks "
-                            "it MERGED, so nothing is applied twice. Empty while no edit is applied.")
-                pb_patch = gr.Code(language=None, label="playbooks.patch", interactive=False)
+                history_refresh = gr.Button("Refresh")
+                history_table = gr.Dataframe(headers=views.HISTORY_HEADERS, interactive=False, wrap=True,
+                                             max_height=420)
+                history_pick = gr.Dropdown(label="Incident", choices=[], allow_custom_value=True)
+                history_detail = gr.Markdown()
 
-            pb_panel = [pb_html, pb_text, pb_approve, pb_reject, pb_revert, pb_redraft]
-            pb_seen = gr.State("")
-            pb_timer = gr.Timer(5.0)
+                # The measured verdicts stay as measured: a reviewer labels the fix
+                # (the scorecard counts the label), re-measures a window, say from
+                # after another fault cleared, or proposes undoing the fix.
+                with gr.Accordion("Correct the outcome, or undo the fix", open=False):
+                    fix_pick = gr.Dropdown(label="Applied fix", choices=[], allow_custom_value=True)
 
-            pb_pick.change(select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
-            pb_view.change(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick])
-            pb_refresh.click(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
-                select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen]).then(
-                playbook_patch, outputs=[pb_patch])
-            pb_timer.tick(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick],
-                          show_progress="hidden").then(
-                follow_playbook_edit, inputs=[pb_pick, pb_seen], outputs=pb_panel + [pb_seen],
-                show_progress="hidden")
+                    with gr.Row():
+                        fix_label = gr.Radio(views.label_choices(), label="Your call on the fix", scale=2)
+                        fix_reason = gr.Textbox(label="Reason (required)", scale=3)
+                        fix_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank",
+                                                  scale=1)
 
-            pb_inputs = [pb_view, pb_pick, pb_text, pb_reason, pb_reviewer, pb_seen]
-            pb_outputs = [pb_result] + pb_panel + [pb_seen, pb_pick, pb_patch]
-            pb_approve.click(_playbook_decision("approve"), inputs=pb_inputs, outputs=pb_outputs)
-            pb_reject.click(_playbook_decision("reject"), inputs=pb_inputs, outputs=pb_outputs)
-            pb_revert.click(_playbook_decision("revert"), inputs=pb_inputs, outputs=pb_outputs)
-            pb_redraft.click(_playbook_decision("redraft"), inputs=pb_inputs, outputs=pb_outputs)
+                    label_btn = gr.Button("Save label")
 
-        with gr.Tab("Monitor"):
-            _legend(legend.MONITOR)
+                    with gr.Row():
+                        fix_window = gr.Dropdown(views.window_choices(), value=config.VERIFY_WINDOWS[0],
+                                                 label="Window to re-check", scale=1)
+                        fix_start = gr.Textbox(label="Measure from (UTC)", scale=2,
+                                               placeholder="blank: when the fix finished · +30 · 14:05 · "
+                                                           "2026-10-12 14:05")
 
-            with gr.Row():
-                mon_range = gr.Radio(list(monitor.RANGES), value=monitor.DEFAULT_RANGE, label="Range", scale=2)
-                fleet_query = gr.Textbox(label="Filter deployments", placeholder="name", scale=2)
-                fleet_sort = gr.Radio(list(monitor.FLEET_SORTS), value=monitor.FLEET_SORTS[0], label="Sort",
-                                      scale=3)
-                fleet_attention = gr.Checkbox(label="Needs attention only", scale=1)
+                    recheck_btn = gr.Button("Re-check")
 
-            fleet_html = gr.HTML(js_on_load=monitor.JS)
+                    # Undo the fix: a rollback incident, approved or rejected in the Review Queue.
+                    with gr.Row():
+                        rollback_reason = gr.Textbox(label="Why undo it (required)", scale=4)
+                        rollback_btn = gr.Button("Propose a rollback", scale=1)
 
-            with gr.Row():
-                mon_pack = gr.Dropdown(label="Deployment", choices=[], scale=2, allow_custom_value=True)
-                mon_change = gr.Dropdown(label="Change", choices=[], scale=3, allow_custom_value=True)
+                    correction_result = gr.Markdown()
 
-            mon_html = gr.HTML(js_on_load=monitor.JS)
-            mon_timer = gr.Timer(30.0)
-            mon_inputs = [mon_pack, mon_range, mon_change]
-            fleet_inputs = [mon_range, fleet_query, fleet_sort, fleet_attention, mon_pack]
-            fleet_out = dict(inputs=fleet_inputs, outputs=[fleet_html], show_progress="hidden")
+                history_refresh.click(refresh_history, inputs=[history_pick],
+                                      outputs=[history_table, history_pick, history_detail]).then(
+                    pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
+                history_pick.change(show_incident, inputs=[history_pick], outputs=[history_detail])
+                history_pick.change(pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
+                corrected = [correction_result, history_table, history_detail]
+                label_btn.click(label_fix, inputs=[history_pick, fix_pick, fix_label, fix_reason, fix_reviewer],
+                                outputs=corrected)
+                recheck_btn.click(recheck, inputs=[history_pick, fix_pick, fix_window, fix_start, fix_reviewer],
+                                  outputs=corrected)
+                rollback_btn.click(propose_rollback, inputs=[history_pick, fix_pick, rollback_reason, fix_reviewer],
+                                   outputs=corrected)
 
-            mon_timer.tick(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change],
-                           show_progress="hidden").then(show_fleet, **fleet_out)
-            mon_pack.input(pick_deployment, inputs=[mon_pack, mon_range], outputs=[mon_html, mon_change]).then(
-                show_fleet, **fleet_out)
-            mon_range.change(show_monitor, inputs=mon_inputs, outputs=[mon_html])
-            mon_range.change(show_fleet, **fleet_out)
-            fleet_query.input(show_fleet, trigger_mode="always_last", **fleet_out)
-            fleet_sort.change(show_fleet, **fleet_out)
-            fleet_attention.change(show_fleet, **fleet_out)
-            mon_change.change(show_monitor, inputs=mon_inputs, outputs=[mon_html], show_progress="hidden")
-            mon_html.click(pick_change, outputs=[mon_change])
-            fleet_html.click(pick_fleet, inputs=[mon_range], outputs=[mon_pack, mon_html, mon_change]).then(
-                show_fleet, **fleet_out)
+            with gr.Tab("Playbooks"):
+                _legend(legend.PLAYBOOKS)
 
-        with gr.Tab("Scorecard"):
-            _legend(legend.SCORECARD)
+                with gr.Row():
+                    pb_view = gr.Radio(list(playbooks.VIEWS), value=playbooks.DEFAULT_VIEW, label="Show", scale=2)
+                    pb_pick = gr.Dropdown(label="Playbook edit", choices=[], scale=5, allow_custom_value=True)
+                    pb_refresh = gr.Button("Refresh", scale=1)
 
-            with gr.Row():
-                score_source = gr.Radio(list(scorecard.SOURCES), value=scorecard.LIVE, label="Incidents",
-                                        info="Replay: the offline replay's trials (eval/replay.py)", scale=2)
-                score_since = gr.Radio(list(scorecard.SINCE), value=scorecard.DEFAULT_SINCE, label="Since",
-                                       scale=2)
-                score_group = gr.Radio(list(scorecard.GROUPINGS), value=scorecard.GROUPINGS[0],
-                                       label="Group by", scale=4)
-                score_refresh = gr.Button("Refresh", scale=1)
+                pb_html = gr.HTML()
+                pb_text = gr.Textbox(label="The section's new text (change it before approving if you like)", lines=10,
+                                     max_lines=30, interactive=False)
 
-            score_html = gr.HTML()
-            score_inputs = dict(inputs=[score_since, score_group, score_source], outputs=[score_html])
+                with gr.Row():
+                    pb_reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
+                    pb_reason = gr.Textbox(label="Reason (required to reject or revert)", scale=3)
 
-            score_refresh.click(show_scorecard, **score_inputs)
-            score_source.change(show_scorecard, **score_inputs)
-            score_since.change(show_scorecard, **score_inputs)
-            score_group.change(show_scorecard, **score_inputs)
+                with gr.Row():
+                    pb_approve = gr.Button("Approve", variant="primary", interactive=False)
+                    pb_reject = gr.Button("Reject", variant="stop", interactive=False)
+                    pb_revert = gr.Button("Revert", interactive=False)
+                    pb_redraft = gr.Button("Draft again", interactive=False)
 
-        with gr.Tab("System"):
-            _legend(legend.SYSTEM)
+                pb_result = gr.Markdown()
 
-            system_md = gr.Markdown()
+                with gr.Accordion("Make the applied edits permanent", open=False):
+                    gr.Markdown("The applied edits as a patch to `playbooks/`. Save it as `playbooks.patch` in a clone of "
+                                "the repository, run `git apply playbooks.patch`, commit and push, then pull on the app "
+                                "(`pull_and_restart.py`). The app then finds each edit already in the file and marks "
+                                "it MERGED, so nothing is applied twice. Empty while no edit is applied.")
+                    pb_patch = gr.Code(language=None, label="playbooks.patch", interactive=False)
 
-            with gr.Row():
-                system_refresh = gr.Button("Refresh")
-                poll_btn = gr.Button("Poll now")
-                selftest_btn = gr.Button("Selftest")
-                pause_btn = gr.Button("Pause autonomy", visible=config.AUTONOMY)
-                unpause_btn = gr.Button("Resume autonomy", visible=config.AUTONOMY)
-                chaos_pause_btn = gr.Button("Pause chaos", visible=config.CHAOS)
-                chaos_resume_btn = gr.Button("Resume chaos", visible=config.CHAOS)
+                pb_panel = [pb_html, pb_text, pb_approve, pb_reject, pb_revert, pb_redraft]
+                pb_seen = gr.State("")
+                pb_timer = gr.Timer(5.0)
 
-            with gr.Row(visible=config.MOCK):
-                minutes = gr.Slider(1, 120, value=20, step=1, label="Fast-forward the mock clock (minutes)")
-                forward_btn = gr.Button("Fast-forward")
+                pb_pick.change(select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
+                pb_view.change(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick])
+                pb_refresh.click(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
+                    select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen]).then(
+                    playbook_patch, outputs=[pb_patch])
+                pb_timer.tick(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick],
+                              show_progress="hidden").then(
+                    follow_playbook_edit, inputs=[pb_pick, pb_seen], outputs=pb_panel + [pb_seen],
+                    show_progress="hidden")
 
-            system_result = gr.Markdown()
-            health_html = gr.HTML(js_on_load=monitor.JS)
-            selftest_out = gr.JSON(label="Selftest")
-            health_timer = gr.Timer(60.0)
+                pb_inputs = [pb_view, pb_pick, pb_text, pb_reason, pb_reviewer, pb_seen]
+                pb_outputs = [pb_result] + pb_panel + [pb_seen, pb_pick, pb_patch]
+                pb_approve.click(_playbook_decision("approve"), inputs=pb_inputs, outputs=pb_outputs)
+                pb_reject.click(_playbook_decision("reject"), inputs=pb_inputs, outputs=pb_outputs)
+                pb_revert.click(_playbook_decision("revert"), inputs=pb_inputs, outputs=pb_outputs)
+                pb_redraft.click(_playbook_decision("redraft"), inputs=pb_inputs, outputs=pb_outputs)
 
-            system_refresh.click(refresh_system, outputs=[system_md]).then(show_health, outputs=[health_html])
-            health_timer.tick(show_health, outputs=[health_html], show_progress="hidden")
-            poll_btn.click(poll_now, outputs=[system_result]).then(refresh_system, outputs=[system_md])
-            selftest_btn.click(selftest, outputs=[selftest_out])
-            pause_btn.click(_autonomy_switch(True), outputs=[system_result, system_md])
-            unpause_btn.click(_autonomy_switch(False), outputs=[system_result, system_md])
-            chaos_pause_btn.click(_chaos_switch(True), outputs=[system_result, system_md])
-            chaos_resume_btn.click(_chaos_switch(False), outputs=[system_result, system_md])
-            forward_btn.click(fast_forward, inputs=[minutes], outputs=[system_result]).then(
-                refresh_system, outputs=[system_md])
+            with gr.Tab("Monitor"):
+                _legend(legend.MONITOR)
+
+                with gr.Row():
+                    mon_range = gr.Radio(list(monitor.RANGES), value=monitor.DEFAULT_RANGE, label="Range", scale=2)
+                    fleet_query = gr.Textbox(label="Filter deployments", placeholder="name", scale=2)
+                    fleet_sort = gr.Radio(list(monitor.FLEET_SORTS), value=monitor.FLEET_SORTS[0], label="Sort",
+                                          scale=3)
+                    fleet_attention = gr.Checkbox(label="Needs attention only", scale=1)
+
+                fleet_html = gr.HTML(js_on_load=monitor.JS)
+
+                with gr.Row():
+                    mon_pack = gr.Dropdown(label="Deployment", choices=[], scale=2, allow_custom_value=True)
+                    mon_change = gr.Dropdown(label="Change", choices=[], scale=3, allow_custom_value=True)
+
+                mon_html = gr.HTML(js_on_load=monitor.JS)
+                mon_timer = gr.Timer(30.0)
+                mon_inputs = [mon_pack, mon_range, mon_change]
+                fleet_inputs = [mon_range, fleet_query, fleet_sort, fleet_attention, mon_pack]
+                fleet_out = dict(inputs=fleet_inputs, outputs=[fleet_html], show_progress="hidden")
+
+                mon_timer.tick(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change],
+                               show_progress="hidden").then(show_fleet, **fleet_out)
+                mon_pack.input(pick_deployment, inputs=[mon_pack, mon_range], outputs=[mon_html, mon_change]).then(
+                    show_fleet, **fleet_out)
+                mon_range.change(show_monitor, inputs=mon_inputs, outputs=[mon_html])
+                mon_range.change(show_fleet, **fleet_out)
+                fleet_query.input(show_fleet, trigger_mode="always_last", **fleet_out)
+                fleet_sort.change(show_fleet, **fleet_out)
+                fleet_attention.change(show_fleet, **fleet_out)
+                mon_change.change(show_monitor, inputs=mon_inputs, outputs=[mon_html], show_progress="hidden")
+                mon_html.click(pick_change, outputs=[mon_change])
+                fleet_html.click(pick_fleet, inputs=[mon_range], outputs=[mon_pack, mon_html, mon_change]).then(
+                    show_fleet, **fleet_out)
+
+            with gr.Tab("Scorecard"):
+                _legend(legend.SCORECARD)
+
+                with gr.Row():
+                    score_source = gr.Radio(list(scorecard.SOURCES), value=scorecard.LIVE, label="Incidents",
+                                            info="Replay: the offline replay's trials (eval/replay.py)", scale=2)
+                    score_since = gr.Radio(list(scorecard.SINCE), value=scorecard.DEFAULT_SINCE, label="Since",
+                                           scale=2)
+                    score_group = gr.Radio(list(scorecard.GROUPINGS), value=scorecard.GROUPINGS[0],
+                                           label="Group by", scale=4)
+                    score_refresh = gr.Button("Refresh", scale=1)
+
+                score_html = gr.HTML()
+                score_inputs = dict(inputs=[score_since, score_group, score_source], outputs=[score_html])
+
+                score_refresh.click(show_scorecard, **score_inputs)
+                score_source.change(show_scorecard, **score_inputs)
+                score_since.change(show_scorecard, **score_inputs)
+                score_group.change(show_scorecard, **score_inputs)
+
+            with gr.Tab("Soak"):
+                _legend(legend.SOAK)
+
+                soak_refresh = gr.Button("Refresh")
+                soak_html = gr.HTML(js_on_load=monitor.JS)
+                soak_timer = gr.Timer(60.0)
+
+                soak_refresh.click(show_soak, outputs=[soak_html])
+                soak_timer.tick(show_soak, outputs=[soak_html], show_progress="hidden")
+                soak_html.click(open_in_history, outputs=[tabs, history_pick])
+
+            with gr.Tab("System"):
+                _legend(legend.SYSTEM)
+
+                system_md = gr.Markdown()
+
+                with gr.Row():
+                    system_refresh = gr.Button("Refresh")
+                    poll_btn = gr.Button("Poll now")
+                    selftest_btn = gr.Button("Selftest")
+                    pause_btn = gr.Button("Pause autonomy", visible=config.AUTONOMY)
+                    unpause_btn = gr.Button("Resume autonomy", visible=config.AUTONOMY)
+                    chaos_pause_btn = gr.Button("Pause chaos", visible=config.CHAOS)
+                    chaos_resume_btn = gr.Button("Resume chaos", visible=config.CHAOS)
+
+                with gr.Row(visible=config.MOCK):
+                    minutes = gr.Slider(1, 120, value=20, step=1, label="Fast-forward the mock clock (minutes)")
+                    forward_btn = gr.Button("Fast-forward")
+
+                system_result = gr.Markdown()
+                health_html = gr.HTML(js_on_load=monitor.JS)
+                selftest_out = gr.JSON(label="Selftest")
+                health_timer = gr.Timer(60.0)
+
+                system_refresh.click(refresh_system, outputs=[system_md]).then(show_health, outputs=[health_html])
+                health_timer.tick(show_health, outputs=[health_html], show_progress="hidden")
+                poll_btn.click(poll_now, outputs=[system_result]).then(refresh_system, outputs=[system_md])
+                selftest_btn.click(selftest, outputs=[selftest_out])
+                pause_btn.click(_autonomy_switch(True), outputs=[system_result, system_md])
+                unpause_btn.click(_autonomy_switch(False), outputs=[system_result, system_md])
+                chaos_pause_btn.click(_chaos_switch(True), outputs=[system_result, system_md])
+                chaos_resume_btn.click(_chaos_switch(False), outputs=[system_result, system_md])
+                forward_btn.click(fast_forward, inputs=[minutes], outputs=[system_result]).then(
+                    refresh_system, outputs=[system_md])
 
         # Choices are filled per session; allow_custom_value keeps a pick valid
         # between refreshes (and for API callers). Handlers check the ids.
@@ -955,6 +983,7 @@ def build() -> gr.Blocks:
         demo.load(refresh_system, outputs=[system_md])
         demo.load(show_health, outputs=[health_html])
         demo.load(show_scorecard, **score_inputs)
+        demo.load(show_soak, outputs=[soak_html])
         demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
             show_fleet, **fleet_out)
 
@@ -965,4 +994,4 @@ def main() -> None:
     startup()
     build().queue(default_concurrency_limit=4).launch(
         server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
-        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS + playbooks.CSS)
+        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS + playbooks.CSS + soak.CSS)

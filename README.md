@@ -224,7 +224,9 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   a day and 2 h apart per deployment, never on a control; disarmed it is a dry run, and **System → Pause chaos**
   stops it. Each try is in the `chaos_injections` ledger (no parameter values, no user names), which the agent never
   reads; the Monitor shows a plant as a chaos change. `nifi_healer/eval/soak.py` follows each plant to its detection,
-  decision, fixes and clearing, and counts false alarms.
+  decision, fixes and clearing, and counts false alarms. The **Soak** tab shows them since chaos first ticked:
+  detected, time to detect and to clear, fixes, review wait, the autonomy share, false alarms a day and regressions,
+  overall, by fault kind and by day, with the latest episodes (an incident opens in History) and a week of App health.
 - **Playbook edits.** A rejection, or a wrong-fix label in History, has the LLM draft an edit to the playbook section
   the agent relied on (`nifi_healer/rag/drafter.py`). It waits on the **Playbooks** tab, with its reason and diff,
   until a person approves (or changes, rejects, later reverts) it. Approved edits are kept in the app's database and
