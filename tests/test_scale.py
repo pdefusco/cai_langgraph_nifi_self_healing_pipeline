@@ -176,12 +176,13 @@ def test_no_workers_runs_every_call_alone(fake_cdp, monkeypatch):
 def test_the_worker_rejects_a_malformed_request():
     worker = subprocess.Popen([sys.executable, clients.WORKER_SCRIPT], stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                              env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": ""})
+                              env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": "",
+                                   "HOME": os.environ.get("HOME", "")})   # the user site, as on CAI
 
     try:
         line = worker.stdout.readline()
 
-        if not json.loads(line).get("ready"):
+        if not json.loads(line or "{}").get("ready"):
             pytest.skip("no cdpcli in this environment")
 
         worker.stdin.write("[1, 2]\n")

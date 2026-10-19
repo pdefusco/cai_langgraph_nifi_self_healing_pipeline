@@ -317,9 +317,12 @@ def test_an_older_store_gains_the_rollback_columns(tmp_path):
     Store(path).conn.close()
     conn = sqlite3.connect(path)
 
-    for column in ("kind", "rollback_of_action_id"):
-        conn.execute(f"ALTER TABLE incidents DROP COLUMN {column}")
-
+    # The table as it was, rebuilt without the two columns (some SQLite builds refuse DROP COLUMN on it).
+    kept = ", ".join(r[1] for r in conn.execute("PRAGMA table_info(incidents)")
+                     if r[1] not in ("kind", "rollback_of_action_id"))
+    conn.execute(f"CREATE TABLE incidents_old AS SELECT {kept} FROM incidents")
+    conn.execute("DROP TABLE incidents")
+    conn.execute("ALTER TABLE incidents_old RENAME TO incidents")
     conn.commit()
     conn.close()
 
