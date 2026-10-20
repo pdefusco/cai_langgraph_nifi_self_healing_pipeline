@@ -55,7 +55,7 @@ nifi_healer/
   sim/                     the mock tenant (world model, bootstrap)
   store/                   SQLite store (incidents, proposals, reviews, actions, outcomes)
   ui/                      views.py (plain data) + gradio_app.py (layout)
-flows/                     flow builder, 21 scenario modules, packs; flows/out/<pack>.json
+flows/                     flow builder, scenario modules (scenarios/README.md), packs; flows/out/<pack>.json
 playbooks/                 markdown playbooks + cdf-platform-rules.md (ingested into Chroma)
 provision/                 00–06 + teardown scripts, and commands.md (the raw cdp commands)
 tests/
@@ -63,8 +63,10 @@ tests/
 
 ## Test scenarios
 
-There are 21 scenarios in 7 packs. Each pack is one deployment, named `nfh-<pack>`, and each scenario is one process
-group inside it. Every scenario declares:
+There are 45 scenarios in 20 packs. Each pack is one deployment, named `nfh-<pack>`, and each scenario is one process
+group inside it. **[flows/scenarios/README.md](flows/scenarios/README.md)** describes how each one is built: its
+processors and settings, the planted fault and its arithmetic, KPIs, fixes and traps. It is generated from the
+definitions by `python flows/scenario_docs.py`. Every scenario declares:
 
 - the fault it injects;
 - its KPIs;
