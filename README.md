@@ -64,9 +64,9 @@ tests/
 ## Test scenarios
 
 There are 45 scenarios in 20 packs. Each pack is one deployment, named `nfh-<pack>`, and each scenario is one process
-group inside it. **[flows/scenarios/README.md](flows/scenarios/README.md)** describes how each one is built: its
-processors and settings, the planted fault and its arithmetic, KPIs, fixes and traps. It is generated from the
-definitions by `python flows/scenario_docs.py`. Every scenario declares:
+group inside it. **[flows/scenarios/README.md](flows/scenarios/README.md)** walks through each one, with a diagram
+of its flow, how it's graded and its full settings. The walkthroughs are written by hand in
+`flows/scenario_walkthroughs.py`, and `python flows/scenario_docs.py` generates the rest. Every scenario declares:
 
 - the fault it injects;
 - its KPIs;
