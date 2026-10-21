@@ -9,40 +9,64 @@ actions: [SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE, NO_ACTION]
 
 A queue whose Queued Count rises steadily, bucket after bucket, means the
 processor it feeds takes FlowFiles out more slowly than they arrive. The fix
-is always on that consumer: give it more threads or let it run more often.
-The queue itself is only where the problem shows.
+is on the bottleneck, the first stage that cannot keep up, sized so that its
+new capacity is above the intake. The queue itself is only where the problem
+shows, and in a long pipeline it may be several stages before the bottleneck.
 
 ## Diagnosis: confirm it is the consumer
 <!-- actions: SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE -->
 
-Compare the producer's FlowFiles Out with the consumer's FlowFiles In over
-the same buckets. If the consumer handles less than the producer sends, and
-the queue between them grows by about the difference, the consumer is the
-bottleneck. Then look at the consumer's settings in the flow inventory:
+Find the bottleneck first. Follow the group's queues in flow order: the
+bottleneck is the stage whose input queue is full or growing and whose output
+queue is not. A queue further upstream may be the one that alerted, but it is
+full only because back pressure stops the stage that feeds it, and speeding
+that stage up passes no more.
 
-- Concurrent Tasks of 1 with a short run schedule (0 sec to a few hundred
-  ms): the consumer is busy all the time and needs more threads.
-- A long run schedule (several seconds or more): the consumer sits idle
-  between runs. Here threads do not help much, so the run schedule is the
-  lever.
+Then compare the bottleneck's measured rate in with its ceiling, from the
+flow inventory:
 
-A rough capacity check is: maximum rate = Concurrent Tasks x (1 / run
-schedule) x FlowFiles per run. If that ceiling is below the arrival rate,
-no amount of waiting will clear the queue.
+    ceiling = Concurrent Tasks / run schedule
+
+in FlowFiles per second, since most processors take one FlowFile per run. A
+run schedule of 0 sec puts no ceiling on it.
+
+- The rate is at the ceiling: the schedule is the limit. 1 task every 125 ms
+  has a ceiling of 8/s; if it takes in 8/s, it is waiting between runs.
+  Shorten the run schedule or add tasks.
+- The rate is below the ceiling and a backlog waits in front: each FlowFile
+  takes time to process and the tasks are busy all the time. Only more tasks
+  help.
+- The consumer takes in nothing at all: it is stopped, failing or
+  misconfigured. That is not a capacity problem.
+- The deployment's CPU is high: the node cannot run more threads. See the
+  sizing playbook.
+
+Then find the intake, what has to be handled per second: the consumer's rate
+in, plus how fast the queue in front of it grows (a queue growing by 600 a
+minute adds 10/s). A queue held at its back-pressure threshold cannot grow,
+and its source is throttled to what the bottleneck takes, so use the
+source's earlier peak rate instead. No fix works unless the new capacity is
+above the intake.
 
 ## Raise Concurrent Tasks on the bottleneck processor
 <!-- actions: SET_CONCURRENT_TASKS -->
 
-When the consumer is busy all the time on a short schedule, raise Concurrent
-Tasks. Size it from the measured rates: needed tasks = current tasks x
-(arrival rate / service rate), rounded up, plus one for headroom. Going from
-1 to 4 is a typical first step. Stay within the catalog bound of 8, and do
-not go higher on a small node: every task is a thread from the shared pool.
+When the consumer is below its ceiling with a backlog in front, raise
+Concurrent Tasks. Size it from the measured rates: rate per task = current
+rate / current tasks, and needed tasks = intake / rate per task, rounded up,
+plus one for headroom. For example, 2 tasks on 0 sec taking in 6/s do 3/s
+each; an intake of 15/s needs 5, so set 6. Stay within the catalog bound of
+8, and do not go higher on a small node: every task is a thread from the
+shared pool.
 
-Change only the processor directly in front of the growing queue. In a
-multi-stage pipeline, the stage after a healthy queue is not the bottleneck,
-and speeding it up changes nothing. The growing queue points at the stage to
-fix.
+More tasks also raise the ceiling of a consumer that waits between runs, but
+count it. 1 task every 125 ms gives 8/s, so 2 tasks give 16/s: against a
+20/s intake the backlog still grows, only more slowly. 3 tasks (24/s) are
+just enough and 4 leave headroom; a shorter schedule clears it too.
+
+Change only the bottleneck. A stage after a healthy queue is not the
+bottleneck, and neither is a stage that is back-pressured by a full queue
+after it: speeding either up changes nothing.
 
 Do not raise concurrency when the deployment's CPU is already saturated.
 The extra threads compete for the same cores and throughput can drop. See
@@ -51,16 +75,18 @@ the sizing playbook.
 ## Shorten the run schedule of a consumer that waits between runs
 <!-- actions: SET_RUN_SCHEDULE -->
 
-A consumer scheduled every 10 sec can handle at most one batch per 10
-seconds per task. Even 8 tasks on that schedule give 0.8 runs per second,
-so a source producing 1 per second still wins. Shorten the run schedule to
-match the arrival rate: 1 sec for a one-per-second source, or 0 sec (run
-whenever there is work) when the processor is cheap. Prefer the smallest
-change that brings capacity above the arrival rate.
+A consumer scheduled every 10 sec can run at most once per 10 seconds per
+task. Even 8 tasks on that schedule give 0.8/s, so a source producing 1/s
+still wins. Shorten the run schedule until Concurrent Tasks / run schedule is
+above the intake: 1 sec on those tasks gives 8/s, and 0 sec (run whenever
+there is work) removes the ceiling when the processor is cheap. Prefer the
+smallest change that brings the ceiling above the intake.
 
-A shorter run schedule is also an acceptable alternative to more threads for
-a busy consumer (for example 250 ms instead of 1 sec), but threads scale
-better when each run is slow.
+For a busy consumer at its ceiling on a short schedule, a shorter schedule
+and more tasks both raise the ceiling: 1 task at 1 sec against an intake of
+3/s clears with 4 tasks or with 250 ms (4/s either way). Shortening the
+schedule of a consumer that is below its ceiling does nothing, because it is
+not waiting between runs.
 
 ## Bursty arrivals: judge by peak and drain time
 <!-- actions: SET_CONCURRENT_TASKS, NO_ACTION -->

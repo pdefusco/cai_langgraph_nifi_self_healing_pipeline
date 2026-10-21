@@ -166,6 +166,15 @@ def test_a_reasoning_reply_is_read_after_its_thinking():
         prompts.extract_json("I think the consumer is slow.")
 
 
+def test_the_instructions_size_a_fix_by_ceiling_and_intake():
+    # S30's 2 tasks (16/s against 20/s) was the right lever with too small a value.
+    text = prompts.system_prompt()
+
+    assert "ceiling, concurrent tasks / run schedule" in text and "exceeds the intake" in text
+    assert "the stage whose input queue is full and whose output queue is not" in text
+    assert "{" not in text.split("Action catalog:", 1)[0].replace("#{name}", "")    # formatted, no stray braces
+
+
 def test_invalid_after_all_attempts_goes_to_review(agent):
     _, _, store, incidents, install = agent("p1-throughput")
     incident = incidents["S01"]

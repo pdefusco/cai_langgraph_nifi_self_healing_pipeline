@@ -76,13 +76,13 @@ them.
 | NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | Parked | |
 | NFH-52 | Feature | Scorecard refreshes when its tab opens | Parked | |
 | NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
-| NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | |
+| NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | e93d361 |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
 | NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Blocked | |
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
 | NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Parked | |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
-| NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Planned | |
+| NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | |
 | NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Planned | |
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Planned | |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Parked | |
@@ -109,21 +109,6 @@ cosmetic and id fields behind "show all fields". Display only.
 ### NFH-52 · Feature · Scorecard refreshes when its tab opens
 The Scorecard renders only on page load and on its own Refresh button.
 - 2026-10-20: offered. Parked.
-
-### NFH-54 · Feature · The agent sees every reading in its process group
-The prompt lists only the signals that breached. In a cascade (S22, S24, S26, S28) the agent sees the full ingest
-queue and fixes the processor next to it, never seeing that the queues further down are full and the stuck stage sends
-nothing. Add a "Current readings" block: every KPI on the group, each queue's depth and each processor's rate in and
-out per second, with whether it is rising, draining or flat. Read from the samples the app already stores, so it adds
-no CDF calls. Only the KPIs the pack defines; NFH-65 makes that coverage uniform. New PROMPT_VERSION.
-- 2026-10-20: found on S20. Parked.
-- 2026-10-21: the review pass showed it behind the cascade misses and S01's re-open while draining. Planned; the user
-  chose the pack's existing KPIs for now.
-- 2026-10-21: built. `kpi/readings.py` reads every KPI the pack defines on the group from the stored samples (last
-  15 min): latest, its alert threshold, over/near/fine as the Monitor colours it, and rising, falling or flat. Rates are
-  per second: live processor counts are 5-minute totals, so `SELFHEAL_COUNT_WINDOW_SECONDS` (300 live, 1 on the mock)
-  divides them out. A source that sent more in the last 2 h shows that peak, since back pressure throttles it. The
-  prompt has a "Current readings" section after the signals; new PROMPT_VERSION.
 
 ### NFH-55 · Feature · Refresh waiting reviews automatically
 Every waiting proposal was drafted before the review pass, so a rejection never reaches the reviews like it. Re-draft
@@ -174,6 +159,11 @@ Replace that rule with a method:
 Also check the throughput playbook sections for the same lean towards tasks. New PROMPT_VERSION.
 - 2026-10-21: the review pass showed tasks proposed for every backlog (S01, S10, S30) and values too small to clear the
   intake (S30). Planned.
+- 2026-10-21: built. The prompt's rule is now the method: find the stage whose input queue is full and whose output
+  queue is not; take the intake as its rate in plus its queue's growth, or the source's earlier peak when back
+  pressure holds the queue; compare its rate with its ceiling (tasks / run schedule) to choose the schedule or tasks,
+  and size the value above the intake. backlog-slow-consumer.md and back-pressure.md say the same with worked numbers
+  (2 tasks every 125 ms is 16/s, short of 20/s). Section ids unchanged. New PROMPT_VERSION.
 
 ### NFH-61 · Feature · Check capacity before review
 For SET_CONCURRENT_TASKS and SET_RUN_SCHEDULE, validation estimates the processor's capacity after the change and
@@ -220,6 +210,22 @@ only exists in production.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-54 · Feature · The agent sees every reading in its process group
+The prompt lists only the signals that breached. In a cascade (S22, S24, S26, S28) the agent sees the full ingest
+queue and fixes the processor next to it, never seeing that the queues further down are full and the stuck stage sends
+nothing. Add a "Current readings" block: every KPI on the group, each queue's depth and each processor's rate in and
+out per second, with whether it is rising, draining or flat. Read from the samples the app already stores, so it adds
+no CDF calls. Only the KPIs the pack defines; NFH-65 makes that coverage uniform. New PROMPT_VERSION.
+- 2026-10-20: found on S20. Parked.
+- 2026-10-21: the review pass showed it behind the cascade misses and S01's re-open while draining. Planned; the user
+  chose the pack's existing KPIs for now.
+- 2026-10-21: built. `kpi/readings.py` reads every KPI the pack defines on the group from the stored samples (last
+  15 min): latest, its alert threshold, over/near/fine as the Monitor colours it, and rising, falling or flat. Rates are
+  per second: live processor counts are 5-minute totals, so `SELFHEAL_COUNT_WINDOW_SECONDS` (300 live, 1 on the mock)
+  divides them out. A source that sent more in the last 2 h shows that peak, since back pressure throttles it. The
+  prompt has a "Current readings" section after the signals; new PROMPT_VERSION.
+- 2026-10-21: done in e93d361.
 
 ### NFH-53 · Feature · Grade a value "at least the acceptable one"
 The Scorecard treats a fix's value as irrelevant: any SCALE_DEPLOYMENT counts as S20's design fix, and S30's 2 tasks

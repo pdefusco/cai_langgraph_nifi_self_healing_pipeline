@@ -270,7 +270,7 @@ def test_a_rejection_becomes_an_edit_the_agent_reads(drafting):
     assert row["section_id"] == SECTION and row["heading"] == "Raise Concurrent Tasks on the bottleneck processor"
     assert row["new_text"].endswith(CPU) and row["problems"] == [] and row["drafted_by"].startswith("draft:")
     prompt = model.calls[1][1].content
-    assert REASON in prompt and "needed tasks = current tasks x" in prompt and f"- {SECTION}:" in prompt
+    assert REASON in prompt and "needed tasks = intake / rate per task" in prompt and f"- {SECTION}:" in prompt
     assert "cdf-platform-rules#" not in prompt.split("Every section you may edit", 1)[1]
 
     # The tab: the edit, why it was drafted (escaped), its diff.

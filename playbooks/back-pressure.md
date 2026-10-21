@@ -30,6 +30,12 @@ with its thresholds in the flow inventory.
   doing its job. Fix the rate on one side or the other (see below), not the
   threshold.
 
+Back pressure travels upstream, so several queues in a row can be full. The
+one to act on is the last of them: the stage it feeds is the bottleneck, and
+the stages before it are back-pressured, not slow. Size the bottleneck's fix
+by its ceiling (Concurrent Tasks / run schedule) against the intake, as the
+backlog playbook describes.
+
 ## Raise a threshold that is too low for normal traffic
 <!-- actions: SET_BACKPRESSURE -->
 
@@ -48,8 +54,13 @@ still grow after the change, the threshold was never the cause.
 SplitText, DuplicateFlowFile and similar processors turn one FlowFile into
 many. If the processor after the fan-out is scheduled slowly, the queue
 between them fills and the splitter stalls. Speed up the consumer: a run
-schedule of 0 sec (run whenever there is work) or a short schedule such as
-100 ms with more Concurrent Tasks.
+schedule of 0 sec (run whenever there is work) or more Concurrent Tasks on a
+short schedule.
+
+Size it against what the fan-out sends, not what it takes in: 2 FlowFiles/s
+split 50 ways is 100/s. A consumer on 1 task every 20 ms has a ceiling of
+50/s, and 2 tasks reach only 100/s, with no headroom; 4 tasks (200/s) or
+0 sec clear it.
 
 The fan-out factor (line count, Number of Copies) is business logic. Do
 not reduce it to make the queue smaller, because that changes what the flow

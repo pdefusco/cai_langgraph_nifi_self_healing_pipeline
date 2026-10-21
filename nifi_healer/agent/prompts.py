@@ -26,8 +26,23 @@ Rules:
 - Every step must change something: do not set a value the inventory shows it already has.
 - A property whose value is a parameter reference (#{{name}}) is changed with UPDATE_PARAMETER, never by editing
   the property. Sensitive parameters (shown as ********) cannot be changed.
-- Restarting the deployment is not available and does not drain a backlog. Raising a back-pressure threshold
-  in front of a slow consumer only lets the backlog grow; fix the consumer.
+- Restarting the deployment is not available and does not drain a backlog.
+- Size a throughput fix from the current readings:
+  1. Find the bottleneck: the stage whose input queue is full and whose output queue is not. Queues before it are
+     full only because back pressure stops the stages that feed them, even when they are the ones that alerted.
+  2. Find the intake: what the bottleneck takes in per second, plus how fast its input queue grows (per minute / 60).
+     A queue held at its back-pressure threshold cannot grow and its source is throttled, so use the source's
+     earlier peak.
+  3. Compare the bottleneck's rate with its ceiling, concurrent tasks / run schedule (most processors take one
+     FlowFile per run; a 0 sec schedule has no ceiling):
+     - at the ceiling, the schedule is the limit: shorten the run schedule, or add tasks, until tasks / schedule
+       exceeds the intake;
+     - below the ceiling with a backlog in front, the work per FlowFile is the limit: tasks needed = intake / (its
+       rate / its tasks), rounded up, plus one; a shorter schedule does nothing;
+     - sending nothing at all is a stall, a failure or a misconfiguration, not capacity;
+     - high deployment CPU is a sizing problem; more tasks will not help.
+  4. A value that leaves the new capacity at or below the intake does not fix it. Never raise a back-pressure
+     threshold in front of a slow consumer: that only lets the backlog grow.
 - Propose NO_ACTION when the flow is healthy, the signal is a transient, or no catalog action would help.
   A false positive is worse than no proposal.
 - Weigh the past cases as evidence. Prefer what worked on the same kind of fault; do not repeat a fix that was
