@@ -82,8 +82,8 @@ them.
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
 | NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Parked | |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
-| NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | |
-| NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Planned | |
+| NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
+| NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | |
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Planned | |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Parked | |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
@@ -147,29 +147,19 @@ opened the incident, so a correct first fix can read as no change, or worse. Cre
 report the KPIs still breached as "still open: likely another fault", with no rollback offered.
 - 2026-10-21: found on S32. Parked.
 
-### NFH-60 · Feature · Capacity arithmetic in the prompt
-The agent's only guidance on a backlog is "fix the consumer", which it reads as "add tasks", without saying how many.
-Replace that rule with a method:
-1. Find the first stage with a full input and a low output.
-2. Compare its rate with its ceiling (tasks ÷ run schedule). At the ceiling, the schedule is the limit: shorten it.
-   Below the ceiling with a backlog in front, processing time is the limit: size tasks by intake ÷ rate per task.
-   Sending nothing at all is a stall, failure or misconfiguration, not capacity. High CPU is sizing.
-3. Size the value so the new capacity exceeds the intake.
-
-Also check the throughput playbook sections for the same lean towards tasks. New PROMPT_VERSION.
-- 2026-10-21: the review pass showed tasks proposed for every backlog (S01, S10, S30) and values too small to clear the
-  intake (S30). Planned.
-- 2026-10-21: built. The prompt's rule is now the method: find the stage whose input queue is full and whose output
-  queue is not; take the intake as its rate in plus its queue's growth, or the source's earlier peak when back
-  pressure holds the queue; compare its rate with its ceiling (tasks / run schedule) to choose the schedule or tasks,
-  and size the value above the intake. backlog-slow-consumer.md and back-pressure.md say the same with worked numbers
-  (2 tasks every 125 ms is 16/s, short of 20/s). Section ids unchanged. New PROMPT_VERSION.
-
 ### NFH-61 · Feature · Check capacity before review
 For SET_CONCURRENT_TASKS and SET_RUN_SCHEDULE, validation estimates the processor's capacity after the change and
 compares it with the measured intake. A change still short of the intake goes back to the agent as a validation
 problem ("4 tasks ≈ 3/s, below the intake of 6/s") for its next attempt. Quiet when the intake isn't measured.
 - 2026-10-21: planned. The user chose sending it back to the agent over a warning only.
+- 2026-10-21: built. `actions/capacity.py` judges a tasks or run-schedule step from the stored samples: the
+  ceiling after the change (tasks / run schedule, or the measured rate per task when the processor is busy below its
+  ceiling with a backlog in front) against the intake (its rate in plus its queue's growth, or what the sources
+  upstream send through a plain chain, a GenerateFlowFile by its settings). Short of the intake by the 10% headroom,
+  or no changed processor with a backlog in front, goes back to the agent while it has attempts left; on the last
+  attempt and on a reviewer's edit it is a warning, which also keeps autonomy off. Quiet when a measure is missing,
+  through a split or branch (S24), on an expiring queue (S25), or for a step that lowers capacity. Every design and
+  acceptable fix on p1, p2 and p8–p13 passes it; the oracle replay sends none back.
 
 ### NFH-62 · Ops · Measure offline before and after
 Run the replay once per scenario on the current prompt for the backlog and pipeline packs (p1, p2, p8–p13), then again
@@ -210,6 +200,25 @@ only exists in production.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-60 · Feature · Capacity arithmetic in the prompt
+The agent's only guidance on a backlog is "fix the consumer", which it reads as "add tasks", without saying how many.
+Replace that rule with a method:
+1. Find the first stage with a full input and a low output.
+2. Compare its rate with its ceiling (tasks ÷ run schedule). At the ceiling, the schedule is the limit: shorten it.
+   Below the ceiling with a backlog in front, processing time is the limit: size tasks by intake ÷ rate per task.
+   Sending nothing at all is a stall, failure or misconfiguration, not capacity. High CPU is sizing.
+3. Size the value so the new capacity exceeds the intake.
+
+Also check the throughput playbook sections for the same lean towards tasks. New PROMPT_VERSION.
+- 2026-10-21: the review pass showed tasks proposed for every backlog (S01, S10, S30) and values too small to clear the
+  intake (S30). Planned.
+- 2026-10-21: built. The prompt's rule is now the method: find the stage whose input queue is full and whose output
+  queue is not; take the intake as its rate in plus its queue's growth, or the source's earlier peak when back
+  pressure holds the queue; compare its rate with its ceiling (tasks / run schedule) to choose the schedule or tasks,
+  and size the value above the intake. backlog-slow-consumer.md and back-pressure.md say the same with worked numbers
+  (2 tasks every 125 ms is 16/s, short of 20/s). Section ids unchanged. New PROMPT_VERSION.
+- 2026-10-21: done in 8e7325a.
 
 ### NFH-54 · Feature · The agent sees every reading in its process group
 The prompt lists only the signals that breached. In a cascade (S22, S24, S26, S28) the agent sees the full ingest

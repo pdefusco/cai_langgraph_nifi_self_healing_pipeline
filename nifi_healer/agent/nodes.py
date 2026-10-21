@@ -8,7 +8,8 @@ The graph's nodes. Each takes the state and returns the fields it changed.
                           the most similar past cases (rag/memory.py), and, for
                           the reviewer only, the fixes' track records (rag/priors.py)
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
-    validate_proposal     executor.plan: catalog, bounds, targets, diff, argv
+    validate_proposal     executor.plan: catalog, bounds, targets, diff, argv; capacity
+                          against the intake (actions/capacity.py)
     human_review          interrupt(): approve | reject | edit | rediagnose
     apply_remediation     executor.execute (dry run unless SELFHEAL_ARMED)
     record_feedback       a rejection, with its reason, queued for a playbook edit (rag/drafter.py)
@@ -26,7 +27,7 @@ from pydantic import ValidationError
 
 import config
 from nifi_healer import llm
-from nifi_healer.actions import catalog, executor, rollback
+from nifi_healer.actions import capacity, catalog, executor, rollback
 from nifi_healer.agent import prompts
 from nifi_healer.agent.schemas import Proposal
 from nifi_healer.cdp.client import get_client
@@ -241,7 +242,9 @@ def validate_proposal(state: dict) -> dict:
                   "family": "", "steps": [], "risk": "high", "changes": [], "diff": [], "commands": []}
 
     else:
-        report = executor.public(executor.plan(client, incident, proposal.get("steps") or [], store))
+        full = executor.plan(client, incident, proposal.get("steps") or [], store)
+        report = executor.public(full)
+        report["capacity"] = _capacity(full, incident, state)
 
     known = {h["id"] for h in (state.get("playbooks") or []) + (state.get("memory") or [])}
     cited = list(proposal.get("citations") or [])
@@ -251,6 +254,16 @@ def validate_proposal(state: dict) -> dict:
 
     if failed:
         report["warnings"].append(failed)
+
+    if report.get("capacity"):
+        # Too small a fix goes back to the agent while it has attempts left; after
+        # that, or on a reviewer's edit, a person decides with the warning.
+        if state.get("source") == "agent" and state.get("attempts", 0) < MAX_ATTEMPTS:
+            report["problems"] = report["problems"] + report["capacity"]
+            report["ok"] = False
+
+        else:
+            report["warnings"].extend(report["capacity"])
 
     if report["ok"] and report["family"] == catalog.NONE:
         status = "NO_ACTION"
@@ -273,6 +286,21 @@ def validate_proposal(state: dict) -> dict:
         + (f": {'; '.join(report['problems'])}" if report["problems"] else ""))
 
     return {"plan": report, "proposal_id": proposal_id, "feedback": report["problems"]}
+
+
+def _capacity(full: dict, incident: dict, state: dict) -> list:
+    if not full["ok"]:
+        return []
+
+    try:
+        nodes = ((state.get("context") or {}).get("sizing") or {}).get("nodes") or 1
+
+        return capacity.check(full, incident, get_store(), _now(), nodes)
+
+    except Exception as exc:  # a check on the evidence, never a reason to fail validation
+        log(f"{incident['id']}: capacity check failed: {exc}")
+
+        return []
 
 
 def after_validation(state: dict) -> str:

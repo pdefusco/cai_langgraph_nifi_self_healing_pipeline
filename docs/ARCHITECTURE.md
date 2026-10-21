@@ -117,15 +117,17 @@ graph TD;
 | gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, and the current reading of every KPI on the group (kpi/readings.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
 | diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable, leaving the incident NEW | prompt | yes |
-| validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
+| validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Checks a tasks or run-schedule change against the measured intake. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
 | human_review | Pauses for a decision: approve, edit, reject or rediagnose. An invalid decision asks again | the reviewer | no |
 | apply_remediation | Applies the change and waits for the deployment to settle (a dry run unless armed) | CDF writes, through the guardrails | no |
 | record_feedback | Closes the incident as REJECTED and queues the reason for the playbook drafter | store | no |
 | record_no_action | Closes the incident as NO_ACTION | store | no |
 
 Routes out of validate_proposal: a proposal that failed validation goes back to the agent with the problems, up to
-`MAX_ATTEMPTS` (3) proposals; a valid "no action" closes the incident; anything else goes to review. A proposal edited
-by a reviewer is validated again but never sent back to the agent.
+`MAX_ATTEMPTS` (3) proposals; a valid "no action" closes the incident; anything else goes to review. A tasks or
+run-schedule change that leaves capacity short of the intake, or touches no stage with a backlog, also goes back,
+and on the last attempt is a warning instead. A proposal edited by a reviewer is validated again but never sent back
+to the agent; for it the capacity problems are warnings.
 
 ### What the graph carries
 
@@ -215,3 +217,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-14 | NFH-23 | Reads go through long-lived cdp CLI workers; telemetry and retention join the poller |
 | 2026-10-16 | NFH-25 | The chaos injector, a poller tier that re-plants faults through the guardrails |
 | 2026-10-21 | NFH-67 | This guide; the graph drawing is generated from the code |
+| 2026-10-21 | NFH-61 | validate_proposal checks a throughput fix against the intake and sends a short one back to the agent |

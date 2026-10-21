@@ -246,6 +246,7 @@ def _plan_flow_edit(client: Client, incident: dict, steps: list, report: dict) -
     report["diff"] = validation["diff"]
     report["problems"].extend(validation["problems"])
     report["_definition"] = edited
+    report["_base_definition"] = definition
     report["_flow_crn"] = flow_crn
 
     listen = bool(guardrails.expected_for(pack).get("has_listen_components"))

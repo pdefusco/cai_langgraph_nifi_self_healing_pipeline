@@ -89,6 +89,7 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
             "concurrent_tasks": raw.get("concurrentlySchedulableTaskCount"),
             "run_schedule": raw.get("schedulingPeriod"),
             "scheduling": raw.get("schedulingStrategy"),
+            "execution_node": raw.get("executionNode"),
             "penalty": raw.get("penaltyDuration"),
             "yield": raw.get("yieldDuration"),
             "retried": list(raw.get("retriedRelationships") or []),

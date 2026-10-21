@@ -9,7 +9,8 @@ and rates that have not breached.
 
 From the samples the poller stored, over the last WINDOW_SECONDS (no CDF
 call). Each row has the latest value, its alert threshold, a state (over,
-near or fine, as the Monitor tab colours it) and a trend. Processor
+near or fine, as the Monitor tab colours it) and a trend (and its slope
+per minute, for actions/capacity.py). Processor
 counts are shown per second (config.COUNT_WINDOW_SECONDS). Back pressure
 throttles what a source sends, which hides the intake, so a source that
 sent more in the last PEAK_SECONDS shows that peak too.
@@ -59,7 +60,8 @@ def for_incident(incident: dict, store, now: float) -> list:
     for kpi in kpis:
         raw = store.samples(crn, kpi["key"], now - PEAK_SECONDS)
         recent = [(t, v) for t, v in raw if t >= now - WINDOW_SECONDS]
-        latest = _per_second(kpi, recent)[-1][1] if recent else None
+        shown = _per_second(kpi, recent)
+        latest = shown[-1][1] if shown else None
         source = kpi.get("metric") == "flowfiles_out" and kpi.get("component") in sources
 
         rows.append({
@@ -69,6 +71,7 @@ def for_incident(incident: dict, store, now: float) -> list:
             "state": metrics.kpi_state(kpi, latest),
             # Fitted on the stored values: a live total is the larger number, so its noise floor is lower.
             "trend": _trend(recent) if recent else "",
+            "per_minute": metrics.trend(shown),
             "source": source,
             "peak": max(v for _, v in _per_second(kpi, raw)) if source and raw else None,
         })

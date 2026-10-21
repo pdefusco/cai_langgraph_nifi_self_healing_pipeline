@@ -27,11 +27,16 @@ def test_a_fix_that_keeps_failing_is_flagged(replayed):
     assert [c["result"] for c in found] == [sc.NO_HELP] * 3
     assert not any("Track record" in p or "worked (" in p for p in model.prompts)
 
+    # 8 tasks every 10 sec is short of the intake: sent back twice, then reviewed with the warning.
+    proposals = snapshot["record"]["proposals"]
+    assert [p["status"] for p in proposals] == ["SUPERSEDED", "SUPERSEDED", "VALID"] * 3
+    warnings = [p["validation"]["warnings"] for p in proposals if p["status"] == "VALID"]
+    assert all(any("below the intake" in w for w in ws) for ws in warnings)
+
     # One failure is a hint; two on the same group warn the reviewer.
-    warnings = [p["validation"]["warnings"] for p in snapshot["record"]["proposals"]]
     assert [any("has not worked on this process group" in w for w in ws) for ws in warnings] == \
         [False, False, True]
-    assert warnings[2][-1] == "this fix has not worked on this process group before: 0 of 2 worked (2 didn't help)"
+    assert "this fix has not worked on this process group before: 0 of 2 worked (2 didn't help)" in warnings[2]
 
 
 def test_tries_count_what_ran_and_what_was_rejected(fleet):
