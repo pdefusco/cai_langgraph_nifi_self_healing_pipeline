@@ -83,8 +83,8 @@ them.
 | NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Parked | |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
 | NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
-| NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | |
-| NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Planned | |
+| NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | 2ee434c |
+| NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | In progress | |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Parked | |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
@@ -147,25 +147,15 @@ opened the incident, so a correct first fix can read as no change, or worse. Cre
 report the KPIs still breached as "still open: likely another fault", with no rollback offered.
 - 2026-10-21: found on S32. Parked.
 
-### NFH-61 · Feature · Check capacity before review
-For SET_CONCURRENT_TASKS and SET_RUN_SCHEDULE, validation estimates the processor's capacity after the change and
-compares it with the measured intake. A change still short of the intake goes back to the agent as a validation
-problem ("4 tasks ≈ 3/s, below the intake of 6/s") for its next attempt. Quiet when the intake isn't measured.
-- 2026-10-21: planned. The user chose sending it back to the agent over a warning only.
-- 2026-10-21: built. `actions/capacity.py` judges a tasks or run-schedule step from the stored samples: the
-  ceiling after the change (tasks / run schedule, or the measured rate per task when the processor is busy below its
-  ceiling with a backlog in front) against the intake (its rate in plus its queue's growth, or what the sources
-  upstream send through a plain chain, a GenerateFlowFile by its settings). Short of the intake by the 10% headroom,
-  or no changed processor with a backlog in front, goes back to the agent while it has attempts left; on the last
-  attempt and on a reviewer's edit it is a warning, which also keeps autonomy off. Quiet when a measure is missing,
-  through a split or branch (S24), on an expiring queue (S25), or for a step that lowers capacity. Every design and
-  acceptable fix on p1, p2 and p8–p13 passes it; the oracle replay sends none back.
-
 ### NFH-62 · Ops · Measure offline before and after
 Run the replay once per scenario on the current prompt for the backlog and pipeline packs (p1, p2, p8–p13), then again
 after NFH-53, 54, 60 and 61. Compare the design-fix rate, right target, right value and outcome. No live changes. The
 simulator models capacity the way NFH-60 reasons, so the live re-draft (NFH-55) confirms it.
 - 2026-10-21: planned.
+- 2026-10-21: `replay --compare BEFORE AFTER` built: per scenario and in all, before→after, both graded by the
+  Scorecard as it is now: design fix, right value, right lever, valid first time, proposals per case, worked and
+  median lift. The oracle replay on p1, p2 and p8–p13 is unchanged by NFH-61. The before run (a checkout before
+  e93d361) and the after run (main) are CAI jobs for the user, as they need the LLM endpoint.
 
 ### NFH-63 · Fix · Import picks the oldest version as baseline
 When a flow is in the catalog but not in the fleet record, `provisioning.import_flow` takes the oldest version as
@@ -200,6 +190,21 @@ only exists in production.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-61 · Feature · Check capacity before review
+For SET_CONCURRENT_TASKS and SET_RUN_SCHEDULE, validation estimates the processor's capacity after the change and
+compares it with the measured intake. A change still short of the intake goes back to the agent as a validation
+problem ("4 tasks ≈ 3/s, below the intake of 6/s") for its next attempt. Quiet when the intake isn't measured.
+- 2026-10-21: planned. The user chose sending it back to the agent over a warning only.
+- 2026-10-21: built. `actions/capacity.py` judges a tasks or run-schedule step from the stored samples: the
+  ceiling after the change (tasks / run schedule, or the measured rate per task when the processor is busy below its
+  ceiling with a backlog in front) against the intake (its rate in plus its queue's growth, or what the sources
+  upstream send through a plain chain, a GenerateFlowFile by its settings). Short of the intake by the 10% headroom,
+  or no changed processor with a backlog in front, goes back to the agent while it has attempts left; on the last
+  attempt and on a reviewer's edit it is a warning, which also keeps autonomy off. Quiet when a measure is missing,
+  through a split or branch (S24), on an expiring queue (S25), or for a step that lowers capacity. Every design and
+  acceptable fix on p1, p2 and p8–p13 passes it; the oracle replay sends none back.
+- 2026-10-21: done in 2ee434c.
 
 ### NFH-60 · Feature · Capacity arithmetic in the prompt
 The agent's only guidance on a backlog is "fix the consumer", which it reads as "add tasks", without saying how many.

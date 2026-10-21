@@ -7,6 +7,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --scenario S17 --oracle  # the design fix, no LLM
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
     python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
+    python -m nifi_healer.eval.replay --compare BEFORE_DIR AFTER_DIR   # two records side by side
     CAI job: cai_job.py    Arguments: -m nifi_healer.eval.replay --trials 3
 
 Each trial round, over the packs the chosen scenarios are in:
@@ -419,6 +420,48 @@ def _pct(rate) -> str:
     return "-" if rate is None else f"{rate * 100:.0f}%"
 
 
+# The columns of compare(), each worked out from a summary.
+COMPARED = (
+    ("cases", lambda s: str(s["incidents"])),
+    ("expected", lambda s: _pct(s["match"][sc.EXPECTED] / sum(s["match"].values()) if any(s["match"].values())
+                                else None)),
+    ("value", lambda s: _pct(s["matched"])),
+    ("lever", lambda s: _pct(s["right_lever"])),
+    ("valid 1st", lambda s: _pct(s["valid_first"])),
+    ("tries", lambda s: f"{(s['proposed'] + s['repairs']) / s['proposed']:.1f}" if s["proposed"] else "-"),
+    ("worked", lambda s: _pct(s["worked"])),
+    ("lift", lambda s: "-" if s["lift"] is None else f"{s['lift'] * 100:+.0f}%"),
+)
+
+
+def compare(before: dict, after: dict) -> str:
+    """
+    Two replay records side by side, per scenario and in all, as
+    before→after, both graded by the Scorecard as it is now: the design
+    fix, the right value (design or acceptable), the right lever (also a
+    value too small), valid on the first try, proposals per case, fixes
+    that worked and the median outcome lift.
+    """
+
+    sides = [cases(snapshot or {}) for snapshot in (before, after)]
+    order = list(packs.SCENARIOS)
+    ids = sorted({c["scenario"] for side in sides for c in side},
+                 key=lambda s: (order.index(s) if s in order else len(order), s))
+    titles = {c["scenario"]: c["scenario_title"] for side in sides for c in side}
+    rows = [f"{'scenario':<32}" + "".join(f" {name:>11}" for name, _ in COMPARED)]
+
+    def row(name, groups):
+        shown = [[f(sc.summarize(g)) if g else "-" for _, f in COMPARED] for g in groups]
+        return f"{name[:32]:<32}" + "".join(f" {b + '→' + a:>11}" for b, a in zip(*shown))
+
+    for scenario in ids:
+        rows.append(row(titles[scenario], [[c for c in side if c["scenario"] == scenario] for side in sides]))
+
+    rows.append(row("all", sides))
+
+    return "\n".join(rows)
+
+
 def live_edits(path: str) -> list:
     """The app's approved playbook edits, read from its store without writing to it; none if it has none."""
 
@@ -506,7 +549,20 @@ def main() -> int:
                              "scenario's detect_within")
     parser.add_argument("--fixes", type=int, default=1,
                         help="fixes a fault may take: above 1, each fixed fault is watched for a new incident")
+    parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"),
+                        help="print two replay directories' records side by side, and run nothing")
     args = parser.parse_args()
+
+    if args.compare:
+        snapshots = [load(d) for d in args.compare]
+
+        for directory, snapshot in zip(args.compare, snapshots):
+            if snapshot is None:
+                parser.error(f"no replay record in {directory}")
+
+        print(compare(*snapshots), flush=True)
+
+        return 0
 
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,

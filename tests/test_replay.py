@@ -118,6 +118,24 @@ def test_an_invalid_proposal_is_left_at_review(replayed):
     assert graph.pending(case["incident"])
 
 
+def test_two_runs_side_by_side(replayed, tmp_path):
+    replay.run(["S01", "S02"], oracle=True, directory=str(tmp_path / "before"))
+    llm.set_chat_model(OutOfBoundsLLM())
+    replay.run(["S01"], directory=str(tmp_path / "after"))
+
+    header, s01, s02, total = replay.compare(replay.load(str(tmp_path / "before")),
+                                             replay.load(str(tmp_path / "after"))).splitlines()
+
+    def cells(line):
+        return line[32:].split()
+
+    assert header.split()[:4] == ["scenario", "cases", "expected", "value"] and "valid 1st" in header
+    assert s01.startswith("S01 Slow Consumer") and cells(s01)[:7] == [
+        "1→1", "100%→0%", "100%→0%", "100%→0%", "100%→0%", "1.0→3.0", "100%→-"]
+    assert cells(s02)[:2] == ["1→-", "100%→-"] and cells(s02)[-1].endswith("→-")     # S02 not in the after run
+    assert total.startswith("all") and cells(total)[:2] == ["2→1", "100%→0%"]
+
+
 def test_it_isolates_a_live_project(replayed, tmp_path):
     # A CAI project's environment: live client and CRNs, the app's data dir, disarmed.
     config.DF_CLIENT, config.MOCK, config.ARMED = "live", False, False
