@@ -37,6 +37,9 @@ target `S01 Consumer` and value 4, and deterministic code turns that choice into
 same store. Phase 3 learns from the recorded outcomes. Both later phases need the ground-truth outcomes that Phase 1
 already writes to the `outcomes` table.
 
+**Following along.** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) shows the parts and the agent's graph, drawn from
+the code. [docs/TRACKER.md](docs/TRACKER.md) logs every feature, fix and pack as a ticket (`NFH-<n>`).
+
 ---
 
 ## Layout
@@ -58,6 +61,7 @@ nifi_healer/
 flows/                     flow builder, scenario modules (scenarios/README.md), packs; flows/out/<pack>.json
 playbooks/                 markdown playbooks + cdf-platform-rules.md (ingested into Chroma)
 provision/                 00–06 + teardown scripts, and commands.md (the raw cdp commands)
+docs/                      ARCHITECTURE.md (agent graph, generated: python -m nifi_healer.agent.diagram), TRACKER.md
 tests/
 ```
 
