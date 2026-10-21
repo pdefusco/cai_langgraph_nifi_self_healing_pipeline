@@ -31,6 +31,7 @@ from nifi_healer.agent import prompts
 from nifi_healer.agent.schemas import Proposal
 from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
+from nifi_healer.kpi import readings
 from nifi_healer.rag import drafter, memory, priors, retriever
 from nifi_healer.sim.world import groups_from_definition
 from nifi_healer.store.db import get_store
@@ -118,6 +119,8 @@ def gather_context(state: dict) -> dict:
     if "error" not in sizing:
         context["sizing"] = {"cluster_size": (sizing.get("clusterSize") or {}).get("name"),
                              "nodes": sizing.get("staticNodeCount")}
+
+    context["readings"] = readings.render(readings.for_incident(incident, store, client.now()))
 
     return {"incident": incident, "context": context, "attempts": 0, "feedback": [],
             "source": "agent", "error": "", "review_error": ""}

@@ -114,7 +114,7 @@ graph TD;
 |---|---|---|---|
 | entry (router) | A rollback incident skips the diagnosis | store | no |
 | propose_rollback | Proposes undoing the one action a rollback incident is for | store | no |
-| gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version | CDF: flow facts, flow definition, flow configuration, deployment configuration | no |
+| gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, and the current reading of every KPI on the group (kpi/readings.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
 | diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable, leaving the incident NEW | prompt | yes |
 | validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |

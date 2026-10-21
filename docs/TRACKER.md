@@ -75,8 +75,8 @@ them.
 | NFH-50 | Ops | Phase 4 M6: live rollout and the review pass | In progress | |
 | NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | Parked | |
 | NFH-52 | Feature | Scorecard refreshes when its tab opens | Parked | |
-| NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | |
-| NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Planned | |
+| NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
+| NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
 | NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Blocked | |
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
@@ -110,18 +110,6 @@ cosmetic and id fields behind "show all fields". Display only.
 The Scorecard renders only on page load and on its own Refresh button.
 - 2026-10-20: offered. Parked.
 
-### NFH-53 · Feature · Grade a value "at least the acceptable one"
-The Scorecard treats a fix's value as irrelevant: any SCALE_DEPLOYMENT counts as S20's design fix, and S30's 2 tasks
-counts the same as the 4 and 8 the intake needs. Grade tasks, run schedules and resizes by whether the value reaches
-the acceptable one, and a resize by its size. Needed for NFH-62 to measure the value, not only the target.
-- 2026-10-20: found on S20. Parked.
-- 2026-10-21: S30 showed the same for tasks. Planned with NFH-54.
-- 2026-10-21: built. Concurrent tasks, run schedules and resizes must go at least as far from what is deployed as
-  the label's value, in the label's direction (S08 slows a source, S21 shrinks). The right lever at too little is a
-  new grade, "value short". The Scorecard and the replay report show the right-value rate (Design fix) and the
-  right-lever rate side by side; Soak still counts the design fix only. The scenario guide says "or more", "or
-  shorter", "or larger" in each grading line.
-
 ### NFH-54 · Feature · The agent sees every reading in its process group
 The prompt lists only the signals that breached. In a cascade (S22, S24, S26, S28) the agent sees the full ingest
 queue and fixes the processor next to it, never seeing that the queues further down are full and the stuck stage sends
@@ -131,6 +119,11 @@ no CDF calls. Only the KPIs the pack defines; NFH-65 makes that coverage uniform
 - 2026-10-20: found on S20. Parked.
 - 2026-10-21: the review pass showed it behind the cascade misses and S01's re-open while draining. Planned; the user
   chose the pack's existing KPIs for now.
+- 2026-10-21: built. `kpi/readings.py` reads every KPI the pack defines on the group from the stored samples (last
+  15 min): latest, its alert threshold, over/near/fine as the Monitor colours it, and rising, falling or flat. Rates are
+  per second: live processor counts are 5-minute totals, so `SELFHEAL_COUNT_WINDOW_SECONDS` (300 live, 1 on the mock)
+  divides them out. A source that sent more in the last 2 h shows that peak, since back pressure throttles it. The
+  prompt has a "Current readings" section after the signals; new PROMPT_VERSION.
 
 ### NFH-55 · Feature · Refresh waiting reviews automatically
 Every waiting proposal was drafted before the review pass, so a rejection never reaches the reviews like it. Re-draft
@@ -207,7 +200,11 @@ a space and fails every call. Pick the newest version whose comment starts with 
 - S21's CPU threshold can't be reached on EXTRA_SMALL.
 - S09's backlog can't drain after its fix.
 - S20 is stalled live rather than CPU-bound.
+- Thresholds on processor counts (S23 `below=20`, the rate KPIs) are written per second, but CDF charts a processor's
+  counts as 5-minute totals, so on live they are 300 times off: a `below` alert never fires and an `above` one fires
+  far too early. Fix with NFH-65.
 - 2026-10-21: found in the review pass. Parked.
+- 2026-10-21: the processor-count units found while building NFH-54.
 
 ### NFH-65 · Ops · Uniform watch-only KPIs
 The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
@@ -223,6 +220,19 @@ only exists in production.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-53 · Feature · Grade a value "at least the acceptable one"
+The Scorecard treats a fix's value as irrelevant: any SCALE_DEPLOYMENT counts as S20's design fix, and S30's 2 tasks
+counts the same as the 4 and 8 the intake needs. Grade tasks, run schedules and resizes by whether the value reaches
+the acceptable one, and a resize by its size. Needed for NFH-62 to measure the value, not only the target.
+- 2026-10-20: found on S20. Parked.
+- 2026-10-21: S30 showed the same for tasks. Planned with NFH-54.
+- 2026-10-21: built. Concurrent tasks, run schedules and resizes must go at least as far from what is deployed as
+  the label's value, in the label's direction (S08 slows a source, S21 shrinks). The right lever at too little is a
+  new grade, "value short". The Scorecard and the replay report show the right-value rate (Design fix) and the
+  right-lever rate side by side; Soak still counts the design fix only. The scenario guide says "or more", "or
+  shorter", "or larger" in each grading line.
+- 2026-10-21: done in 93491e2.
 
 ### NFH-67 · Docs · Tracker and architecture guide
 This file, and [ARCHITECTURE.md](ARCHITECTURE.md) with the agent's graph drawn from the code.

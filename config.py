@@ -201,6 +201,11 @@ BREACH_DEBOUNCE = max(1, _int("SELFHEAL_BREACH_DEBOUNCE", 2))
 # reported as a warning (context for an incident, never one by itself).
 TREND_HORIZON_SECONDS = _int("SELFHEAL_TREND_HORIZON", 900)
 
+# A processor's FlowFile and byte counts are totals over this many
+# seconds: CDF charts them per 5 minutes (S02 read 120 for 0.4/s), the
+# simulator per second. Divided out wherever a rate per second is shown.
+COUNT_WINDOW_SECONDS = max(1, _int("SELFHEAL_COUNT_WINDOW_SECONDS", 1 if MOCK else 300))
+
 # Conservation check (S13, S14): downstream FlowFiles per second below
 # this fraction of upstream, with no queue growing to explain the gap,
 # means data is being dropped.

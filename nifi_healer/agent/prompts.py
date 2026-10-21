@@ -55,6 +55,9 @@ Summary: {summary}
 Signals:
 {signals}
 
+Current readings (every KPI watched on this group, the last 15 minutes; rates per second):
+{readings}
+
 Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
 {context_error}
 Flow inventory (current settings):
@@ -161,6 +164,7 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         incident_id=incident["id"], pack=incident["pack"], process_group=incident["process_group"],
         summary=incident.get("summary") or "",
         signals="\n".join(_signal_line(s) for s in incident.get("signals") or []) or "- none recorded",
+        readings=context.get("readings") or "- none recorded",
         sizing=(f"{sizing.get('cluster_size')} x{sizing.get('nodes')} node(s)" if sizing else "unknown"),
         flow_version=context.get("flow_version") or "?", state=context.get("state") or "?",
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),

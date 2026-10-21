@@ -212,7 +212,7 @@ def _pairs(kpis: list) -> list:
     return pairs
 
 
-def _rising(series: list) -> bool:
+def rising(series: list) -> bool:
     if len(series) < 3:
         return False
 
@@ -220,6 +220,16 @@ def _rising(series: list) -> bool:
     first, last = tail[0][1], tail[-1][1]
 
     return metrics.trend(tail) > 0 and last > first * 1.1 and last - first >= 1
+
+
+def falling(series: list) -> bool:
+    if len(series) < 3:
+        return False
+
+    tail = series[-_TREND_BUCKETS:]
+    first, last = tail[0][1], tail[-1][1]
+
+    return metrics.trend(tail) < 0 and last < first * 0.9 and first - last >= 1
 
 
 def _rate(points: list) -> float:
@@ -249,7 +259,7 @@ def imbalance(upstream: dict, downstream: dict, series: dict, queues: list, now:
     if ratio >= config.IMBALANCE_RATIO:
         return None
 
-    growing = [q["component"] for q in queues if _rising(series.get(q["key"]) or [])]
+    growing = [q["component"] for q in queues if rising(series.get(q["key"]) or [])]
 
     if growing:
         # A backlog is holding the difference: a throughput problem, which

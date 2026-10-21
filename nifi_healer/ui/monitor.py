@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 import config
 from nifi_healer import fleet
 from nifi_healer.kpi import changes as change_log
-from nifi_healer.kpi import outcomes, rollup
+from nifi_healer.kpi import metrics, outcomes, rollup
 from nifi_healer.kpi.detectors import group_name
 from nifi_healer.store.db import OPEN_STATUSES
 from nifi_healer.ui import views
@@ -496,26 +496,9 @@ def model(store, pack: str, entry: dict, now: float, span: str = DEFAULT_RANGE, 
 
 FLEET_SORTS = ("Needs attention", "Recent change", "Name")
 
-# A KPI within this fraction of its alert threshold (on the bad side) is "near".
-_NEAR = 0.8
-
-STATE_TEXT = {None: "no data", 0: "fine", 1: "near", 2: "over"}
+# The agent reads the same states (kpi/readings.py).
+_NEAR, STATE_TEXT, kpi_state = metrics.NEAR, metrics.STATE_TEXT, metrics.kpi_state
 HEALTH_TEXT = {"CONCERNING_HEALTH": "concerning", "BAD_HEALTH": "bad health"}
-
-
-def kpi_state(kpi: dict, value):
-    """0 fine, 1 near its alert threshold, 2 over it; None without a value or a threshold."""
-
-    if value is None:
-        return None
-
-    if kpi.get("above") is not None:
-        return 2 if value > kpi["above"] else 1 if value >= _NEAR * kpi["above"] else 0
-
-    if kpi.get("below") is not None:
-        return 2 if value < kpi["below"] else 1 if value * _NEAR <= kpi["below"] else 0
-
-    return None
 
 
 def _worst(states) -> int | None:

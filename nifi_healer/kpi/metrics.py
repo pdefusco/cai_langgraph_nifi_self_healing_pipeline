@@ -344,6 +344,27 @@ def drain_rate(series: list) -> float:
     return rates[middle] if len(rates) % 2 else (rates[middle - 1] + rates[middle]) / 2
 
 
+# A KPI within this fraction of its alert threshold (on the bad side) is "near".
+NEAR = 0.8
+
+STATE_TEXT = {None: "no data", 0: "fine", 1: "near", 2: "over"}
+
+
+def kpi_state(kpi: dict, value):
+    """0 fine, 1 near its alert threshold, 2 over it; None without a value or a threshold."""
+
+    if value is None:
+        return None
+
+    if kpi.get("above") is not None:
+        return 2 if value > kpi["above"] else 1 if value >= NEAR * kpi["above"] else 0
+
+    if kpi.get("below") is not None:
+        return 2 if value < kpi["below"] else 1 if value * NEAR <= kpi["below"] else 0
+
+    return None
+
+
 def breaches(value: float, above=None, below=None) -> bool:
     if above is not None and value > above:
         return True
