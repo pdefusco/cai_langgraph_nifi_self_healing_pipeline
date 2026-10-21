@@ -395,15 +395,15 @@ def report(snapshot: dict, run: str) -> str:
     mine = {"runs": [r for r in snapshot.get("runs") or [] if r["id"] == run], "record": snapshot["record"]}
     found = cases(mine)
     seen = detection(mine)
-    rows = [f"{'scenario':<40} {'cases':>5} {'valid 1st':>9} {'design':>7} {'worked':>7}"]
+    rows = [f"{'scenario':<40} {'cases':>5} {'valid 1st':>9} {'design':>7} {'lever':>7} {'worked':>7}"]
 
     for name, s in sc.table(found, "Scenario"):
         rows.append(f"{name[:40]:<40} {s['incidents']:>5} {_pct(s['valid_first']):>9} {_pct(s['matched']):>7} "
-                    f"{_pct(s['worked']):>7}")
+                    f"{_pct(s['right_lever']):>7} {_pct(s['worked']):>7}")
 
     s = sc.summarize(found)
     rows.append(f"{'all':<40} {s['incidents']:>5} {_pct(s['valid_first']):>9} {_pct(s['matched']):>7} "
-                f"{_pct(s['worked']):>7}")
+                f"{_pct(s['right_lever']):>7} {_pct(s['worked']):>7}")
     rows.append(f"detected {seen['detected']} of {seen['faults']} faults"
                 + (f" (missed {', '.join(seen['missed'])})" if seen["missed"] else "")
                 + f"; the control stayed quiet in {seen['quiet']} of {seen['controls']}")

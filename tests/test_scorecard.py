@@ -16,14 +16,45 @@ S01, S07, S19 = packs.SCENARIOS["S01"], packs.SCENARIOS["S07"], packs.SCENARIOS[
 FIRST, SECOND, LAST = config.VERIFY_WINDOWS
 
 
-def test_match_counts_the_lever_not_its_value():
+def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 4}], S01) == sc.EXPECTED
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 8}], S01) == sc.EXPECTED
-    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S01 Consumer", "value": "1 sec"}], S01) == \
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S01 Consumer", "value": "250 ms"}], S01) == \
         sc.ACCEPTABLE
+    # The right levers, short: 1 sec is the schedule it already runs, 2 tasks half the 4 it needs.
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S01 Consumer", "value": "1 sec"}], S01) == sc.SHORT
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 2}], S01) == sc.SHORT
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Source", "value": 4}], S01) == sc.OTHER
     assert sc.match([], S01) == sc.OTHER
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S07 Sink", "value": 4}], S07) == sc.ACCEPTABLE
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S07 Sink", "value": "50 ms"}], S07) == sc.ACCEPTABLE
+
+    # S30: 2 tasks on Pick is the right processor, still below the 20/s intake.
+    s30 = packs.SCENARIOS["S30"]
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S30 Pick Items", "value": 2}], s30) == sc.SHORT
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S30 Pick Items", "value": 4},
+                     {"action": "SET_CONCURRENT_TASKS", "target": "S30 Label Parcel", "value": 8}], s30) == \
+        sc.ACCEPTABLE
+
+    # S08 slows a runaway source: a longer schedule goes further, a shorter one is short.
+    s08 = packs.SCENARIOS["S08"]
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S08 Runaway Source", "value": "5 sec"}], s08) == \
+        sc.EXPECTED
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S08 Runaway Source", "value": "500 ms"}], s08) == \
+        sc.SHORT
+
+    # A resize by its size: S20 grows from EXTRA_SMALL x1, S21 shrinks from MEDIUM x2.
+    s20, s21 = packs.SCENARIOS["S20"], packs.SCENARIOS["S21"]
+
+    def scale(size, nodes):
+        return [{"action": "SCALE_DEPLOYMENT", "cluster_size": size, "nodes": nodes}]
+
+    assert sc.match(scale("MEDIUM", 2), s20) == sc.EXPECTED and sc.match(scale("EXTRA_SMALL", 2), s20) == \
+        sc.ACCEPTABLE
+    assert sc.match(scale("MEDIUM", 1), s20) == sc.SHORT
+    assert sc.match(scale("EXTRA_SMALL", 1), s21) == sc.EXPECTED and sc.match(scale("SMALL", 1), s21) == \
+        sc.ACCEPTABLE
+    assert sc.match(scale("MEDIUM", 1), s21) == sc.SHORT and sc.match(scale("LARGE", 2), s21) == sc.SHORT
 
     # The healthy control: doing nothing is the fix, however it is written.
     assert sc.match([], S19) == sc.EXPECTED and sc.match([{"action": "NO_ACTION"}], S19) == sc.EXPECTED
@@ -41,10 +72,13 @@ def test_match_takes_a_list_of_relationships_in_any_order():
     assert sc.match([dict(route, relationship=route["relationship"][0])], s10) == sc.OTHER
     fix = [route, *rest]
 
-    # Every scenario's own design label matches itself.
+    # Every scenario's own design label matches itself, and each acceptable fix is acceptable.
     for scenario in packs.SCENARIOS.values():
         if scenario.expected:
             assert sc.match([dict(s) for s in scenario.expected], scenario) == sc.EXPECTED, scenario.id
+
+            for one in scenario.acceptable:
+                assert sc.match([dict(one)], scenario) in sc.RIGHT_VALUE, (scenario.id, one)
 
     record = {"incidents": [_incident(9, "S10", "PENDING_REVIEW")], "proposals": [_proposal(11, 9, fix)]}
     assert sc.cases(record)[0]["match"] == sc.EXPECTED
@@ -141,7 +175,8 @@ def test_summary_and_groups():
     s = sc.summarize(found)
 
     assert (s["incidents"], s["controls"], s["proposed"], s["first_valid"]) == (8, 1, 8, 7)
-    assert s["match"] == {sc.EXPECTED: 6, sc.ACCEPTABLE: 0, sc.OTHER: 2} and s["matched"] == 6 / 8
+    assert s["match"] == {sc.EXPECTED: 6, sc.ACCEPTABLE: 0, sc.SHORT: 0, sc.OTHER: 2} and s["matched"] == 6 / 8
+    assert s["right_lever"] == 6 / 8
     assert s["review"][sc.APPROVED] == 4 and s["review"][sc.EDITED] == 1 and s["review"][sc.REJECTED] == 1
     assert s["approved"] == 4 / 6
     assert (s["applied"], s["dry_runs"], s["judged"], s["worked"], s["labelled"]) == (4, 1, 3, 2 / 3, 1)

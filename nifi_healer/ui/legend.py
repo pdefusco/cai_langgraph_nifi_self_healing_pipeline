@@ -174,8 +174,12 @@ How good the agent is at fixing things, counted from the incidents it handled.
   right answer is to do nothing).
 - **Valid first try**: the agent's first proposal passed every check without needing a correction.
 - **Picked the design fix** (*Design fix*): it chose the fix the scenario was built to need, or an acceptable
-  alternative. The agent never sees this answer. The setting counts, the value does not: 4 or 6 concurrent tasks are
-  the same pick.
+  alternative, at a value that can clear the problem. The agent never sees this answer.
+  - Where the value decides whether the fix works, it must go at least as far as the design's: as many concurrent
+    tasks or more, a run schedule as short or shorter, a resize as far or further. Beyond that it's tuning: 4 or 6
+    tasks are the same pick when 4 is needed.
+  - **Right lever**: the same fix (action and target) at any value. A proposal with the right lever but too little of
+    it, such as 2 tasks where 4 are needed, shows as *right fix, value short*.
 - **Cited a case**: its proposal pointed to a past case from memory.
 - **Approved as proposed** (*Review*): what reviewers did: approved as is, approved after editing, or rejected. A
   trusted fix that approved itself is shown as *auto-approved* and left out of these rates.

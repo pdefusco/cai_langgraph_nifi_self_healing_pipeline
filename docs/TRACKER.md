@@ -75,7 +75,7 @@ them.
 | NFH-50 | Ops | Phase 4 M6: live rollout and the review pass | In progress | |
 | NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | Parked | |
 | NFH-52 | Feature | Scorecard refreshes when its tab opens | Parked | |
-| NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Planned | |
+| NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | |
 | NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Planned | |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
 | NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Blocked | |
@@ -89,7 +89,7 @@ them.
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
-| NFH-67 | Docs | This tracker, and the architecture guide | In progress | |
+| NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
 
 ## Open tickets
 
@@ -116,6 +116,11 @@ counts the same as the 4 and 8 the intake needs. Grade tasks, run schedules and 
 the acceptable one, and a resize by its size. Needed for NFH-62 to measure the value, not only the target.
 - 2026-10-20: found on S20. Parked.
 - 2026-10-21: S30 showed the same for tasks. Planned with NFH-54.
+- 2026-10-21: built. Concurrent tasks, run schedules and resizes must go at least as far from what is deployed as
+  the label's value, in the label's direction (S08 slows a source, S21 shrinks). The right lever at too little is a
+  new grade, "value short". The Scorecard and the replay report show the right-value rate (Design fix) and the
+  right-lever rate side by side; Soak still counts the design fix only. The scenario guide says "or more", "or
+  shorter", "or larger" in each grading line.
 
 ### NFH-54 · Feature · The agent sees every reading in its process group
 The prompt lists only the signals that breached. In a cascade (S22, S24, S26, S28) the agent sees the full ingest
@@ -215,12 +220,13 @@ How a fix gets from test to production: apply directly, stage then promote, or h
 only exists in production.
 - 2026-10-20: parked, to revisit as Phase 5.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-67 · Docs · Tracker and architecture guide
 This file, and [ARCHITECTURE.md](ARCHITECTURE.md) with the agent's graph drawn from the code.
 - 2026-10-21: started.
 - 2026-10-21: both written; `nifi_healer/agent/diagram.py` draws the graph, and `tests/test_architecture_doc.py`
   fails when the drawing is stale or a node is missing from the node table.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-21: done in 5191d36.

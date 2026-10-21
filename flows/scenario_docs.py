@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flows import packs  # noqa: E402
 from flows.builder.lib import ProcessGroup  # noqa: E402
 from flows.scenario_walkthroughs import PACKS, WALKTHROUGHS  # noqa: E402
+from nifi_healer.actions import catalog  # noqa: E402
+from nifi_healer.eval import scorecard  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenarios", "README.md")
 
@@ -93,7 +95,10 @@ leave each group, so data loss shows up even when no queue grows.
 
 Every scenario has a design fix, which is the change the scenario was built around, and usually a short list of
 other fixes that clear it just as well. A proposal that makes the design fix is graded as expected, and one that
-makes any of the accepted fixes is graded as acceptable. The tests also apply the tempting wrong fixes listed under
+makes any of the accepted fixes is graded as acceptable. Where the value decides whether a fix can work, it has to go
+at least as far: as many concurrent tasks or more, a run schedule as short or shorter (as long or longer where the
+fix slows a stage down, as in S08), a resize as far or further. The right fix with too little of it, such as 2 tasks where 4 are needed, is graded as the right lever with the value
+short, which doesn't count as the design fix. The tests also apply the tempting wrong fixes listed under
 each scenario and check that the fault is still there afterwards. A compound scenario has more than one fault, and
 its KPIs don't clear until every one of them has been fixed, which usually takes more than one proposal.
 
@@ -311,9 +316,9 @@ def grading(s) -> str:
     if primary and s.kind != "control":
         out.append(f"Whether a fix worked is decided by {join(primary)}.")
 
-    expected = [gerund(a) for a in s.expected]
+    expected = [at_least(a, s) for a in s.expected]
     together = ", all in one proposal" if len(expected) > 1 else ""
-    accepted = f" We also accept {join((gerund(a) for a in s.acceptable), 'or')}." if s.acceptable else ""
+    accepted = f" We also accept {join((at_least(a, s) for a in s.acceptable), 'or')}." if s.acceptable else ""
 
     if s.kind == "control":
         out.append("The right answer is to leave it alone, and any change counts as a false positive.")
@@ -324,7 +329,27 @@ def grading(s) -> str:
     else:
         out.append(f"The fix we grade as correct is {join(expected)}{together}.{accepted}")
 
+    if any(at_least(a, s) != gerund(a) for a in s.expected + s.acceptable) and s.kind != "control":
+        out.append("The right fix at less than that is graded as the right lever with the value short.")
+
     return " ".join(out)
+
+
+def at_least(a: dict, s) -> str:
+    """The fix as graded (eval/scorecard.reaches): a value that goes further counts too."""
+
+    kind, way = a["action"], scorecard.direction(a, s)
+
+    if kind == "SET_CONCURRENT_TASKS":
+        return f"{gerund(a)} or {'more' if way > 0 else 'fewer'}"
+
+    if kind == "SET_RUN_SCHEDULE" and (way > 0 or catalog.magnitude(a.get("value"))):
+        return f"{gerund(a)} or {'longer' if way > 0 else 'shorter'}"
+
+    if kind == "SCALE_DEPLOYMENT":
+        return f"{gerund(a)} or {'larger' if way > 0 else 'smaller'}"
+
+    return gerund(a)
 
 
 def label(text: str) -> str:

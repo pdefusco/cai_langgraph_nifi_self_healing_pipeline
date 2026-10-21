@@ -134,6 +134,24 @@ def is_size(text) -> bool:
     return isinstance(text, str) and bool(_SIZE.match(text.strip()))
 
 
+def magnitude(value):
+    """A number, a duration (seconds) or a size (bytes) as a float to compare; anything else None."""
+
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if is_duration(value):
+        return parse_duration(value)
+
+    if is_size(value):
+        return parse_size(value)
+
+    return None
+
+
 def _int(value):
     if isinstance(value, bool):
         return None

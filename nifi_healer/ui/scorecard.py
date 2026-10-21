@@ -22,7 +22,8 @@ SOURCES = (LIVE, REPLAY)
 _RECENT = 50
 
 _MATCH_CHIP = {sc.EXPECTED: ("mx-v-IMPROVED", "design fix"), sc.ACCEPTABLE: ("mx-v-IMPROVED", "acceptable"),
-               sc.OTHER: ("mx-operator", "other fix"), sc.UNKNOWN: ("", "no label")}
+               sc.SHORT: ("mx-v-NO_CHANGE", "right fix, value short"), sc.OTHER: ("mx-operator", "other fix"),
+               sc.UNKNOWN: ("", "no label")}
 _REVIEW_CHIP = {sc.APPROVED: "mx-agent", sc.EDITED: "mx-operator", sc.REJECTED: "mx-v-WORSENED",
                 sc.AUTO: "mx-v-IMPROVED", sc.UNDECIDED: "mx-v-pending", sc.NO_REVIEW: ""}
 _RESULT_CHIP = {sc.WORKED: "mx-v-IMPROVED", sc.NO_HELP: "mx-v-NO_CHANGE", sc.WORSE: "mx-v-WORSENED",
@@ -126,7 +127,8 @@ def _of(hits: int, total: int, what: str) -> str:
 
 
 def _tiles(s: dict, seen: dict | None = None) -> str:
-    matched = s["match"][sc.EXPECTED] + s["match"][sc.ACCEPTABLE]
+    matched = sum(s["match"][m] for m in sc.RIGHT_VALUE)
+    lever = sum(s["match"][m] for m in sc.RIGHT_LEVER)
     labelled = sum(s["match"].values())
     decided = s["review"][sc.APPROVED] + s["review"][sc.EDITED] + s["review"][sc.REJECTED]
     worked = s["results"][sc.WORKED]
@@ -145,7 +147,8 @@ def _tiles(s: dict, seen: dict | None = None) -> str:
               f"{s['controls']} on the healthy control" if s["controls"] else "none on the healthy control"),
         _tile("Valid first try", pct(s["valid_first"]),
               _of(s["first_valid"], s["proposed"], "incidents proposed for")),
-        _tile("Picked the design fix", pct(s["matched"]), _of(matched, labelled, "with a design label")),
+        _tile("Picked the design fix", pct(s["matched"]), _of(matched, labelled, "with a design label")
+              + (f" · the right lever in {lever}, at any value" if lever != matched else "")),
         approved,
         _tile("Fix worked", pct(s["worked"]),
               _of(worked, s["judged"], "judged") + (f" · {s['labelled']} by a reviewer" if s["labelled"] else "")),
@@ -273,7 +276,9 @@ def _name(m: dict, group: str, s: dict | None = None) -> str:
 
 
 def _groups(m: dict) -> str:
-    head = ("<tr><th>{}</th><th>Incidents</th><th>Valid first try</th><th>Design fix</th>"
+    head = ("<tr><th>{}</th><th>Incidents</th><th>Valid first try</th>"
+            "<th title=\"The design fix at a value that can clear the problem\">Design fix</th>"
+            "<th title=\"The design fix's lever (action and target), at any value\">Right lever</th>"
             "<th title=\"Proposals that cite a past case (memory)\">Cited a case</th>"
             "<th>Review</th><th title=\"How far the fixes moved the KPIs that opened their incidents, "
             "−100% to +100%: the median, and where the middle half falls\">Lift</th>"
@@ -281,7 +286,7 @@ def _groups(m: dict) -> str:
             ).format(_e(m["grouping"]))
     rows = "".join(
         f"<tr><td class=\"sc-g\">{_name(m, name, s)}</td><td>{s['incidents']}</td><td>{pct(s['valid_first'])}</td>"
-        f"<td>{pct(s['matched'])}</td><td>{pct(s['cited'])}</td>"
+        f"<td>{pct(s['matched'])}</td><td>{pct(s['right_lever'])}</td><td>{pct(s['cited'])}</td>"
         f"<td class=\"sc-stack\">{_bar(s['review'], _REVIEW_BARS)}</td>"
         f"<td class=\"sc-stack\">{_lift_cell(s)}</td><td>{pct(s['worked'])}</td>"
         f"<td>{s['regressed'] or ''}</td><td>{duration(s['to_resolve'])}</td></tr>"

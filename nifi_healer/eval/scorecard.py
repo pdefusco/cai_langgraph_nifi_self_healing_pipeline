@@ -7,8 +7,13 @@ Each case answers, for one incident:
   proposed   was the agent's first proposal valid (it may repair one)?
   match      did its proposal pick the scenario's known-correct fix?
              (`expected`, else `acceptable`; the design label the agent
-             never sees). Targets and kinds count, values do not: 4 or 6
-             concurrent tasks is tuning, not a different diagnosis.
+             never sees). The value counts where it decides whether the
+             fix can work: concurrent tasks, a run schedule and a resize
+             must go at least as far from what is deployed as the
+             label's (more tasks, a shorter schedule, a larger
+             deployment, or the other way where the label goes that
+             way). Further is tuning; less far is `short`, the right
+             lever at a value that can't clear the problem.
   review     what the reviewer did: approved it as proposed, approved an
              edit of it, rejected it, or has yet to decide; or no person
              did and a trusted fix approved itself (auto-approved).
@@ -31,10 +36,12 @@ The agent is judged by its own last proposal; an edited fix's result is
 the reviewer's as much as the agent's, so `origin` tells them apart.
 """
 
+import functools
 import statistics
 
 import config
 from flows import packs
+from flows.builder.lib import ProcessGroup
 from nifi_healer.actions import catalog
 from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import settled
@@ -52,8 +59,11 @@ APPROVED, EDITED, REJECTED, UNDECIDED, NO_REVIEW = "approved", "edited", "reject
 AUTO = "auto-approved"
 REVIEWS = (APPROVED, EDITED, REJECTED, AUTO, UNDECIDED, NO_REVIEW)
 AUTO_REVIEWER = "autonomy (trusted fix)"
-EXPECTED, ACCEPTABLE, OTHER, UNKNOWN = "expected", "acceptable", "other", "no label"
-MATCHES = (EXPECTED, ACCEPTABLE, OTHER, UNKNOWN)
+EXPECTED, ACCEPTABLE, SHORT, OTHER, UNKNOWN = "expected", "acceptable", "value short", "other", "no label"
+MATCHES = (EXPECTED, ACCEPTABLE, SHORT, OTHER, UNKNOWN)
+# The right value (the fix can work), and the right lever whatever its value.
+RIGHT_VALUE = (EXPECTED, ACCEPTABLE)
+RIGHT_LEVER = (EXPECTED, ACCEPTABLE, SHORT)
 
 # The fields that make a step a different fix; the rest are its values.
 _IDENTITY = ("action", "target", "property", "parameter", "relationship")
@@ -84,24 +94,114 @@ def step_key(step: dict) -> tuple:
     return tuple(part(f) for f in _IDENTITY)
 
 
+# The deployed setting a valued step changes; the label's value says which way is further.
+_DEPLOYED = {"SET_CONCURRENT_TASKS": "concurrentlySchedulableTaskCount", "SET_RUN_SCHEDULE": "schedulingPeriod"}
+# The usual way, when the deployed value isn't known: more tasks, a shorter schedule.
+_USUAL = {"SET_CONCURRENT_TASKS": 1, "SET_RUN_SCHEDULE": -1, "SCALE_DEPLOYMENT": 1}
+
+
+@functools.lru_cache(maxsize=None)
+def _processors(scenario_id: str) -> dict:
+    """The scenario's processors as provisioning builds them, by name."""
+
+    scenario = packs.SCENARIOS.get(scenario_id)
+
+    if scenario is None:
+        return {}
+
+    group = ProcessGroup(scenario.id, scenario.group_name)
+    scenario.build(group)
+
+    return {p["name"]: p for p in group.processors.values()}
+
+
+def _size(step: dict, now: tuple) -> tuple:
+    rank = {s: i for i, s in enumerate(catalog.CLUSTER_SIZES)}
+
+    return rank.get(step.get("cluster_size"), now[0]), catalog.magnitude(step.get("nodes")) or now[1]
+
+
+def _pack_size(scenario) -> tuple:
+    pack = next((p for p in packs.PACKS.values() if scenario in p.scenarios), None)
+
+    return _size({"cluster_size": pack.cluster_size, "nodes": pack.nodes}, (0, 1)) if pack else (0, 1)
+
+
+def direction(ref: dict, scenario=None) -> int:
+    """
+    Which way the label's value moves from what is deployed: +1 more tasks,
+    a longer schedule or a larger deployment; -1 the other way. S08 slows a
+    runaway source, S21 shrinks an oversized deployment.
+    """
+
+    ref = catalog.normalize(ref)
+    kind = ref["action"]
+
+    if kind == "SCALE_DEPLOYMENT":
+        now, wanted = _pack_size(scenario), _size(ref, _pack_size(scenario))
+
+        return -1 if wanted[0] < now[0] or wanted[1] < now[1] else 1
+
+    processor = _processors(getattr(scenario, "id", "")).get(ref.get("target"), {})
+    now, wanted = catalog.magnitude(processor.get(_DEPLOYED.get(kind))), catalog.magnitude(ref.get("value"))
+
+    if now is None or wanted is None or now == wanted:
+        return _USUAL.get(kind, 1)
+
+    return 1 if wanted > now else -1
+
+
+def reaches(step: dict, ref: dict, scenario=None) -> bool:
+    """
+    Whether a step is the reference's fix at a value that goes at least as
+    far from what is deployed (direction): as many tasks or more, a run
+    schedule as short or shorter, a resize as far or further. Other actions
+    are judged by their identity alone.
+    """
+
+    if step_key(step) != step_key(ref):
+        return False
+
+    step, ref = catalog.normalize(step), catalog.normalize(ref)
+    kind = ref["action"]
+    way = direction(ref, scenario) if kind in _USUAL else 0
+
+    if kind == "SCALE_DEPLOYMENT":
+        now = _pack_size(scenario)
+
+        return all((m - w) * way >= 0 for m, w in zip(_size(step, now), _size(ref, now)))
+
+    if kind in _DEPLOYED:
+        mine, wanted = catalog.magnitude(step.get("value")), catalog.magnitude(ref.get("value"))
+
+        return wanted is None or (mine is not None and (mine - wanted) * way >= 0)
+
+    return True
+
+
 def match(steps: list, scenario) -> str:
     """How the steps compare with the scenario's design label."""
 
     if scenario is None or not scenario.expected:
         return UNKNOWN
 
-    mine = {step_key(s) for s in steps if isinstance(s, dict)} or {step_key({"action": "NO_ACTION"})}
+    mine = [s for s in steps if isinstance(s, dict)] or [{"action": "NO_ACTION"}]
+    keys = {step_key(s) for s in mine}
 
-    def covers(fixes) -> bool:
-        wanted = {step_key(f) for f in fixes}
+    def reached(fixes) -> bool:
+        return bool(fixes) and all(any(reaches(s, f, scenario) for s in mine) for f in fixes)
 
-        return bool(wanted) and wanted <= mine
+    def picked(fixes) -> bool:
+        return bool(fixes) and {step_key(f) for f in fixes} <= keys
 
-    if covers(scenario.expected):
+    if reached(scenario.expected):
         return EXPECTED
 
-    if any(covers((f,)) for f in scenario.acceptable):
+    if any(reached((f,)) for f in scenario.acceptable):
         return ACCEPTABLE
+
+    if picked(scenario.expected) or any(picked((f,)) for f in scenario.acceptable):
+        return SHORT
 
     return OTHER
 
@@ -261,8 +361,9 @@ def summarize(group: list) -> dict:
         "valid_first": _rate(sum(bool(c["valid_first"]) for c in proposed), len(proposed)),
         "repairs": sum(c["repairs"] for c in proposed),
         "cited": _rate(sum(bool(c.get("cited")) for c in proposed), len(proposed)),
-        "match": {m: sum(c["match"] == m for c in labelled) for m in MATCHES[:3]},
-        "matched": _rate(sum(c["match"] in (EXPECTED, ACCEPTABLE) for c in labelled), len(labelled)),
+        "match": {m: sum(c["match"] == m for c in labelled) for m in MATCHES[:-1]},
+        "matched": _rate(sum(c["match"] in RIGHT_VALUE for c in labelled), len(labelled)),
+        "right_lever": _rate(sum(c["match"] in RIGHT_LEVER for c in labelled), len(labelled)),
         "review": {r: sum(c["review"] == r for c in group) for r in REVIEWS},
         "approved": _rate(sum(c["review"] == APPROVED for c in decided), len(decided)),
         "applied": sum(c["applied"] for c in group),

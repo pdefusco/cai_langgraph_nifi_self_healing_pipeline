@@ -35,7 +35,6 @@ from nifi_healer.agent.nodes import log
 from nifi_healer.cdp.client import get_client
 from nifi_healer.eval import scorecard as sc
 from nifi_healer.rag import memory, priors
-from nifi_healer.sim.model import parse_duration, parse_size
 from nifi_healer.store.db import get_store
 
 REVIEWER = sc.AUTO_REVIEWER
@@ -89,22 +88,6 @@ def standing(store, pack: str, group: str, fix: str, found: list | None = None) 
             "needed": config.AUTONOMY_AFTER, "broken_by": broken_by, "values": values}
 
 
-def _magnitude(value):
-    if isinstance(value, bool):
-        return None
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    if catalog.is_duration(value):
-        return parse_duration(value)
-
-    if catalog.is_size(value):
-        return parse_size(value)
-
-    return None
-
-
 def outside(steps: list, values: dict) -> list:
     """The steps' values that no person approved within the run of wins, and that no range of them covers."""
 
@@ -119,13 +102,13 @@ def outside(steps: list, values: dict) -> list:
                 continue
 
             seen = approved.get(name) or []
-            sizes = [_magnitude(v) for v in seen]
+            sizes = [catalog.magnitude(v) for v in seen]
 
             if value in seen:
                 continue
 
-            if seen and _magnitude(value) is not None and None not in sizes \
-                    and min(sizes) <= _magnitude(value) <= max(sizes):
+            if seen and catalog.magnitude(value) is not None and None not in sizes \
+                    and min(sizes) <= catalog.magnitude(value) <= max(sizes):
                 continue
 
             shown = ", ".join(str(v) for v in seen) or "none"
