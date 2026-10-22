@@ -186,9 +186,11 @@ def test_it_isolates_a_live_project(replayed, tmp_path):
     config.DF_CLIENT, config.MOCK, config.ARMED = "live", False, False
     config.SERVICE_CRN, config.ENVIRONMENT_CRN = "crn:cdp:df:live:service:x", "crn:cdp:environments:live:env:x"
     config.DB_PATH = str(tmp_path / "healer.db")
+    config.COUNT_WINDOW_SECONDS = 300        # live charts processor counts per 5 minutes
     replay.isolate(replayed)
 
     assert config.MOCK and isinstance(clients.get_client(), MockClient)
+    assert config.COUNT_WINDOW_SECONDS == 1  # the mock's are per second: a rate read live would be 300x low
     assert (config.SERVICE_CRN, config.ENVIRONMENT_CRN) == (config.MOCK_SERVICE_CRN, config.MOCK_ENVIRONMENT_CRN)
     assert all(getattr(config, name).startswith(replayed) for name in
                ("DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR", "CHROMA_DIR"))

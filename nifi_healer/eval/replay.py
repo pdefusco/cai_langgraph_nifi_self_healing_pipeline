@@ -96,7 +96,7 @@ LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
             "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
-            "DRAFT_PLAYBOOK_EDITS")
+            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS")
 
 
 def log(msg: str) -> None:
@@ -165,6 +165,7 @@ def isolate(directory: str):
     config.AUTO_DIAGNOSE = True              # the poller hands each new incident to detect()
     config.DRAFT_PLAYBOOK_EDITS = False      # nobody rejects here, and its edits are not the app's
     config.AUTONOMY = False                  # the replay approves every valid proposal itself
+    config.COUNT_WINDOW_SECONDS = 1          # the mock charts processor counts per second, not per 5 minutes
 
     worlds._WORLD = None
     world = worlds.get_world()

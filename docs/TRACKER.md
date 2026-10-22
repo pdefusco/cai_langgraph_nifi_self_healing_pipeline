@@ -95,7 +95,8 @@ them.
 | NFH-70 | Fix | The replay backfills KPI history as the app does, so the agent's readings have trends and peaks | Done | dc8c3f2 |
 | NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Done | e2e5ce3 |
 | NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | 1848a64 |
-| NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | |
+| NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | 6ec47ff |
+| NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | |
 
 ## Open tickets
 
@@ -196,6 +197,24 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   4. Expiration loss isn't recognised (S25): the agent blamed Parse View, though Parse DLQ reads 0/s in; the
      1-minute expiration on s25-session-buffer is only in the inventory. NFH-72 and NFH-73.
   S22's one "worked" is most likely noise: the merge's 30-minute bin age flushed inside the verify window.
+- 2026-10-22: after NFH-70–73, the after run on p8–p10 (`replay-after-3`, 2 trials) against `replay-after-2`:
+  right lever 0 → 6 of 12, right value 0 → 5, design fix 0 → 3, worked 2 → 7. S27 found the DLQ route in both trials,
+  S25 the right lever in both; S22 and S24 one of two. S23 (more tasks on Extract Carrier: "the throttle has ample
+  capacity") and S26 (a yield of 0, then a higher threshold on s26-merged) still miss. But the readings showed every
+  processor rate 300x low (S23 Ship Confirmations 0.0333/s against the 10/s detection saw): NFH-74. So after-1 to
+  after-3 measured the readings and the capacity check with wrong rates; re-run before judging S23 and S26.
+
+### NFH-74 · Fix · The replay's processor rates are 300x low on CAI
+`config.COUNT_WINDOW_SECONDS` is 300 when the app starts live (CDF charts processor counts per 5 minutes) and 1 on
+the mock, which records per second. `replay.isolate` switched a CAI project to the mock but kept 300, so on CAI the
+replay's readings and capacity check divided every processor rate by 300. Local runs start on the mock and were
+right, so the tests never saw it.
+- 2026-10-22: found in NFH-69 (S23: 0.0333/s in the readings for 10/s). Built: `isolate` sets the window to 1, and
+  the tests' config restore covers it.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
 A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that
@@ -207,10 +226,7 @@ data expiring on a queue by speeding up its consumer.
   proposal is not shown back). The rules say data lost without an error is lost where the inventory drops it: an
   auto-terminated relationship is routed with ROUTE_RELATIONSHIP_TO_DLQ, which enables a disabled DLQ; a queue whose
   FlowFiles expire is fixed by speeding up the processor it feeds, not by lengthening the expiration.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in 6ec47ff.
 
 ### NFH-72 · Feature · Readings in flow order, with limits and expiration
 List every connection of the group in flow order: queued against its back-pressure limit, how full, its expiration,
