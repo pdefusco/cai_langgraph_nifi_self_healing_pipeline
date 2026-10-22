@@ -48,3 +48,19 @@ def test_a_new_baseline_is_deployed_without_undoing_a_parameter_fix(tenant, monk
     call = next(p for _, _, p in iter_processors(client.flow_definition(baseline))
                 if p["name"] == "S17 Partner Call")
     assert "Connection Timeout" in call["properties"] and "Socket Connect Timeout" not in call["properties"]
+
+
+def test_a_flow_without_a_fleet_record_takes_its_newest_baseline(tenant):
+    # Live: p3 and p5 were found in the catalog with no record, took v1 (built before NFH-11) and ran it.
+    _, client, _ = tenant("p5-parameters")
+    rebuilt = provisioning.import_flow(client, "p5-parameters", new_baseline=True)["baseline_flow_version_crn"]
+    crn = fleet.pack("p5-parameters")["flow_crn"]
+
+    # A fix the app imported later is not a baseline.
+    client.df("import-flow-definition-version", "--flow-crn", crn,
+              "--file", provisioning.definition_file("p5-parameters"), "--comments", "nfh: a fix")
+    fleet.update_pack("p5-parameters", baseline_flow_version_crn=None)
+
+    assert provisioning.import_flow(client, "p5-parameters")["baseline_flow_version_crn"] == rebuilt
+    assert provisioning._newest_baseline([{"crn": "a", "version": 2, "comments": "nfh"},
+                                          {"crn": "b", "version": 1, "comments": ""}])["crn"] == "b"

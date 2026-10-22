@@ -73,6 +73,21 @@ def _version_crn(result: dict) -> str:
     return result.get("crn") or (result.get("flowVersion") or {}).get("crn") or ""
 
 
+def _newest_baseline(versions: list) -> dict:
+    """
+    The newest version imported as a baseline, else the oldest. A rebuilt
+    baseline (new_baseline) supersedes the first one, and fixes in between
+    are the app's own versions, which a reset must not return to.
+    """
+
+    baselines = [v for v in versions if (v.get("comments") or "").startswith("baseline")]
+
+    if baselines:
+        return max(baselines, key=lambda v: v.get("version") or 0)
+
+    return min(versions, key=lambda v: v.get("version") or 0)
+
+
 def import_flow(client: Client, pack_name: str, new_baseline: bool = False) -> dict:
     """
     Import the pack's definition, or record the one already in the catalog.
@@ -106,8 +121,7 @@ def import_flow(client: Client, pack_name: str, new_baseline: bool = False) -> d
 
         if not baseline:
             versions = require(client.list_flow_versions(crn), f"list versions of {name}")
-            first = min(versions.get("flowVersions") or [], key=lambda v: v.get("version") or 0)
-            baseline = first["crn"]
+            baseline = _newest_baseline(versions.get("flowVersions") or [])["crn"]
 
         log(f"  [import] {name} already in the catalog ({existing.get('versionCount')} version(s))")
 

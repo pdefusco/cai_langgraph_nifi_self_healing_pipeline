@@ -85,12 +85,12 @@ them.
 | NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
 | NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | 2ee434c |
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | In progress | |
-| NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Parked | |
+| NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
-| NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | |
+| NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
 
 ## Open tickets
 
@@ -173,6 +173,10 @@ baseline. On pdf1019-cdp-env that deployed p3 and p5 on v1, built before NFH-11,
 a space and fails every call. Pick the newest version whose comment starts with "baseline". Then re-baseline p5
 (01 with `--new-baseline`, then 06 `--flow-only`), which is a tenant write the user runs.
 - 2026-10-21: found on S10. Parked.
+- 2026-10-21: built. With no baseline in the fleet record, `import_flow` takes the newest version whose comment
+  starts with "baseline" (the first import, or a rebuild by `--new-baseline`), else the oldest. The app's own
+  versions ("nifi-healer …") and a canary never qualify. p5's record already names v1, so it still needs the
+  re-baseline above.
 
 ### NFH-64 · Fix · Scenario design problems found live
 - S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
@@ -197,6 +201,10 @@ How a fix gets from test to production: apply directly, stage then promote, or h
 only exists in production.
 - 2026-10-20: parked, to revisit as Phase 5.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-68 · Fix · Retry a diagnosis the LLM didn't answer
 The before and after replays (NFH-62) lost 5 and 8 diagnoses to "Request timed out.": the chat client gave the
 reasoning model 120 s and two retries, and the incident was left NEW until an app restart or a Diagnose click. Make
@@ -207,10 +215,6 @@ the timeout a setting, have the app ask again on a backoff, and have the replay 
   `SELFHEAL_AUTO_DIAGNOSE` on, `graph.retry_failed()` queues such an incident again 5, 15, then every 30 minutes
   after its last failure (in memory; a restart re-queues every NEW incident anyway). The Review Queue says when the
   next try is. The replay asks again up to 3 times in a round, 30 s apart, with the clock stopped.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-61 · Feature · Check capacity before review
 For SET_CONCURRENT_TASKS and SET_RUN_SCHEDULE, validation estimates the processor's capacity after the change and
