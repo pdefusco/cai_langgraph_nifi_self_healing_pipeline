@@ -211,6 +211,9 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   misses: S24 round 2 fixed Parse Click next to the alert and read the throttled source as "no data" (round 1 was
   right), and S25 round 2 claimed FlowFiles went to Parse DLQ, which read 0/s in, and changed a JSON path. Both are
   claims the readings contradict: the case for a critic (NFH-76).
+- 2026-10-22: re-graded with NFH-75, after-3 → after-4: design fix 25% → 50%, right value 50% → 67%, right lever
+  50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
+  S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ### NFH-75 · Fix · Grade the DLQ a route reaches; accept 3 tasks on S25
 In after-4, S27 round 2 routed Schema Check's failure to S27 Parse DLQ rather than S27 Reject DLQ, and was graded
