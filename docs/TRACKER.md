@@ -91,6 +91,7 @@ them.
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
 | NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
+| NFH-69 | Ops | Why the agent still fixes the wrong stage in a cascade (S22–S27) | In progress | |
 
 ## Open tickets
 
@@ -148,6 +149,40 @@ opened the incident, so a correct first fix can read as no change, or worse. Cre
 report the KPIs still breached as "still open: likely another fault", with no rollback offered.
 - 2026-10-21: found on S32. Parked.
 
+### NFH-64 · Fix · Scenario design problems found live
+- S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
+  incident. Alert on bytes queued instead.
+- S21's CPU threshold can't be reached on EXTRA_SMALL.
+- S09's backlog can't drain after its fix.
+- S20 is stalled live rather than CPU-bound.
+- Thresholds on processor counts (S23 `below=20`, the rate KPIs) are written per second, but CDF charts a processor's
+  counts as 5-minute totals, so on live they are 300 times off: a `below` alert never fires and an `above` one fires
+  far too early. Fix with NFH-65.
+- 2026-10-21: found in the review pass. Parked.
+- 2026-10-21: the processor-count units found while building NFH-54.
+
+### NFH-65 · Ops · Uniform watch-only KPIs
+The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
+the answer once NFH-54 shows them. Give every connection and processor of a group a watch-only KPI, so the agent's
+view is the same everywhere. A tenant write (re-running the 04 KPI step).
+- 2026-10-21: planned for before p14–p20.
+
+### NFH-66 · Feature · Environment promotion
+How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
+only exists in production.
+- 2026-10-20: parked, to revisit as Phase 5.
+
+### NFH-69 · Ops · Why the cascades still miss
+After NFH-54 and NFH-60 the agent has the right lever in 0 of 12 cascade cases (S22–S27) in NFH-62's after run. Read
+what it proposed and why, attempt by attempt, against the design fix, before changing the prompt or the readings.
+- 2026-10-22: `replay --show DIR` built: per case, the design fix, then each attempt's steps, diagnosis, rationale and
+  the validation problems that sent it back, filtered by `--scenario` or `--pack`. Read-only. The user runs it on the
+  after run in the CAI session.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-62 · Ops · Measure offline before and after
 Run the replay once per scenario on the current prompt for the backlog and pipeline packs (p1, p2, p8–p13), then again
 after NFH-53, 54, 60 and 61. Compare the design-fix rate, right target, right value and outcome. No live changes. The
@@ -176,33 +211,6 @@ simulator models capacity the way NFH-60 reasons, so the live re-draft (NFH-55) 
   0 of 12 cases after, 1 of 12 before (S25). More proposals were sent back for another attempt (valid first time
   down in S01, S02, S03, S26 and S30), most likely by the capacity check, and S30's ended worked in both trials. S32 has the design fix in both and never
   works in the simulator (see NFH-59). Done; why the cascades still miss is the next question.
-
-### NFH-64 · Fix · Scenario design problems found live
-- S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
-  incident. Alert on bytes queued instead.
-- S21's CPU threshold can't be reached on EXTRA_SMALL.
-- S09's backlog can't drain after its fix.
-- S20 is stalled live rather than CPU-bound.
-- Thresholds on processor counts (S23 `below=20`, the rate KPIs) are written per second, but CDF charts a processor's
-  counts as 5-minute totals, so on live they are 300 times off: a `below` alert never fires and an `above` one fires
-  far too early. Fix with NFH-65.
-- 2026-10-21: found in the review pass. Parked.
-- 2026-10-21: the processor-count units found while building NFH-54.
-
-### NFH-65 · Ops · Uniform watch-only KPIs
-The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
-the answer once NFH-54 shows them. Give every connection and processor of a group a watch-only KPI, so the agent's
-view is the same everywhere. A tenant write (re-running the 04 KPI step).
-- 2026-10-21: planned for before p14–p20.
-
-### NFH-66 · Feature · Environment promotion
-How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
-only exists in production.
-- 2026-10-20: parked, to revisit as Phase 5.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-63 · Fix · Import picks the oldest version as baseline
 When a flow is in the catalog but not in the fleet record, `provisioning.import_flow` takes the oldest version as

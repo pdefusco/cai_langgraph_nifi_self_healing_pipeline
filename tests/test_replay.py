@@ -136,6 +136,31 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     assert total.startswith("all") and cells(total)[:2] == ["2→1", "100%→0%"]
 
 
+class TooManyTasksLLM(OutOfBoundsLLM):
+    """Always proposes 99 concurrent tasks, as a well-formed step that validation sends back."""
+
+    def invoke(self, messages):
+        return type("Reply", (), {"content": json.dumps({
+            "diagnosis": "too few tasks", "root_cause_component": "S01 Consumer",
+            "steps": [{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 99}],
+            "rationale": "more is better", "citations": [], "confidence": 0.5, "expected_effect": "faster"})})()
+
+
+def test_what_the_agent_proposed(replayed):
+    llm.set_chat_model(TooManyTasksLLM())
+    replay.run(["S01", "S02"])
+    snapshot = replay.load()
+    shown = replay.show(snapshot, ["S01"])
+
+    assert shown.startswith("=== S01 Slow Consumer · round 1 · ") and "=== S02" not in shown
+    assert "  designed fix: SET_CONCURRENT_TASKS S01 Consumer" in shown
+    assert [line.strip() for line in shown.splitlines() if line.startswith("  attempt")] == [
+        "attempt 1 · SUPERSEDED", "attempt 2 · SUPERSEDED", "attempt 3 · INVALID"]
+    assert shown.count('steps: SET_CONCURRENT_TASKS S01 Consumer {"value": 99}') == 3
+    assert shown.count("    sent back:") == 3 and "more is better" in shown
+    assert "=== S02" in replay.show(snapshot)
+
+
 def test_it_isolates_a_live_project(replayed, tmp_path):
     # A CAI project's environment: live client and CRNs, the app's data dir, disarmed.
     config.DF_CLIENT, config.MOCK, config.ARMED = "live", False, False

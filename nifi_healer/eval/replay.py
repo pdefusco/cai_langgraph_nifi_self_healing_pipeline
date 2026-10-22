@@ -8,6 +8,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
     python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
     python -m nifi_healer.eval.replay --compare BEFORE_DIR AFTER_DIR   # two records side by side
+    python -m nifi_healer.eval.replay --show DIR --pack p8-orders     # what the agent proposed, and why
     CAI job: cai_job.py    Arguments: -m nifi_healer.eval.replay --trials 3
 
 Each trial round, over the packs the chosen scenarios are in:
@@ -66,6 +67,7 @@ import re
 import sqlite3
 import statistics
 import sys
+import textwrap
 import time
 
 import config
@@ -475,6 +477,53 @@ def compare(before: dict, after: dict) -> str:
     return "\n".join(rows)
 
 
+def _step(step: dict) -> str:
+    extra = {k: v for k, v in step.items() if k not in ("action", "target")}
+    return f"{step.get('action')} {step.get('target') or ''} {json.dumps(extra) if extra else ''}".strip()
+
+
+def _wrapped(label: str, text, width: int) -> str:
+    text = " ".join(str(text or "").split())
+    body = textwrap.fill(text[:width] + ("…" if len(text) > width else ""), 110,
+                         initial_indent="      ", subsequent_indent="      ")
+    return f"    {label}:\n{body}"
+
+
+def show(snapshot: dict, ids=()) -> str:
+    """
+    What the agent proposed in a replay record, case by case: the design
+    fix, then each attempt's steps, diagnosis and rationale, and the
+    validation problems that sent it back. Only the scenarios in ids, if any.
+    """
+
+    proposals = {}
+
+    for p in snapshot["record"].get("proposals") or []:
+        proposals.setdefault(p["incident_id"], []).append(p)
+
+    rows = []
+
+    for case in sorted(cases(snapshot), key=lambda c: (c["scenario"], c["round"])):
+        if ids and case["scenario"] not in ids:
+            continue
+
+        rows.append(f"\n=== {case['scenario_title']} · round {case['round']} · "
+                    f"{case['match']} · {case['result'] or 'not judged'}")
+        rows.append("  designed fix: " + "; ".join(_step(dict(s)) for s in packs.SCENARIOS[case["scenario"]].expected))
+
+        for p in sorted(proposals.get(case["incident"], []), key=lambda p: p["id"]):
+            rows.append(f"  attempt {p.get('attempt')} · {p.get('status')}")
+            rows.append("    steps: " + ("; ".join(_step(s) for s in p.get("action") or []) or "none"))
+            rows.append(_wrapped("diagnosis", p.get("diagnosis"), 600))
+            rows.append(_wrapped("rationale", p.get("rationale"), 900))
+            problems = (p.get("validation") or {}).get("problems") or []
+
+            if problems:
+                rows.append(_wrapped("sent back", " | ".join(problems), 900))
+
+    return "\n".join(rows).lstrip("\n")
+
+
 def live_edits(path: str) -> list:
     """The app's approved playbook edits, read from its store without writing to it; none if it has none."""
 
@@ -564,7 +613,20 @@ def main() -> int:
                         help="fixes a fault may take: above 1, each fixed fault is watched for a new incident")
     parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"),
                         help="print two replay directories' records side by side, and run nothing")
+    parser.add_argument("--show", metavar="DIR",
+                        help="print what the agent proposed in a replay directory's record (only --scenario "
+                             "and --pack, if given), and run nothing")
     args = parser.parse_args()
+
+    if args.show:
+        snapshot = load(args.show)
+
+        if snapshot is None:
+            parser.error(f"no replay record in {args.show}")
+
+        print(show(snapshot, chosen(args.scenario, args.pack) if args.scenario or args.pack else ()), flush=True)
+
+        return 0
 
     if args.compare:
         snapshots = [load(d) for d in args.compare]
