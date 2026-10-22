@@ -70,7 +70,8 @@ Summary: {summary}
 Signals:
 {signals}
 
-Current readings (every KPI watched on this group, the last 15 minutes; rates per second):
+Current readings (the last 15 minutes; rates per second). Every queue of the group, in flow order; one that is not
+measured may still be full. Then every rate watched:
 {readings}
 
 Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).

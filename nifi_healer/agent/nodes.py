@@ -93,6 +93,7 @@ def gather_context(state: dict) -> dict:
     _status(incident["id"], "DIAGNOSING")
     deployment, flow = incident["deployment_crn"], incident["deployed_flow_crn"]
     context = {"inventory": "", "parameters": [], "sizing": {}, "error": ""}
+    found = None
 
     facts = client.flow_facts(deployment, flow)
     context.update(flow_version=facts.get("flow_version"), flow_version_crn=facts.get("flow_version_crn"),
@@ -113,7 +114,7 @@ def gather_context(state: dict) -> dict:
         groups = (configuration.get("parameterGroups") if "error" not in configuration else None) \
             or groups_from_definition(definition)
         found = inventory(definition, incident["process_group"], groups)
-        context.update(inventory=render(found), parameters=found["parameters"])
+        context.update(inventory=render(found), parameters=found.get("parameters") or [])
 
     sizing = client.deployment_configuration(deployment)
 
@@ -121,7 +122,7 @@ def gather_context(state: dict) -> dict:
         context["sizing"] = {"cluster_size": (sizing.get("clusterSize") or {}).get("name"),
                              "nodes": sizing.get("staticNodeCount")}
 
-    context["readings"] = readings.render(readings.for_incident(incident, store, client.now()))
+    context["readings"] = readings.render(readings.for_incident(incident, store, client.now()), found)
 
     return {"incident": incident, "context": context, "attempts": 0, "feedback": [],
             "source": "agent", "error": "", "review_error": ""}

@@ -80,4 +80,48 @@ def test_the_prompt_carries_the_readings(agent):
     # The two queues that are fine are there as well as the one that breached.
     for name in ("s03-to-enrich", "s03-to-transform", "s03-to-publish", "S03 Source (a source)"):
         assert name in section
-    assert "s03-to-transform: " in section and "over" in section and "fine" in section
+    assert "s03-to-transform (S03 Enrich -> S03 Transform): " in section and "over" in section and "fine" in section
+    assert section.index("s03-to-enrich") < section.index("s03-to-transform") < section.index("s03-to-publish")
+
+
+# S30's group as flow/inventory.py has it, cut down: two of its queues measured, one not, one expiring.
+INVENTORY = {
+    "group": "S30", "processors": [{"name": n} for n in (
+        "S30 Ship Parcels", "S30 Label", "S30 Order Feed", "S30 Pick Items")],
+    "connections": [
+        {"name": "s30-to-ship", "source": "S30 Label", "destination": "S30 Ship Parcels",
+         "object_threshold": 10000, "size_threshold": "1 GB", "expiration": "0 sec"},
+        {"name": "s30-to-label", "source": "S30 Pick Items", "destination": "S30 Label",
+         "object_threshold": 2000, "size_threshold": "1 GB", "expiration": "5 min"},
+        {"name": "s30-to-pick", "source": "S30 Order Feed", "destination": "S30 Pick Items",
+         "object_threshold": 2500, "size_threshold": "1 GB", "expiration": "0 sec"},
+        {"name": "s30-retry", "source": "S30 Pick Items", "destination": "S30 Pick Items",
+         "object_threshold": 100, "size_threshold": "", "expiration": "0 sec"},
+    ],
+}
+
+
+def test_with_the_inventory_every_queue_reads_in_flow_order(tmp_path, monkeypatch):
+    rows = readings.for_incident(S30, _store(tmp_path, monkeypatch, 1), NOW)
+
+    assert readings.render(rows, INVENTORY).splitlines() == [
+        "- connection s30-to-pick (S30 Order Feed -> S30 Pick Items): 2120 queued, back pressure at 2500 (85% full)"
+        " (alert above 1500): over, rising",
+        "- connection s30-to-label (S30 Pick Items -> S30 Label): no data in the last 15 min;"
+        " FlowFiles expire after 5 min",
+        "- connection s30-retry (S30 Pick Items -> S30 Pick Items): not measured, back pressure at 100 objects",
+        "- connection s30-to-ship (S30 Label -> S30 Ship Parcels): not measured,"
+        " back pressure at 10000 objects / 1 GB",
+        "- S30 Order Feed (a source): 6/s out, up to 20/s in the last 2 h: flat",
+        "- S30 Ship Parcels: 6.1/s in (alert below 15/s): over, flat",
+    ]
+
+    # An inventory that could not be read leaves the rows as they are.
+    assert readings.render(rows, {"error": "no group"}) == readings.render(rows)
+
+
+def test_flow_order_follows_the_connections_from_the_sources():
+    depth, connections = readings.flow_order(INVENTORY)
+
+    assert depth == {"S30 Order Feed": 0, "S30 Pick Items": 1, "S30 Label": 2, "S30 Ship Parcels": 3}
+    assert [c["name"] for c in connections] == ["s30-to-pick", "s30-to-label", "s30-retry", "s30-to-ship"]

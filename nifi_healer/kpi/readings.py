@@ -5,7 +5,7 @@ cause is a stage away from the alert, so the agent also needs the queues
 and rates that have not breached.
 
     rows = for_incident(incident, store, now)
-    text = render(rows)
+    text = render(rows, inv)        # inv: flow/inventory.py's inventory of the group
 
 From the samples the poller stored, over the last WINDOW_SECONDS (no CDF
 call). Each row has the latest value, its alert threshold, a state (over,
@@ -15,13 +15,18 @@ counts are shown per second (config.COUNT_WINDOW_SECONDS). Back pressure
 throttles what a source sends, which hides the intake, so a source that
 sent more in the last PEAK_SECONDS shows that peak too.
 
-Only the KPIs the pack defines; NFH-65 makes the coverage uniform.
+Only the KPIs the pack defines; NFH-65 makes the coverage uniform. Given
+the group's inventory, render() lists every connection in flow order,
+each against its back-pressure limit and with its expiration, and says
+so of one no KPI measures: in a cascade the full queue nobody watches
+would otherwise read as empty.
 """
 
 import config
 from flows import packs
 from nifi_healer import fleet
 from nifi_healer.kpi import detectors, metrics
+from nifi_healer.sim.model import parse_duration, parse_size
 
 WINDOW_SECONDS = 900
 PEAK_SECONDS = 7200
@@ -103,15 +108,43 @@ _SHOWN = {
 }
 
 
-def _line(row: dict) -> str:
-    where = {"connection": f"connection {row['component']}", "system": "the deployment's nodes"}.get(
+def _connection(connection: dict) -> str:
+    return f"connection {connection['name']} ({connection['source']} -> {connection['destination']})"
+
+
+def _expiry(connection: dict | None) -> str:
+    expiration = (connection or {}).get("expiration")
+
+    return f"; FlowFiles expire after {expiration}" if parse_duration(expiration) > 0 else ""
+
+
+def _fill(row: dict, connection: dict | None) -> str:
+    """How close the queue is to back pressure, from the inventory's thresholds."""
+
+    if connection is None:
+        return ""
+
+    limits = {"queued_count": (connection.get("object_threshold"), _number),
+              "queued_bytes": (connection.get("size_threshold"), _bytes)}
+    limit, shown = limits.get(row["metric"], (None, None))
+    size = parse_size(limit) if row["metric"] == "queued_bytes" else limit
+
+    if not isinstance(size, (int, float)) or size <= 0:
+        return ""
+
+    return f", back pressure at {shown(size)} ({100 * row['latest'] / size:.0f}% full)"
+
+
+def _line(row: dict, connection: dict | None = None) -> str:
+    where = {"connection": _connection(connection) if connection else f"connection {row['component']}",
+             "system": "the deployment's nodes"}.get(
         row["kind"], row["component"] + (" (a source)" if row["source"] else ""))
 
     if row["latest"] is None:
-        return f"- {where}: no data in the last {WINDOW_SECONDS // 60} min"
+        return f"- {where}: no data in the last {WINDOW_SECONDS // 60} min{_expiry(connection)}"
 
     shown, word = _SHOWN.get(row["metric"], (_number, row["metric"]))
-    text = f"- {where}: {shown(row['latest'])} {word}"
+    text = f"- {where}: {shown(row['latest'])} {word}" + _fill(row, connection)
 
     if row["peak"] is not None and row["peak"] > 1.1 * row["latest"]:
         text += f", up to {shown(row['peak'])} in the last {PEAK_SECONDS // 3600} h"
@@ -124,8 +157,66 @@ def _line(row: dict) -> str:
 
     found = [metrics.STATE_TEXT[row["state"]]] if row["state"] is not None else []
 
-    return text + ": " + ", ".join(found + [row["trend"]])
+    return text + _expiry(connection) + ": " + ", ".join(found + [row["trend"]])
 
 
-def render(rows: list) -> str:
-    return "\n".join(_line(r) for r in rows)
+def _unmeasured(connection: dict) -> str:
+    objects, size = connection.get("object_threshold"), connection.get("size_threshold")
+    limits = " / ".join(v for v in (f"{objects} objects" if objects else "", size or "") if v)
+
+    return (f"- {_connection(connection)}: not measured" + (f", back pressure at {limits}" if limits else "")
+            + _expiry(connection))
+
+
+def flow_order(inv: dict) -> tuple:
+    """
+    ({component: its distance from the group's sources}, the connections
+    in flow order): a connection sorts by how far its source is, a tie in
+    the definition's order. A loop back upstream doesn't move anything.
+    """
+
+    connections = inv.get("connections") or []
+    names = [p["name"] for p in inv.get("processors") or []]
+    names += [n for c in connections for n in (c["source"], c["destination"]) if n not in names]
+    fed = {c["destination"] for c in connections if c["source"] != c["destination"]}
+    depth = {n: 0 for n in names if n not in fed}
+    frontier = list(depth)
+
+    while frontier:
+        reached = []
+
+        for c in connections:
+            if c["source"] in frontier and c["destination"] not in depth:
+                depth[c["destination"]] = depth[c["source"]] + 1
+                reached.append(c["destination"])
+
+        frontier = reached
+
+    return depth, sorted(connections, key=lambda c: depth.get(c["source"], len(names)))
+
+
+def render(rows: list, inv: dict | None = None) -> str:
+    """
+    One line per row; with the group's inventory, every connection first,
+    in flow order, measured or not, then the other rows in flow order.
+    """
+
+    if not inv or "error" in inv:
+        return "\n".join(_line(r) for r in rows)
+
+    depth, connections = flow_order(inv)
+    measured = {}
+
+    for row in rows:
+        if row["kind"] == "connection":
+            measured.setdefault(row["component"], []).append(row)
+
+    lines = []
+
+    for connection in connections:
+        lines += [_line(r, connection) for r in measured.pop(connection["name"], [])] or [_unmeasured(connection)]
+
+    rest = [r for r in rows if r["kind"] != "connection"] + [r for found in measured.values() for r in found]
+    rest.sort(key=lambda r: (r["kind"] == "system", depth.get(r["component"], len(depth))))
+
+    return "\n".join(lines + [_line(r) for r in rest])

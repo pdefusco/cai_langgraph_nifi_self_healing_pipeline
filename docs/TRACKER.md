@@ -93,8 +93,8 @@ them.
 | NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
 | NFH-69 | Ops | Why the agent still fixes the wrong stage in a cascade (S22–S27) | In progress | |
 | NFH-70 | Fix | The replay backfills KPI history as the app does, so the agent's readings have trends and peaks | Done | dc8c3f2 |
-| NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Done | |
-| NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Planned | |
+| NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Done | e2e5ce3 |
+| NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | |
 | NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Planned | |
 
 ## Open tickets
@@ -197,21 +197,17 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
      1-minute expiration on s25-session-buffer is only in the inventory. NFH-72 and NFH-73.
   S22's one "worked" is most likely noise: the merge's 30-minute bin age flushed inside the verify window.
 
-### NFH-71 · Fix · One DLQ step for several relationships
-The duplicate check keys a step by action, target, property and parameter, so three ROUTE_RELATIONSHIP_TO_DLQ steps
-on one processor, one per relationship, are refused as "appears twice", though the action takes a list. Merge such
-steps into one before validating.
-- 2026-10-22: found in NFH-69 (S26). Planned.
-- 2026-10-22: built. `catalog.merge_routes` folds routes of one processor to one DLQ into one step with all their
-  relationships, where the first stood; `executor.plan` runs it after normalizing, so the stored proposal holds the
-  merged step, and the Scorecard's `match` runs it too, so S26's one step per relationship grades as the design fix.
-  Routes to another DLQ stay separate.
-
 ### NFH-72 · Feature · Readings in flow order, with limits and expiration
 List every connection of the group in flow order: queued against its back-pressure limit, how full, its expiration,
 and "not measured" where it has no KPI, so a queue nobody watches no longer reads as empty. App-side; NFH-65 adds the
 KPIs on the tenant.
 - 2026-10-22: found in NFH-69 (S22, S23, S24, S25). Planned.
+- 2026-10-22: built. Given the group's inventory, `readings.render` lists every connection first, in flow order
+  (`flow_order`: from the sources along the connections, a loop moving nothing), as "source -> destination": a
+  measured queue against its back-pressure limit and how full ("10001 queued, back pressure at 10000 (100% full)"),
+  one with no KPI as "not measured" with its limits, and any expiration ("FlowFiles expire after 1 min"). Then the
+  rates in flow order. The prompt says a queue that is not measured may still be full. S22's and S24's cascades now
+  read as a row of full queues with unmeasured ones between; S25's buffer shows its 1-minute expiration.
 
 ### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
 A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that
@@ -222,6 +218,17 @@ data expiring on a queue by speeding up its consumer.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-71 · Fix · One DLQ step for several relationships
+The duplicate check keys a step by action, target, property and parameter, so three ROUTE_RELATIONSHIP_TO_DLQ steps
+on one processor, one per relationship, are refused as "appears twice", though the action takes a list. Merge such
+steps into one before validating.
+- 2026-10-22: found in NFH-69 (S26). Planned.
+- 2026-10-22: built. `catalog.merge_routes` folds routes of one processor to one DLQ into one step with all their
+  relationships, where the first stood; `executor.plan` runs it after normalizing, so the stored proposal holds the
+  merged step, and the Scorecard's `match` runs it too, so S26's one step per relationship grades as the design fix.
+  Routes to another DLQ stay separate.
+- 2026-10-22: done in e2e5ce3.
 
 ### NFH-70 · Fix · The replay backfills KPI history
 The app fills its store from the 1 h, 12 h and 1 day charts of each pack when it starts (`Poller.backfill`); the
