@@ -84,7 +84,7 @@ them.
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
 | NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
 | NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | 2ee434c |
-| NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | In progress | |
+| NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Done | f4a3eb3 |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | 1db88f2 |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
@@ -166,6 +166,16 @@ simulator models capacity the way NFH-60 reasons, so the live re-draft (NFH-55) 
   prompt is about 1.25 times longer after (system text 4,647 → 5,915 characters), but the timeouts don't follow
   prompt size. Open question: the check's HEADROOM is 1.1, and S30's 3 + 5 passed it at about 1.3 of the intake.
   Re-run both, one after the other, once NFH-68 retries timeouts.
+- 2026-10-22: re-run, two trials each, one after the other, every diagnosis answered (before: 5191d36 with NFH-68's
+  retry patched in; after: main at 4e7d41e). All 40 cases, before → after: design fix 50% → 42% (20 → 17 cases),
+  right value 52% → 52%, right lever 70% → 62%, valid first time 95% → 85%, proposals per case 1.1 → 1.2, worked
+  57% → 57%, median lift +8% → +13%. Overall no clear change: with two trials a scenario moves 50 points on one case.
+  Better: S30 (worked 0% → 100%, lift +4% → +67%), S01 (right value 50% → 100%, worked 50% → 100%), S04 (right value
+  0% → 50%), S22 (worked 50% → 100%). Worse: S02 and S07 (design fix in 2 → 1 of 2 trials), S25 and S29 (1 → 0),
+  S03 (lever 100% → 50%). The cascades NFH-54 and NFH-60 aimed at are unchanged: S22–S27 have the right lever in
+  0 of 12 cases after, 1 of 12 before (S25). More proposals were sent back for another attempt (valid first time
+  down in S01, S02, S03, S26 and S30), most likely by the capacity check, and S30's ended worked in both trials. S32 has the design fix in both and never
+  works in the simulator (see NFH-59). Done; why the cascades still miss is the next question.
 
 ### NFH-64 · Fix · Scenario design problems found live
 - S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
