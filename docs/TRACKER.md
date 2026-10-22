@@ -90,6 +90,7 @@ them.
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
+| NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | |
 
 ## Open tickets
 
@@ -156,6 +157,15 @@ simulator models capacity the way NFH-60 reasons, so the live re-draft (NFH-55) 
   Scorecard as it is now: design fix, right value, right lever, valid first time, proposals per case, worked and
   median lift. The oracle replay on p1, p2 and p8–p13 is unchanged by NFH-61. The before run (a checkout before
   e93d361) and the after run (main) are CAI jobs for the user, as they need the LLM endpoint.
+- 2026-10-21: both runs done (before: a CAI session on 5191d36; after: the replay job on f4a3eb3), one trial each,
+  run at the same time. Not yet a fair comparison: the LLM timed out on 5 diagnoses before and 8 after ("Request
+  timed out." after 120 s, two retries), leaving those incidents NEW and ungraded. S01, S04, S06 and S23 timed out in
+  both. Of the cases graded in both: S30 went from 2 Pick + 2 Label tasks (failed) to 3 + 5 (worked, +47% lift, still
+  SHORT of the 4 + 8 design); S02 from 1 sec to 2 sec on Drain (SHORT, lift +36% → +12%); S25 from Sessionize 4 tasks
+  (worked) to a wrong property; S24, S26 and S32 unchanged. The capacity check never sent a proposal back. The
+  prompt is about 1.25 times longer after (system text 4,647 → 5,915 characters), but the timeouts don't follow
+  prompt size. Open question: the check's HEADROOM is 1.1, and S30's 3 + 5 passed it at about 1.3 of the intake.
+  Re-run both, one after the other, once NFH-68 retries timeouts.
 
 ### NFH-63 · Fix · Import picks the oldest version as baseline
 When a flow is in the catalog but not in the fleet record, `provisioning.import_flow` takes the oldest version as
@@ -186,6 +196,17 @@ view is the same everywhere. A tenant write (re-running the 04 KPI step).
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
 only exists in production.
 - 2026-10-20: parked, to revisit as Phase 5.
+
+### NFH-68 · Fix · Retry a diagnosis the LLM didn't answer
+The before and after replays (NFH-62) lost 5 and 8 diagnoses to "Request timed out.": the chat client gave the
+reasoning model 120 s and two retries, and the incident was left NEW until an app restart or a Diagnose click. Make
+the timeout a setting, have the app ask again on a backoff, and have the replay ask again within its round.
+- 2026-10-21: found in NFH-62's runs. Planned.
+- 2026-10-21: built. `SELFHEAL_LLM_TIMEOUT_SECONDS` (default 300) sets the chat client's timeout, with one client
+  retry instead of two. The graph counts runs in a row that ended without an LLM answer; on every KPI poll, with
+  `SELFHEAL_AUTO_DIAGNOSE` on, `graph.retry_failed()` queues such an incident again 5, 15, then every 30 minutes
+  after its last failure (in memory; a restart re-queues every NEW incident anyway). The Review Queue says when the
+  next try is. The replay asks again up to 3 times in a round, 30 s apart, with the clock stopped.
 
 ## Closed tickets
 

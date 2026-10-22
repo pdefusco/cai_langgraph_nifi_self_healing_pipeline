@@ -616,8 +616,10 @@ def review(store, client, incident_id: str | None) -> dict:
                     f"{config.AGENT_WORKERS} diagnosed at a time.")
 
         elif stopped:
+            again = graph.retry_at(incident_id) if config.AUTO_DIAGNOSE else None
             text = (f"**The last run stopped:** {stopped[:400]}\n\n"
-                    "Diagnose runs the agent again; so does an app restart.")
+                    + (f"The agent tries again by itself at {clock(again)}; Diagnose runs it now."
+                       if again else "Diagnose runs the agent again; so does an app restart."))
 
         elif orphaned:
             text = ORPHANED

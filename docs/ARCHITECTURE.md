@@ -116,7 +116,7 @@ graph TD;
 | propose_rollback | Proposes undoing the one action a rollback incident is for | store | no |
 | gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, and the current reading of every KPI on the group (kpi/readings.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
-| diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable, leaving the incident NEW | prompt | yes |
+| diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable or doesn't answer, leaving the incident NEW for a later try | prompt | yes |
 | validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Checks a tasks or run-schedule change against the measured intake. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
 | human_review | Pauses for a decision: approve, edit, reject or rediagnose. An invalid decision asks again | the reviewer | no |
 | apply_remediation | Applies the change and waits for the deployment to settle (a dry run unless armed) | CDF writes, through the guardrails | no |
@@ -159,7 +159,9 @@ record; the state carries only what the next node needs.
 | playbook-rebuild, rag-warm | 1 thread each, on demand | Re-indexing playbooks after an approved edit; warming Chroma at start |
 
 Every tier is due per pack (A health every `POLL_HEALTH_SECONDS`, B KPI charts and detectors every `POLL_KPI_SECONDS`,
-C deployment events every `POLL_EVENTS_SECONDS`). Autonomy's veto windows are checked on every KPI poll.
+C deployment events every `POLL_EVENTS_SECONDS`). Autonomy's veto windows are checked on every KPI poll, and so are
+diagnoses the LLM didn't answer: each is queued again on the agent pool after 5, 15, then every 30 minutes
+(`LLM_RETRY_MINUTES`; one request may take `SELFHEAL_LLM_TIMEOUT_SECONDS`, default 300).
 
 ## What it keeps
 
@@ -177,7 +179,7 @@ C deployment events every `POLL_EVENTS_SECONDS`). Autonomy's veto windows are ch
 stateDiagram-v2
     [*] --> NEW: detectors
     NEW --> DIAGNOSING: agent run
-    DIAGNOSING --> NEW: LLM unavailable
+    DIAGNOSING --> NEW: no LLM answer, asked again later
     DIAGNOSING --> NO_ACTION: nothing to fix
     DIAGNOSING --> PENDING_REVIEW
     PENDING_REVIEW --> DIAGNOSING: rediagnose
@@ -218,3 +220,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-16 | NFH-25 | The chaos injector, a poller tier that re-plants faults through the guardrails |
 | 2026-10-21 | NFH-67 | This guide; the graph drawing is generated from the code |
 | 2026-10-21 | NFH-61 | validate_proposal checks a throughput fix against the intake and sends a short one back to the agent |
+| 2026-10-21 | NFH-68 | A run the LLM didn't answer is queued again on every KPI poll once its wait is over (5, 15, then 30 min); the LLM timeout is a setting |

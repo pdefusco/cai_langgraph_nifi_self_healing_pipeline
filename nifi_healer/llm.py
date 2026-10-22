@@ -253,7 +253,7 @@ def _build_chat(token: str):
 
     return ChatOpenAI(model=config.LLM_MODEL_ID, base_url=config.LLM_ENDPOINT_BASE_URL,
                       api_key=token, temperature=config.LLM_TEMPERATURE,
-                      timeout=120, max_retries=2)
+                      timeout=config.LLM_TIMEOUT_SECONDS, max_retries=1)
 
 
 def chat_model():

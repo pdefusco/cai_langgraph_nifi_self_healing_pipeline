@@ -19,11 +19,14 @@ resume(incident_id, decision). Runs started by the poller go through a
 small thread pool so a slow LLM never stalls polling; armed approvals
 go through their own pool (resume_in_background) so a reviewer's click
 returns while the deployment changes. A background run that pauses at
-review asks agent/autonomy.py whether its fix may approve itself.
+review asks agent/autonomy.py whether its fix may approve itself. A run
+the LLM didn't answer leaves its incident NEW; retry_failed(), on every
+KPI poll, queues it again after config.LLM_RETRY_MINUTES.
 """
 
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -47,6 +50,7 @@ _running: dict = {}  # incident id -> Lock: one run of a thread at a time
 _waiting: dict = {}  # incident id -> Future, from submit() until the run ends
 _applying: dict = {}  # incident id -> Future, from resume_in_background() until the decision is applied
 _apply_failed: dict = {}  # incident id -> why its last background approval raised, until the next one
+_llm_failed: dict = {}  # incident id -> (runs in a row the LLM didn't answer, wall time of the last)
 
 # Approvals applied at once; each one waits minutes for its deployment.
 APPLY_WORKERS = 4
@@ -113,6 +117,7 @@ def reset() -> None:
         _waiting.clear()
         _applying.clear()
         _apply_failed.clear()
+        _llm_failed.clear()
 
 
 def _config(incident_id: str) -> dict:
@@ -143,7 +148,7 @@ def start(incident_id: str) -> dict:
         if snapshot.next:
             nodes.log(f"{incident_id}: continuing an interrupted run at {', '.join(snapshot.next)}")
 
-            return graph.invoke(None, _config(incident_id))
+            return _noted(incident_id, graph.invoke(None, _config(incident_id)))
 
         incident = get_store().incident(incident_id)
 
@@ -154,7 +159,7 @@ def start(incident_id: str) -> dict:
             raise ValueError(f"{incident_id} is {incident['status']}; only {' or '.join(RUNNABLE)} "
                              "incidents are diagnosed, or one marked for review with no paused review")
 
-        return graph.invoke({"incident_id": incident_id}, _config(incident_id))
+        return _noted(incident_id, graph.invoke({"incident_id": incident_id}, _config(incident_id)))
 
 
 def resume(incident_id: str, decision: dict) -> dict:
@@ -170,7 +175,73 @@ def resume(incident_id: str, decision: dict) -> dict:
         if not pending(incident_id):
             raise ValueError(f"{incident_id} is not waiting for a review")
 
-        return graph.invoke(Command(resume=decision), _config(incident_id))
+        return _noted(incident_id, graph.invoke(Command(resume=decision), _config(incident_id)))
+
+
+def _noted(incident_id: str, values: dict) -> dict:
+    """Count a run diagnose_and_propose ended because the LLM didn't answer; any other run clears the count."""
+
+    with _lock:
+        if ((values or {}).get("error") or "").startswith("LLM "):
+            _llm_failed[incident_id] = (_llm_failed.get(incident_id, (0, 0.0))[0] + 1, time.time())
+
+        else:
+            _llm_failed.pop(incident_id, None)
+
+    return values
+
+
+def llm_failures(incident_id: str) -> int:
+    """Runs in a row of this incident the LLM didn't answer (kept in memory only)."""
+
+    with _lock:
+        return _llm_failed.get(incident_id, (0, 0.0))[0]
+
+
+def retry_at(incident_id: str) -> float | None:
+    """The wall time retry_failed() queues the incident again, or None when its last run wasn't an LLM failure."""
+
+    with _lock:
+        found = _llm_failed.get(incident_id)
+
+    if found is None:
+        return None
+
+    count, at = found
+
+    return at + 60 * config.LLM_RETRY_MINUTES[min(count, len(config.LLM_RETRY_MINUTES)) - 1]
+
+
+def retry_failed(now: float | None = None) -> int:
+    """
+    Queue again every incident still NEW after a run the LLM didn't
+    answer, once its wait is over (the poller's tick, with AUTO_DIAGNOSE).
+    An incident no longer NEW is forgotten. Returns how many were queued.
+    """
+
+    now = time.time() if now is None else now
+    store, queued = get_store(), 0
+
+    with _lock:
+        failed = list(_llm_failed)
+
+    for incident_id in failed:
+        incident = store.incident(incident_id)
+
+        if incident is None or incident["status"] != "NEW":
+            with _lock:
+                _llm_failed.pop(incident_id, None)
+
+            continue
+
+        due = retry_at(incident_id)
+
+        if due is not None and due <= now and run_state(incident_id) is None:
+            nodes.log(f"{incident_id}: asking the LLM again (it didn't answer {llm_failures(incident_id)} time(s))")
+            submit(incident)
+            queued += 1
+
+    return queued
 
 
 def pending(incident_id: str) -> dict | None:

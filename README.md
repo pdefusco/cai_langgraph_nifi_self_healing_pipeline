@@ -359,10 +359,11 @@ up again, and so does an app restart.
 | `SELFHEAL_VERIFY_LATER_WINDOWS` | 3600,43200 | later verdicts on each fix, in seconds |
 | `SELFHEAL_COOLDOWN`, `SELFHEAL_MAX_ACTIONS_PER_WINDOW`, `SELFHEAL_ACTION_WINDOW` | 1800, 3, 86400 | write rate limits per deployment |
 | `SELFHEAL_AGENT_WORKERS` | 2 | concurrent agent runs |
-| `SELFHEAL_AUTO_DIAGNOSE` | `true` | diagnose new incidents automatically (else use the Diagnose button) |
+| `SELFHEAL_AUTO_DIAGNOSE` | `true` | diagnose new incidents automatically (else use the Diagnose button), and ask again after 5, 15, then every 30 minutes when the LLM didn't answer |
 | `SELFHEAL_MOCK_SPEED` | 20 | simulated seconds per wall second |
 | `LLM_MODEL_ID`, `LLM_ENDPOINT_BASE_URL`, `LLM_CDP_TOKEN` | (none) | CAI Inference Service chat model (OpenAI-compatible) |
 | `LLM_CDP_ACCESS_KEY_ID`, `LLM_CDP_PRIVATE_KEY`, `LLM_CDP_REGION` | (none) | a CDP API key from the endpoint's tenant; the app mints its tokens with it (wins over `LLM_CDP_TOKEN`) |
+| `SELFHEAL_LLM_TIMEOUT_SECONDS` | 300 | how long one chat request may take; a reasoning model thinks before it answers |
 | `SELFHEAL_LLM_TOKEN_WORKLOAD`, `SELFHEAL_LLM_TOKEN_RENEW` | `DE`, 300 | workload name for minted tokens; seconds before expiry they are renewed |
 | `EMBEDDING_MODEL_ID`, `EMBEDDING_ENDPOINT_BASE_URL`, `EMBEDDING_CDP_TOKEN` | (none) | CAI Inference embedder; without it a local hash embedder is used |
 | `SELFHEAL_LLM_PROVIDER` / `SELFHEAL_EMBEDDING_PROVIDER` | `cai` / `cai` if an endpoint is set, else `hash` | swap providers in `nifi_healer/llm.py` |

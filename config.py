@@ -262,6 +262,13 @@ LLM_ENDPOINT_BASE_URL = os.environ.get("LLM_ENDPOINT_BASE_URL", "")
 LLM_CDP_TOKEN = os.environ.get("LLM_CDP_TOKEN", "")
 LLM_TEMPERATURE = _float("SELFHEAL_LLM_TEMPERATURE", 0.0)
 
+# How long one chat request may take: a reasoning model thinks for minutes
+# before it answers. A diagnosis the LLM didn't answer leaves its incident
+# NEW; with AUTO_DIAGNOSE it is tried again after each of these waits in
+# minutes, then every last one.
+LLM_TIMEOUT_SECONDS = max(10, _int("SELFHEAL_LLM_TIMEOUT_SECONDS", 300))
+LLM_RETRY_MINUTES = (5, 15, 30)
+
 # A workload token lasts an hour, so a pasted LLM_CDP_TOKEN goes stale.
 # With a CDP API key from the endpoint's tenant the app mints its own
 # (`cdp iam generate-workload-auth-token`) and renews it this many seconds

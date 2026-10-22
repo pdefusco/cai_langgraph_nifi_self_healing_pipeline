@@ -19,7 +19,8 @@ Each trial round, over the packs the chosen scenarios are in:
      scenarios (a slow burn shows after hours, a nightly batch once a
      day); the healthy control should open none
   3. the agent diagnoses each chosen scenario's incident, AGENT_WORKERS
-     at a time
+     at a time; one the LLM didn't answer (a timeout) is asked again, up
+     to LLM_TRIES in all, the clock stopped meanwhile
   4. a valid proposal is approved as proposed, by REVIEWER, and applied
      to the mock; an invalid one is left at review
   5. the clock skips past the deciding verify windows (15 min, 1 h) and
@@ -85,6 +86,8 @@ HISTORY_SECONDS = 3 * 3600      # the 1 h window reads 1.5 h before the fix
 DETECT_SECONDS = 1800
 DETECT_STEP = 120
 RECORD = "record.json"
+LLM_TRIES = 3                   # diagnoses of an incident the LLM didn't answer, in a round
+LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
 
 # Every config setting isolate() changes.
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
@@ -216,8 +219,18 @@ def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS) -> 
 
 
 def diagnose(incidents: list) -> None:
-    for future in [graph.submit(i) for i in incidents]:
-        future.result()
+    for tries in range(1, LLM_TRIES + 1):
+        for future in [graph.submit(i) for i in incidents]:
+            future.result()
+
+        incidents = [i for i in incidents if graph.llm_failures(i["id"])]
+
+        if not incidents or tries == LLM_TRIES:
+            return
+
+        log(f"the LLM didn't answer {len(incidents)} diagnosis(es); asking again in {LLM_PAUSE_SECONDS} s: "
+            + ", ".join(i.get("scenario") or i["id"] for i in incidents))
+        time.sleep(LLM_PAUSE_SECONDS)
 
 
 def approve(incident_id: str) -> dict | None:

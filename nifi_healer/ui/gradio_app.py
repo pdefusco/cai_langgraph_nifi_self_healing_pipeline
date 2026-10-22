@@ -60,7 +60,7 @@ def startup() -> None:
                 log("built the mock tenant")
 
         threading.Thread(target=_warm_playbooks, name="rag-warm", daemon=True).start()
-        poller_module.start(client, get_store(), on_incident=graph.submit, on_tick=autonomy.tick)
+        poller_module.start(client, get_store(), on_incident=graph.submit, on_tick=_tick)
         queued = graph.recover() if config.AUTO_DIAGNOSE else 0
 
         if queued:
@@ -68,6 +68,19 @@ def startup() -> None:
 
         log(f"{client.kind} client, writes {'ARMED' if config.ARMED else 'disarmed'}")
         _started.set()
+
+
+def _tick(client, store) -> None:
+    """Every KPI poll: ask the LLM again for diagnoses it didn't answer, then autonomy's veto windows."""
+
+    if config.AUTO_DIAGNOSE:
+        try:
+            graph.retry_failed()
+
+        except Exception as exc:  # the veto windows still run
+            log(f"retrying diagnoses failed: {type(exc).__name__}: {exc}")
+
+    autonomy.tick(client, store)
 
 
 def _warm_playbooks() -> None:
