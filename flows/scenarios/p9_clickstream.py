@@ -128,7 +128,9 @@ S25 = Scenario(
     family="FLOW_EDIT",
     kind="cascade",
     expected=(action("SET_CONCURRENT_TASKS", "S25 Sessionize", value=4),),
-    acceptable=(action("SET_RUN_SCHEDULE", "S25 Sessionize", value="0 sec"),),
+    # 3 tasks do 30/s against the 20/s coming in: less headroom, and it clears.
+    acceptable=(action("SET_CONCURRENT_TASKS", "S25 Sessionize", value=3),
+                action("SET_RUN_SCHEDULE", "S25 Sessionize", value="0 sec")),
     traps=(
         "Removing the expiration alone turns the loss into a backlog growing at 10/s.",
         "The buffer looks healthy, flat and well under its threshold; that is the symptom.",

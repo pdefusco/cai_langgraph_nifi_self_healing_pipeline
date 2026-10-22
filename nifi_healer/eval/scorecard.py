@@ -155,8 +155,9 @@ def reaches(step: dict, ref: dict, scenario=None) -> bool:
     """
     Whether a step is the reference's fix at a value that goes at least as
     far from what is deployed (direction): as many tasks or more, a run
-    schedule as short or shorter, a resize as far or further. Other actions
-    are judged by their identity alone.
+    schedule as short or shorter, a resize as far or further. A route to a
+    DLQ must reach the reference's DLQ. Other actions are judged by their
+    identity alone.
     """
 
     if step_key(step) != step_key(ref):
@@ -175,6 +176,10 @@ def reaches(step: dict, ref: dict, scenario=None) -> bool:
         mine, wanted = catalog.magnitude(step.get("value")), catalog.magnitude(ref.get("value"))
 
         return wanted is None or (mine is not None and (mine - wanted) * way >= 0)
+
+    if kind == "ROUTE_RELATIONSHIP_TO_DLQ":
+        # The right relationships to another stage's DLQ save the data where nobody looks for it.
+        return step.get("dlq") == ref.get("dlq")
 
     return True
 

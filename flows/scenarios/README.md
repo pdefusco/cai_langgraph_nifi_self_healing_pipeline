@@ -1288,7 +1288,7 @@ flowchart TD
     class p5 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s25-session-buffer` holds more than 5,000 FlowFiles for a minute. We also chart FlowFiles out of S25 Page Views and FlowFiles into S25 Score Engagement. Whether a fix worked is decided by FlowFiles into S25 Score Engagement. The fix we grade as correct is setting the concurrent tasks on S25 Sessionize to 4 or more. We also accept setting the run schedule of S25 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s25-session-buffer` holds more than 5,000 FlowFiles for a minute. We also chart FlowFiles out of S25 Page Views and FlowFiles into S25 Score Engagement. Whether a fix worked is decided by FlowFiles into S25 Score Engagement. The fix we grade as correct is setting the concurrent tasks on S25 Sessionize to 4 or more. We also accept setting the concurrent tasks on S25 Sessionize to 3 or more or setting the run schedule of S25 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>

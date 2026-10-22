@@ -96,7 +96,9 @@ them.
 | NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Done | e2e5ce3 |
 | NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | 1848a64 |
 | NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | 6ec47ff |
-| NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | |
+| NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | 32e15aa |
+| NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | |
+| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Planned | |
 
 ## Open tickets
 
@@ -203,6 +205,42 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   capacity") and S26 (a yield of 0, then a higher threshold on s26-merged) still miss. But the readings showed every
   processor rate 300x low (S23 Ship Confirmations 0.0333/s against the 10/s detection saw): NFH-74. So after-1 to
   after-3 measured the readings and the capacity check with wrong rates; re-run before judging S23 and S26.
+- 2026-10-22: after NFH-74, `replay-after-4` (p8–p10, 2 trials): design fix 3 → 8 of 12, right lever 6 → 9,
+  worked 7 → 8, valid on the first try 83%. S22 and S26 2 of 2. Read with `--show`: S27 round 2 routed to the wrong
+  DLQ and was graded expected, and S25 round 1's 3 tasks worked but graded short: grader faults, NFH-75. Two real
+  misses: S24 round 2 fixed Parse Click next to the alert and read the throttled source as "no data" (round 1 was
+  right), and S25 round 2 claimed FlowFiles went to Parse DLQ, which read 0/s in, and changed a JSON path. Both are
+  claims the readings contradict: the case for a critic (NFH-76).
+
+### NFH-75 · Fix · Grade the DLQ a route reaches; accept 3 tasks on S25
+In after-4, S27 round 2 routed Schema Check's failure to S27 Parse DLQ rather than S27 Reject DLQ, and was graded
+expected: the grader compared a route's processor and relationships but not its DLQ. The data is saved, but where
+nobody watches for it, and the judge saw no change. S25 round 1's 3 tasks on Sessionize (30/s against 20/s) worked
+but was graded short against the label's 4.
+- 2026-10-22: found in NFH-69 (after-4). Built: a route reaches the label only at the label's DLQ, else it is the
+  right lever with the value short; S25 accepts 3 tasks. Scenario guide regenerated.
+
+### NFH-76 · Feature · A critic before review
+Two of after-4's misses rest on claims the readings contradict: S24 round 2 fixed the stage next to the alert while
+the readings showed Sessionize capped below its intake, and S25 round 2 blamed parse failures while Parse DLQ read
+0/s in. A second LLM call reads the proposal against the same evidence and objects where it can show it wrong.
+- A node after `validate_proposal`, for a valid agent proposal only (not a rollback or a reviewer's edit). It sees the
+  signals, the Current readings, the inventory and the proposal, but not the playbooks or past cases. It may object,
+  never propose: a claim a reading contradicts, a change to a stage that is not the first with a full input and a low
+  output, a property change that alters what the flow produces rather than how fast. Each objection must quote the
+  reading or inventory line; one that quotes nothing is dropped.
+- Objections go back like the capacity check's: a retry while attempts are left, warnings on the last one, which block
+  autonomy. A critic that fails or times out lets the proposal through with a warning.
+- Off by default (`SELFHEAL_CRITIC`); the agent version gets `+critic`, so the Scorecard and `--compare` tell the
+  runs apart. ARCHITECTURE change-log row and graph drawing.
+- Measured by replay, with and without, 3 trials each: p8–p10, p1 and p2 for regressions, S19 as the control. Kept if
+  the right value rises with no loss on p1/p2 and at most one objection to a design fix. Self-consistency (several
+  drafts, then a vote) only if S24's round-to-round variance remains.
+- 2026-10-22: planned after after-4 (NFH-69). Waiting for the user's go-ahead.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-74 · Fix · The replay's processor rates are 300x low on CAI
 `config.COUNT_WINDOW_SECONDS` is 300 when the app starts live (CDF charts processor counts per 5 minutes) and 1 on
@@ -211,10 +249,7 @@ replay's readings and capacity check divided every processor rate by 300. Local 
 right, so the tests never saw it.
 - 2026-10-22: found in NFH-69 (S23: 0.0333/s in the readings for 10/s). Built: `isolate` sets the window to 1, and
   the tests' config restore covers it.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in 32e15aa.
 
 ### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
 A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that

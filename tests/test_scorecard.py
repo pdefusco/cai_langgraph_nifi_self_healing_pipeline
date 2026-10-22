@@ -36,6 +36,12 @@ def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
                      {"action": "SET_CONCURRENT_TASKS", "target": "S30 Label Parcel", "value": 8}], s30) == \
         sc.ACCEPTABLE
 
+    # S25: 3 tasks on Sessionize clear its 20/s (it worked in after-4); 2 tasks only match it.
+    s25 = packs.SCENARIOS["S25"]
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S25 Sessionize", "value": 3}], s25) == \
+        sc.ACCEPTABLE
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S25 Sessionize", "value": 2}], s25) == sc.SHORT
+
     # S08 slows a runaway source: a longer schedule goes further, a shorter one is short.
     s08 = packs.SCENARIOS["S08"]
     assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S08 Runaway Source", "value": "5 sec"}], s08) == \
@@ -75,6 +81,11 @@ def test_match_takes_a_list_of_relationships_in_any_order():
     s26 = packs.SCENARIOS["S26"]
     [fix] = (dict(s) for s in s26.expected)
     assert sc.match([dict(fix, relationship=r) for r in fix["relationship"]], s26) == sc.EXPECTED
+
+    # The right relationship to another stage's DLQ is the right lever, not the fix (S27, round 2 of after-4).
+    s27 = packs.SCENARIOS["S27"]
+    [fix] = (dict(s) for s in s27.expected)
+    assert sc.match([dict(fix, dlq="S27 Parse DLQ")], s27) == sc.SHORT
     fix = [route, *rest]
 
     # Every scenario's own design label matches itself, and each acceptable fix is acceptable.
