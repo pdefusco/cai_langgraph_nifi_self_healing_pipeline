@@ -97,8 +97,8 @@ them.
 | NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | 1848a64 |
 | NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | 6ec47ff |
 | NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | 32e15aa |
-| NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | |
-| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Planned | |
+| NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | 37f3236 |
+| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Done | |
 
 ## Open tickets
 
@@ -215,14 +215,6 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
-### NFH-75 · Fix · Grade the DLQ a route reaches; accept 3 tasks on S25
-In after-4, S27 round 2 routed Schema Check's failure to S27 Parse DLQ rather than S27 Reject DLQ, and was graded
-expected: the grader compared a route's processor and relationships but not its DLQ. The data is saved, but where
-nobody watches for it, and the judge saw no change. S25 round 1's 3 tasks on Sessionize (30/s against 20/s) worked
-but was graded short against the label's 4.
-- 2026-10-22: found in NFH-69 (after-4). Built: a route reaches the label only at the label's DLQ, else it is the
-  right lever with the value short; S25 accepts 3 tasks. Scenario guide regenerated.
-
 ### NFH-76 · Feature · A critic before review
 Two of after-4's misses rest on claims the readings contradict: S24 round 2 fixed the stage next to the alert while
 the readings showed Sessionize capped below its intake, and S25 round 2 blamed parse failures while Parse DLQ read
@@ -240,10 +232,26 @@ the readings showed Sessionize capped below its intake, and S25 round 2 blamed p
   the right value rises with no loss on p1/p2 and at most one objection to a design fix. Self-consistency (several
   drafts, then a vote) only if S24's round-to-round variance remains.
 - 2026-10-22: planned after after-4 (NFH-69). Waiting for the user's go-ahead.
+- 2026-10-22: built as its own node, `critique_proposal`, after `validate_proposal` (`SELFHEAL_CRITIC`, off by
+  default). It reads the signals, readings, inventory and proposal, and returns objections, each with the line it
+  quotes; an objection whose quote is not in that evidence (12 characters at least) is kept as dropped, not acted on.
+  The prompt is versioned on its own (CRITIC_VERSION); PROMPT_VERSION is unchanged, so a run without the critic is
+  the after-4 agent, and with it the agent version ends in `/critic:<hash>`. Replay `--critic` for the A/B; the run
+  shows the second reading under each round. Also: the CDP worker waited on its pipe with `select()`, which fails on a
+  descriptor above 1024, as the full test suite now reaches; it uses `poll()`.
 
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-75 · Fix · Grade the DLQ a route reaches; accept 3 tasks on S25
+In after-4, S27 round 2 routed Schema Check's failure to S27 Parse DLQ rather than S27 Reject DLQ, and was graded
+expected: the grader compared a route's processor and relationships but not its DLQ. The data is saved, but where
+nobody watches for it, and the judge saw no change. S25 round 1's 3 tasks on Sessionize (30/s against 20/s) worked
+but was graded short against the label's 4.
+- 2026-10-22: found in NFH-69 (after-4). Built: a route reaches the label only at the label's DLQ, else it is the
+  right lever with the value short; S25 accepts 3 tasks. Scenario guide regenerated.
+- 2026-10-22: done in 37f3236.
 
 ### NFH-74 · Fix · The replay's processor rates are 300x low on CAI
 `config.COUNT_WINDOW_SECONDS` is 300 when the app starts live (CDF charts processor counts per 5 minutes) and 1 on

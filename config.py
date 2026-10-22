@@ -304,6 +304,13 @@ MEMORY_TOP_K = _int("SELFHEAL_MEMORY_TOP_K", 3)
 PRIORS = _bool("SELFHEAL_PRIORS", True)
 PRIORS_TOP_K = _int("SELFHEAL_PRIORS_TOP_K", 5)
 
+# A second LLM reading of every valid fix the agent proposes, against the
+# same readings and inventory (agent/nodes.critique_proposal): an
+# objection it backs with a quoted line sends the fix back for another
+# attempt, and is a warning on the last. One more LLM call per attempt.
+# Off until the replay shows it helps (eval/replay.py --critic).
+CRITIC = _bool("SELFHEAL_CRITIC", False)
+
 # A rejection, or a WRONG_FIX label, has the LLM draft an edit of the
 # playbook section the agent relied on (rag/drafter.py), for a person to
 # approve on the Playbooks tab. Off: nothing is drafted.

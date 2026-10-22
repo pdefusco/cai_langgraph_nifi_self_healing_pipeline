@@ -329,3 +329,116 @@ def test_pending_review_survives_a_restart(agent):
 
     state = graph.resume(incident["id"], {"decision": "approve"})
     assert state["result"]["status"] == "APPLIED"
+
+
+def objection(problem="S01 Consumer is not the bottleneck", evidence=None):
+    """A critic's reply; its evidence, unless given, is the first reading it was shown, as it reads."""
+
+    def reply(messages):
+        readings = messages[1].content.split("every rate watched:\n", 1)[1]
+        quote = evidence if evidence is not None else readings.splitlines()[0].lstrip("- ")
+
+        return json.dumps({"objections": [{"problem": problem, "evidence": quote}]})
+
+    return reply
+
+
+NO_OBJECTIONS = json.dumps({"objections": []})
+
+
+def test_the_critic_is_off_unless_asked_for(agent):
+    _, _, _, incidents, install = agent("p1-throughput")
+    model = install(ScriptedLLM(proposal(S01_FIX)))
+
+    graph.start(incidents["S01"]["id"])
+
+    assert len(model.calls) == 1 and "critique" not in graph.pending(incidents["S01"]["id"])["plan"]
+    assert "/critic:" not in prompts.agent_version("m")
+
+
+def test_a_quoted_objection_sends_the_fix_back(agent, monkeypatch):
+    _, _, store, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "CRITIC", True)
+    incident = incidents["S01"]
+    model = install(ScriptedLLM(proposal(S01_FIX), objection(), proposal(S01_FIX), NO_OBJECTIONS))
+
+    state = graph.start(incident["id"])
+
+    assert len(model.calls) == 4 and state["attempts"] == 2
+    assert model.calls[1][0].content == prompts.CRITIC_SYSTEM
+    assert '"action": "SET_CONCURRENT_TASKS"' in model.calls[1][1].content       # it reads the proposal
+    retry = model.calls[2][1].content
+    assert "a second reading objects: S01 Consumer is not the bottleneck (the evidence: " in retry
+
+    first, second = store.proposals(incident["id"])
+    assert first["status"] == "SUPERSEDED" and not first["validation"]["ok"]
+    assert len(first["validation"]["critique"]["objections"]) == 1
+    assert second["status"] == "VALID" and second["agent_version"].endswith(f"/critic:{prompts.CRITIC_VERSION}")
+    review = graph.pending(incident["id"])
+    assert review["plan"]["ok"] and review["plan"]["critique"]["objections"] == []
+
+
+def test_an_objection_it_cannot_quote_is_dropped(agent, monkeypatch):
+    _, _, store, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "CRITIC", True)
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX), objection(evidence="the input queue of S01 Consumer is empty")))
+
+    graph.start(incident["id"])
+    plan = graph.pending(incident["id"])["plan"]
+
+    assert plan["ok"] and plan["warnings"] == [] and plan["critique"]["objections"] == []
+    assert [o["evidence"] for o in plan["critique"]["dropped"]] == ["the input queue of S01 Consumer is empty"]
+    assert store.proposals(incident["id"])[-1]["status"] == "VALID"
+
+
+def test_on_the_last_attempt_an_objection_is_a_warning(agent, monkeypatch):
+    _, _, store, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "CRITIC", True)
+    incident = incidents["S01"]
+    wrong = proposal([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 40}])
+    model = install(ScriptedLLM(wrong, wrong, proposal(S01_FIX), objection()))
+
+    state = graph.start(incident["id"])
+    plan = graph.pending(incident["id"])["plan"]
+
+    assert len(model.calls) == 4 and state["attempts"] == 3       # the invalid ones were not critiqued
+    assert plan["ok"] and plan["warnings"][0].startswith("a second reading objects: S01 Consumer is not")
+    assert store.proposals(incident["id"])[-1]["status"] == "VALID"
+
+
+def test_no_second_opinion_is_a_warning(agent, monkeypatch):
+    _, _, _, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "CRITIC", True)
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX), "Looks fine to me.", proposal(S01_FIX)))   # a proposal is no critique
+
+    graph.start(incident["id"])
+    plan = graph.pending(incident["id"])["plan"]
+
+    assert plan["ok"] and plan["warnings"][0].startswith("no second opinion: unusable reply: ")
+    assert "objections" in plan["critique"]["error"]
+
+
+def test_the_critic_reads_only_the_agents_fixes(agent, monkeypatch):
+    _, _, _, incidents, install = agent("p1-throughput")
+    monkeypatch.setattr(config, "CRITIC", True)
+    model = install(ScriptedLLM(proposal(S01_FIX), NO_OBJECTIONS,
+                                proposal([{"action": "NO_ACTION"}], diagnosis="a transient")))
+
+    graph.start(incidents["S01"]["id"])
+    graph.resume(incidents["S01"]["id"], {"decision": "edit", "steps": [dict(S01_FIX[0], value=6)]})
+
+    assert len(model.calls) == 2 and "critique" not in graph.pending(incidents["S01"]["id"])["plan"]
+
+    graph.start(incidents["S02"]["id"])                 # NO_ACTION closes the incident unread
+    assert len(model.calls) == 3
+
+
+def test_an_objection_quotes_the_evidence():
+    text = "- queue s01-backlog: 2000   queued (alert above 500): over, flat\n- S01 Consumer: 3.0/s out"
+
+    assert prompts.quoted("Queue s01-backlog: 2000 queued", text)          # case and spacing aside
+    assert prompts.quoted('"- queue s01-backlog: 2000 queued"', text)       # quotes and its dash too
+    assert not prompts.quoted("s01-backlog", text)                          # too short to be a line
+    assert not prompts.quoted("queue s01-backlog: 0 queued", text)

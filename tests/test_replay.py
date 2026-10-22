@@ -228,3 +228,17 @@ def test_it_waits_as_long_as_the_slowest_fault_takes_to_show():
     assert replay.window(["S01"]) == replay.DETECT_SECONDS
     assert replay.window(["S01"], 7200) == 7200
     assert replay.window(["S01", "S39"]) == packs.SCENARIOS["S39"].detect_within == 86400
+
+
+def test_the_critic_lets_the_design_fixes_through(replayed):
+    oracle = PromptKeepingOracle()
+    llm.set_chat_model(oracle)
+    replay.run(["S01"], oracle=False, critic=True)
+    snapshot = replay.load()
+    [case] = replay.cases(snapshot)
+
+    assert snapshot["runs"][0]["critic"] and snapshot["runs"][0]["agent_version"].endswith(
+        f"/critic:{prompts.CRITIC_VERSION}")
+    assert case["match"] == sc.EXPECTED and case["applied"]
+    assert sum(prompts.CRITIC_SYSTEM in p for p in oracle.prompts) == 1
+    assert "    second reading:\n      no objections" in replay.show(snapshot)

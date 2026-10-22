@@ -79,6 +79,7 @@ graph TD;
 	retrieve_playbooks(retrieve_playbooks)
 	diagnose_and_propose(diagnose_and_propose)
 	validate_proposal(validate_proposal)
+	critique_proposal(critique_proposal)
 	human_review(human_review)
 	apply_remediation(apply_remediation)
 	record_feedback(record_feedback)
@@ -86,6 +87,8 @@ graph TD;
 	__end__([<p>__end__</p>]):::last
 	__start__ -. &nbsp;diagnose&nbsp; .-> gather_context;
 	__start__ -. &nbsp;rollback&nbsp; .-> propose_rollback;
+	critique_proposal -. &nbsp;retry&nbsp; .-> diagnose_and_propose;
+	critique_proposal -. &nbsp;review&nbsp; .-> human_review;
 	diagnose_and_propose -. &nbsp;end&nbsp; .-> __end__;
 	diagnose_and_propose -. &nbsp;validate&nbsp; .-> validate_proposal;
 	gather_context --> retrieve_playbooks;
@@ -95,6 +98,7 @@ graph TD;
 	human_review -. &nbsp;validate&nbsp; .-> validate_proposal;
 	propose_rollback --> validate_proposal;
 	retrieve_playbooks --> diagnose_and_propose;
+	validate_proposal -. &nbsp;critique&nbsp; .-> critique_proposal;
 	validate_proposal -. &nbsp;retry&nbsp; .-> diagnose_and_propose;
 	validate_proposal -. &nbsp;review&nbsp; .-> human_review;
 	validate_proposal -. &nbsp;no_action&nbsp; .-> record_no_action;
@@ -118,6 +122,7 @@ graph TD;
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
 | diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable or doesn't answer, leaving the incident NEW for a later try | prompt | yes |
 | validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Checks a tasks or run-schedule change against the measured intake. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
+| critique_proposal | With `SELFHEAL_CRITIC` (off by default), reads a valid fix of the agent's against the same signals, readings and inventory, and objects where they contradict it. An objection counts only with a line it quotes from them; the rest are kept, as dropped. No reply is a warning | prompt | yes |
 | human_review | Pauses for a decision: approve, edit, reject or rediagnose. An invalid decision asks again | the reviewer | no |
 | apply_remediation | Applies the change and waits for the deployment to settle (a dry run unless armed) | CDF writes, through the guardrails | no |
 | record_feedback | Closes the incident as REJECTED and queues the reason for the playbook drafter | store | no |
@@ -128,6 +133,11 @@ Routes out of validate_proposal: a proposal that failed validation goes back to 
 run-schedule change that leaves capacity short of the intake, or touches no stage with a backlog, also goes back,
 and on the last attempt is a warning instead. A proposal edited by a reviewer is validated again but never sent back
 to the agent; for it the capacity problems are warnings.
+
+With `SELFHEAL_CRITIC` on, a valid fix of the agent's goes to critique_proposal before review. A quoted objection
+sends it back to the agent like a validation problem while attempts are left; on the last attempt it is a warning.
+Without a second opinion (no LLM, no usable reply) the fix goes to review with a warning, which also keeps it from
+approving itself. A "no action", a rollback and a reviewer's edit are never critiqued.
 
 ### What the graph carries
 
@@ -140,7 +150,7 @@ record; the state carries only what the next node needs.
 | context | gather_context | Inventory text, parameters, sizing, flow version, a read error |
 | playbooks, memory, priors | retrieve_playbooks | Retrieved sections, past cases, track records |
 | proposal, attempts, agent_version, source | diagnose_and_propose, human_review | The reply, how many tries, prompt and model version, agent or review |
-| plan, proposal_id, feedback | validate_proposal | The validation report, its store row, the problems for a retry |
+| plan, proposal_id, feedback | validate_proposal, critique_proposal | The validation report (with the critique, when read), its store row, the problems for a retry |
 | review, review_error | human_review | The decision, or why it was refused |
 | result | apply_remediation | The action's status and flow versions |
 | error | diagnose_and_propose | Why the run stopped |
@@ -221,3 +231,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-21 | NFH-67 | This guide; the graph drawing is generated from the code |
 | 2026-10-21 | NFH-61 | validate_proposal checks a throughput fix against the intake and sends a short one back to the agent |
 | 2026-10-21 | NFH-68 | A run the LLM didn't answer is queued again on every KPI poll once its wait is over (5, 15, then 30 min); the LLM timeout is a setting |
+| 2026-10-22 | NFH-76 | critique_proposal, after validate_proposal behind `SELFHEAL_CRITIC`: a second LLM reading of a valid fix; a quoted objection is a retry, or a warning on the last attempt |

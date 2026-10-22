@@ -638,9 +638,11 @@ class _Worker:
             raise _WorkerDied("the worker did not start")
 
     def _read(self, timeout: float) -> dict:
-        readable, _, _ = select.select([self.proc.stdout], [], [], timeout)
+        # poll, not select: select refuses a descriptor numbered 1024 or more, and a busy app has that many open.
+        waiting = select.poll()
+        waiting.register(self.proc.stdout, select.POLLIN)
 
-        if not readable:
+        if not waiting.poll(timeout * 1000):
             raise subprocess.TimeoutExpired("cdp worker", timeout)
 
         line = self.proc.stdout.readline()

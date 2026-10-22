@@ -370,6 +370,7 @@ up again, and so does an app restart.
 | `SELFHEAL_RAG_TOP_K` | 5 | playbook sections per diagnosis |
 | `SELFHEAL_MEMORY` / `SELFHEAL_MEMORY_TOP_K` | true / 3 | show each diagnosis this many similar past cases |
 | `SELFHEAL_PRIORS` / `SELFHEAL_PRIORS_TOP_K` | true / 5 | show the reviewer each fix's track record (this many from other groups) |
+| `SELFHEAL_CRITIC` | false | a second LLM reading of each valid fix; an objection backed by a quoted reading sends it back |
 | `SELFHEAL_AUTONOMY` / `SELFHEAL_AUTONOMY_AFTER` / `SELFHEAL_AUTONOMY_VETO` | mock only / 3 / 600 | trusted fixes approve themselves; wins a person approved to earn trust; veto window in seconds |
 | `SELFHEAL_DATA_DIR`, `SELFHEAL_CHROMA_DIR` | `/home/cdsw/...` on CAI, `./var/...` elsewhere | where state lives |
 | `SELFHEAL_APP_HOST`, `CDSW_APP_PORT` / `SELFHEAL_APP_PORT` | `127.0.0.1`, 8100 | UI bind address |

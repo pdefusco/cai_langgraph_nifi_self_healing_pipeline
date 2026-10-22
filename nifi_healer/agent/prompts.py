@@ -109,11 +109,57 @@ PROMPT_VERSION = hashlib.sha256(
     (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 
+CRITIC_SYSTEM = """You check a remediation proposal for an Apache NiFi 2.6 flow in Cloudera DataFlow (CDF) before a
+person reviews it. Another planner read the evidence below and proposed the fix. Find where the evidence contradicts
+the proposal; do not propose a fix of your own.
+
+Object only to:
+- a claim in the diagnosis or rationale that a reading, the inventory or a signal contradicts: a queue called empty
+  that holds FlowFiles, a rate called zero that is not, FlowFiles said to go where the readings show none arrive;
+- for a backlog, a change to a stage that is not the bottleneck. The bottleneck is the first stage, in flow order,
+  whose input queue is full and whose output queue is not; the queues before it are full only from back pressure,
+  even the one that alerted;
+- a change to a property or parameter that alters what the flow produces (which fields it reads, how it splits or
+  merges FlowFiles) when the fault is how fast it runs or where it loses data.
+
+Do not object to the size of a value; that is checked separately. For each objection, copy as its evidence one line,
+or part of one, exactly as it appears in the signals, the readings or the inventory, without its leading dash. An
+objection you cannot back with such a line is not an objection. If the proposal agrees with the evidence, reply with
+no objections: a needless objection costs the planner a retry.
+
+Reply with only a JSON object, no prose and no code fence:
+{"objections": [{"problem": "what is wrong, naming the components", "evidence": "<a line copied from the evidence>"}]}"""
+
+CRITIC_USER = """Incident {incident_id} on deployment {pack}, process group "{process_group}".
+Summary: {summary}
+
+Signals:
+{signals}
+
+Current readings (the last 15 minutes; rates per second). Every queue of the group, in flow order; one that is not
+measured may still be full. Then every rate watched:
+{readings}
+
+Deployment: {sizing}.
+Flow inventory (current settings):
+{inventory}
+
+The proposal to check:
+Diagnosis: {diagnosis}
+Root cause: {root_cause}
+Steps: {steps}
+Rationale: {rationale}
+Expected effect: {expected_effect}"""
+
+CRITIC_VERSION = hashlib.sha256((CRITIC_SYSTEM + CRITIC_USER + REPAIR).encode()).hexdigest()[:10]
+
+
 def agent_version(model_id: str, playbooks: str = "") -> str:
     # Without its past cases the same prompt is a different agent (the replay's baseline), and so it is
-    # with approved playbook edits (`playbooks`, their rag/overlay.edition); none leaves the name as it was.
+    # with approved playbook edits (`playbooks`, their rag/overlay.edition), or with the critic checking
+    # its proposals; none leaves the name as it was.
     return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory") \
-        + (f"/playbooks:{playbooks}" if playbooks else "")
+        + (f"/playbooks:{playbooks}" if playbooks else "") + (f"/critic:{CRITIC_VERSION}" if config.CRITIC else "")
 
 
 # ---------------------------------------------------------------------
@@ -193,24 +239,63 @@ def _previous(proposal: dict | None) -> str:
                            steps=json.dumps(proposal.get("steps") or [], default=str))
 
 
-def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None,
-                memory: list | None = None, previous: dict | None = None) -> str:
+def _evidence(incident: dict, context: dict) -> dict:
+    """The fields the planner and the critic both read."""
+
     sizing = context.get("sizing") or {}
 
-    return USER.format(
+    return dict(
         incident_id=incident["id"], pack=incident["pack"], process_group=incident["process_group"],
         summary=incident.get("summary") or "",
         signals="\n".join(_signal_line(s) for s in incident.get("signals") or []) or "- none recorded",
         readings=context.get("readings") or "- none recorded",
         sizing=(f"{sizing.get('cluster_size')} x{sizing.get('nodes')} node(s)" if sizing else "unknown"),
+        inventory=context.get("inventory") or "(unavailable)",
+    )
+
+
+def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None,
+                memory: list | None = None, previous: dict | None = None) -> str:
+    return USER.format(
+        **_evidence(incident, context),
         flow_version=context.get("flow_version") or "?", state=context.get("state") or "?",
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),
-        inventory=context.get("inventory") or "(unavailable)",
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
         feedback=FEEDBACK.format(previous=_previous(previous), problems="\n".join(f"- {p}" for p in feedback))
         if feedback else "",
     )
+
+
+def critic_prompt(incident: dict, context: dict, proposal: dict) -> str:
+    return CRITIC_USER.format(
+        **_evidence(incident, context),
+        diagnosis=proposal.get("diagnosis") or "(none)",
+        root_cause=proposal.get("root_cause_component") or "(none)",
+        steps=json.dumps(proposal.get("steps") or [], default=str),
+        rationale=proposal.get("rationale") or "(none)",
+        expected_effect=proposal.get("expected_effect") or "(none)",
+    )
+
+
+def critic_evidence(incident: dict, context: dict) -> str:
+    """What the critic may quote: the signals, the readings and the inventory, as it read them."""
+
+    found = _evidence(incident, context)
+
+    return "\n".join((found["signals"], found["readings"], found["inventory"]))
+
+
+def _plain(text: str) -> str:
+    return " ".join(str(text or "").lower().split())
+
+
+def quoted(evidence: str, text: str) -> bool:
+    """Whether an objection's evidence is copied from the text: a dozen characters or more, spacing aside."""
+
+    quote = _plain(evidence).strip(" \"'`-")
+
+    return len(quote) >= 12 and quote in _plain(text)
 
 
 # ---------------------------------------------------------------------

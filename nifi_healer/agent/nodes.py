@@ -10,6 +10,8 @@ The graph's nodes. Each takes the state and returns the fields it changed.
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv; capacity
                           against the intake (actions/capacity.py)
+    critique_proposal     with SELFHEAL_CRITIC, the LLM again: objections to a valid fix,
+                          each backed by a line it quotes from the evidence
     human_review          interrupt(): approve | reject | edit | rediagnose
     apply_remediation     executor.execute (dry run unless SELFHEAL_ARMED)
     record_feedback       a rejection, with its reason, queued for a playbook edit (rag/drafter.py)
@@ -29,7 +31,7 @@ import config
 from nifi_healer import llm
 from nifi_healer.actions import capacity, catalog, executor, rollback
 from nifi_healer.agent import prompts
-from nifi_healer.agent.schemas import Proposal
+from nifi_healer.agent.schemas import Critique, Proposal
 from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
 from nifi_healer.kpi import readings
@@ -166,8 +168,8 @@ def retrieve_playbooks(state: dict) -> dict:
 # ---------------------------------------------------------------------
 
 
-def _ask(model, messages: list) -> tuple:
-    """(Proposal | None, raw text, error). One repair turn on a bad reply."""
+def _ask(model, messages: list, schema=Proposal) -> tuple:
+    """(a `schema` | None, raw text, error). One repair turn on a bad reply."""
 
     raw, error = "", ""
 
@@ -176,7 +178,7 @@ def _ask(model, messages: list) -> tuple:
         raw = prompts.text_of(reply)
 
         try:
-            return Proposal.model_validate(prompts.extract_json(raw)), raw, ""
+            return schema.model_validate(prompts.extract_json(raw)), raw, ""
 
         except (ValueError, ValidationError) as exc:
             error = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, ValidationError) else \
@@ -309,12 +311,80 @@ def after_validation(state: dict) -> str:
     report = state["plan"]
 
     if report["ok"]:
-        return "no_action" if report["family"] == catalog.NONE else "review"
+        if report["family"] == catalog.NONE:
+            return "no_action"
+
+        return "critique" if config.CRITIC and state.get("source") == "agent" else "review"
 
     if state.get("source") == "agent" and state.get("attempts", 0) < MAX_ATTEMPTS:
         return "retry"
 
     return "review"
+
+
+# ---------------------------------------------------------------------
+# A second reading
+# ---------------------------------------------------------------------
+
+
+def critique_proposal(state: dict) -> dict:
+    """
+    The LLM reads a valid fix against the same evidence and objects where
+    the evidence contradicts it. An objection counts only with a line it
+    quotes from the signals, readings or inventory: it sends the fix back
+    while the agent has attempts left, and is a warning after that. No
+    second opinion at all is a warning too, so the fix waits for a person.
+    """
+
+    incident, store = state["incident"], get_store()
+    report = dict(state["plan"], warnings=list(state["plan"].get("warnings") or []))
+    critique = {"version": prompts.CRITIC_VERSION, "objections": [], "dropped": [], "error": ""}
+    reply = None
+    ok, reason = llm.chat_available()
+
+    if not ok:
+        critique["error"] = f"LLM unavailable: {reason}"
+
+    else:
+        messages = [SystemMessage(content=prompts.CRITIC_SYSTEM),
+                    HumanMessage(content=prompts.critic_prompt(incident, state["context"], state["proposal"]))]
+
+        try:
+            reply, _, error = _ask(llm.chat_model(), messages, Critique)
+            critique["error"] = f"unusable reply: {error}" if reply is None else ""
+
+        except Exception as exc:  # the endpoint, not the reply
+            critique["error"] = f"LLM call failed: {exc}"
+
+    evidence = prompts.critic_evidence(incident, state["context"])
+
+    for objection in reply.objections if reply else []:
+        found = critique["objections"] if prompts.quoted(objection.evidence, evidence) else critique["dropped"]
+        found.append(objection.model_dump())
+
+    report["critique"] = critique
+    objections = [f"a second reading objects: {o['problem']} (the evidence: \"{o['evidence']}\")"
+                  for o in critique["objections"]]
+
+    if critique["error"]:
+        report["warnings"].append(f"no second opinion: {critique['error']}")
+
+    elif objections and state.get("attempts", 0) < MAX_ATTEMPTS:
+        report["problems"] = list(report["problems"]) + objections
+        report["ok"] = False
+
+    else:
+        report["warnings"].extend(objections)
+
+    store.update_proposal(state["proposal_id"], validation=report, status="VALID" if report["ok"] else "INVALID")
+    log(f"{incident['id']}: proposal {state['proposal_id']} critique: "
+        + (critique["error"] or f"{len(critique['objections'])} objection(s), {len(critique['dropped'])} unquoted"))
+
+    return {"plan": report, "feedback": report["problems"]}
+
+
+def after_critique(state: dict) -> str:
+    return "review" if state["plan"]["ok"] else "retry"
 
 
 # ---------------------------------------------------------------------

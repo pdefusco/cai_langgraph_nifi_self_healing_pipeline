@@ -6,6 +6,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --pack p1-throughput
     python -m nifi_healer.eval.replay --scenario S17 --oracle  # the design fix, no LLM
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
+    python -m nifi_healer.eval.replay --trials 3 --critic      # a second reading of every valid fix
     python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
     python -m nifi_healer.eval.replay --compare BEFORE_DIR AFTER_DIR   # two records side by side
     python -m nifi_healer.eval.replay --show DIR --pack p8-orders     # what the agent proposed, and why
@@ -56,6 +57,11 @@ Playbooks tab, rag/overlay.py), read from the app's store, so a replay
 tests the agent as it stands (its version ends /playbooks:<edition>).
 `--no-playbook-edits` reads the files alone.
 
+`--critic` has a second LLM reading check every valid fix against the
+evidence before it is approved (agent/nodes.critique_proposal); its
+agent version ends /critic:<hash>. Without it the critic is off, whatever
+SELFHEAL_CRITIC says, so a run is the agent it names.
+
 The pacing guards (cooldown, actions per window) are off: every round is
 a fresh tenant, and a pack's faults are fixed one after another, which on
 a live tenant would take a day.
@@ -96,7 +102,7 @@ LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
             "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
-            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS")
+            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS", "CRITIC")
 
 
 def log(msg: str) -> None:
@@ -133,6 +139,10 @@ class OracleLLM:
 
     def invoke(self, messages):
         text = "\n".join(prompts.text_of(m) for m in messages)
+
+        if prompts.CRITIC_SYSTEM in text:  # the design fix agrees with the evidence
+            return type("Reply", (), {"content": json.dumps({"objections": []})})()
+
         found = re.search(r"\b(INC-[\d-]+-(S\d\d)-\w+)", text)
         scenario = packs.SCENARIOS.get(found.group(2)) if found else None
         reply = {"diagnosis": f"the design fault of {scenario.title if scenario else 'an unknown scenario'}",
@@ -372,7 +382,7 @@ def save(directory: str, runs: list, now: float) -> None:
 def _trials(snapshot: dict, since: float = 0.0) -> list:
     def name(run):
         return f"{run['id']} · {run.get('model') or '?'}" + (" · no memory" if run.get("memory") is False else "") \
-            + (" · no priors" if run.get("priors") is False else "")
+            + (" · no priors" if run.get("priors") is False else "") + (" · critic" if run.get("critic") else "")
 
     return [dict(t, run=name(run)) for run in snapshot.get("runs") or []
             for t in run.get("trials") or [] if t.get("at", 0) >= since]
@@ -500,7 +510,8 @@ def show(snapshot: dict, ids=()) -> str:
     """
     What the agent proposed in a replay record, case by case: the design
     fix, then each attempt's steps, diagnosis and rationale, and the
-    validation problems that sent it back. Only the scenarios in ids, if any.
+    validation problems that sent it back, and what the critic said of it
+    (--critic). Only the scenarios in ids, if any.
     """
 
     proposals = {}
@@ -528,7 +539,20 @@ def show(snapshot: dict, ids=()) -> str:
             if problems:
                 rows.append(_wrapped("sent back", " | ".join(problems), 900))
 
+            if (p.get("validation") or {}).get("critique"):
+                rows.append(_wrapped("second reading", _critique(p["validation"]["critique"]), 900))
+
     return "\n".join(rows).lstrip("\n")
+
+
+def _critique(critique: dict) -> str:
+    if critique.get("error"):
+        return f"none: {critique['error']}"
+
+    said = [f"{o['problem']} (\"{o['evidence']}\")" for o in critique.get("objections") or []]
+    said += [f"unquoted, so dropped: {o['problem']}" for o in critique.get("dropped") or []]
+
+    return " | ".join(said) or "no objections"
 
 
 def live_edits(path: str) -> list:
@@ -557,17 +581,19 @@ def live_edits(path: str) -> list:
 
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True,
-        fixes: int = 1) -> str:
+        fixes: int = 1, critic: bool = False) -> str:
     """
     `trials` rounds of `ids` in an isolated mock tenant, with up to `fixes`
     fixes a fault; returns the run's id. Calls isolate().
-    The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`.
+    The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`,
+    and with `critic` a second reading checks each valid fix (config.CRITIC; off unless asked for).
     """
 
     edits = live_edits(config.DB_PATH) if playbook_edits else []
     directory = directory or config.REPLAY_DIR
     world = isolate(directory)
     config.MEMORY = memory
+    config.CRITIC = critic
     client, store = clients.get_client(), db.get_store()
     ingest.use_edits(edits)
 
@@ -581,10 +607,11 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         runs = previous.get("runs") or []
         entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
                  "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
-                 "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
+                 "critic": critic, "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
         runs.append(entry)
         log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
             + (f", up to {fixes} fixes each" if fixes > 1 else "") + ("" if memory else ", no memory")
+            + (", with the critic" if critic else "")
             + (f", {len(edits)} approved playbook edit(s)" if edits else "") + f" in {directory}")
         now = previous.get("now") or 0.0
 
@@ -611,6 +638,8 @@ def main() -> int:
     parser.add_argument("--oracle", action="store_true", help="answer with the design fix instead of the LLM")
     parser.add_argument("--dir", default="", help=f"where the replay keeps its tenant (default {config.REPLAY_DIR})")
     parser.add_argument("--no-memory", action="store_true", help="show the agent no past cases (the baseline)")
+    parser.add_argument("--critic", action="store_true",
+                        help="have a second LLM reading check every valid fix before review (SELFHEAL_CRITIC)")
     parser.add_argument("--no-playbook-edits", action="store_true",
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
@@ -648,7 +677,7 @@ def main() -> int:
 
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
-                 not args.no_playbook_edits, max(1, args.fixes))
+                 not args.no_playbook_edits, max(1, args.fixes), args.critic)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0

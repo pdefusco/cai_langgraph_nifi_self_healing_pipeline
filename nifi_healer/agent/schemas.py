@@ -46,3 +46,17 @@ class Proposal(BaseModel):
         data["steps"] = [s.model_dump(exclude_none=True) for s in self.steps]
 
         return data
+
+
+class Objection(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    problem: str
+    evidence: str = ""
+
+
+class Critique(BaseModel):
+    # No default: a reply without the field (a proposal, say) is not a critique that found nothing.
+    model_config = ConfigDict(extra="ignore")
+
+    objections: list[Objection]

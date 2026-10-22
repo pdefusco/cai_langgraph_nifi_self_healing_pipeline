@@ -6,6 +6,9 @@ The remediation graph, one thread per incident (thread_id = incident id).
      its review is approve or reject)
         validate_proposal: invalid, agent-written, attempts left -> diagnose_and_propose
                            NO_ACTION                              -> record_no_action -> END
+                           valid, agent-written, SELFHEAL_CRITIC  -> critique_proposal
+                           otherwise                              -> human_review
+        critique_proposal: an objection, attempts left            -> diagnose_and_propose
                            otherwise                              -> human_review
         human_review [interrupt]: approve    -> apply_remediation -> END
                                   edit       -> validate_proposal
@@ -63,6 +66,7 @@ def build(checkpointer=None):
     graph.add_node("retrieve_playbooks", nodes.retrieve_playbooks)
     graph.add_node("diagnose_and_propose", nodes.diagnose_and_propose)
     graph.add_node("validate_proposal", nodes.validate_proposal)
+    graph.add_node("critique_proposal", nodes.critique_proposal)
     graph.add_node("human_review", nodes.human_review)
     graph.add_node("apply_remediation", nodes.apply_remediation)
     graph.add_node("record_feedback", nodes.record_feedback)
@@ -77,7 +81,9 @@ def build(checkpointer=None):
                                 {"validate": "validate_proposal", "end": END})
     graph.add_conditional_edges("validate_proposal", nodes.after_validation,
                                 {"retry": "diagnose_and_propose", "review": "human_review",
-                                 "no_action": "record_no_action"})
+                                 "no_action": "record_no_action", "critique": "critique_proposal"})
+    graph.add_conditional_edges("critique_proposal", nodes.after_critique,
+                                {"retry": "diagnose_and_propose", "review": "human_review"})
     graph.add_conditional_edges("human_review", nodes.after_review,
                                 {"apply": "apply_remediation", "reject": "record_feedback",
                                  "validate": "validate_proposal", "again": "human_review",

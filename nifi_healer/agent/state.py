@@ -19,7 +19,8 @@ class AgentState(TypedDict, total=False):
     priors: list             # fix track records (rag/priors.for_incident): {scope, fix, worked, tries, ...}
     proposal: dict           # schemas.Proposal as a dict; steps may be a reviewer's edit
     proposal_id: int
-    plan: dict               # executor.public(executor.plan(...)): ok, problems, diff, commands, risk
+    plan: dict               # executor.public(executor.plan(...)): ok, problems, diff, commands, risk;
+                             # warnings, capacity, and the critic's critique when it read the fix
     attempts: int            # LLM proposals made so far in this run
     feedback: list           # problems with the last proposal, for the next attempt
     source: str              # "agent" | "review" | "rollback": who wrote the steps being validated
