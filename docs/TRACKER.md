@@ -205,7 +205,7 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   capacity") and S26 (a yield of 0, then a higher threshold on s26-merged) still miss. But the readings showed every
   processor rate 300x low (S23 Ship Confirmations 0.0333/s against the 10/s detection saw): NFH-74. So after-1 to
   after-3 measured the readings and the capacity check with wrong rates; re-run before judging S23 and S26.
-- 2026-10-22: after NFH-74, `replay-after-4` (p8–p10, 2 trials): design fix 3 → 8 of 12, right lever 6 → 9,
+- 2026-10-22: after NFH-74, `replay-after-4` (p8–p10, 2 trials): design fix 3 → 7 of 12, right lever 6 → 9,
   worked 7 → 8, valid on the first try 83%. S22 and S26 2 of 2. Read with `--show`: S27 round 2 routed to the wrong
   DLQ and was graded expected, and S25 round 1's 3 tasks worked but graded short: grader faults, NFH-75. Two real
   misses: S24 round 2 fixed Parse Click next to the alert and read the throttled source as "no data" (round 1 was
