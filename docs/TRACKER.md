@@ -85,7 +85,7 @@ them.
 | NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
 | NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | 2ee434c |
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | In progress | |
-| NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | |
+| NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | 1db88f2 |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
 | NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
@@ -167,17 +167,6 @@ simulator models capacity the way NFH-60 reasons, so the live re-draft (NFH-55) 
   prompt size. Open question: the check's HEADROOM is 1.1, and S30's 3 + 5 passed it at about 1.3 of the intake.
   Re-run both, one after the other, once NFH-68 retries timeouts.
 
-### NFH-63 · Fix · Import picks the oldest version as baseline
-When a flow is in the catalog but not in the fleet record, `provisioning.import_flow` takes the oldest version as
-baseline. On pdf1019-cdp-env that deployed p3 and p5 on v1, built before NFH-11, whose InvokeHTTP sends a header with
-a space and fails every call. Pick the newest version whose comment starts with "baseline". Then re-baseline p5
-(01 with `--new-baseline`, then 06 `--flow-only`), which is a tenant write the user runs.
-- 2026-10-21: found on S10. Parked.
-- 2026-10-21: built. With no baseline in the fleet record, `import_flow` takes the newest version whose comment
-  starts with "baseline" (the first import, or a rebuild by `--new-baseline`), else the oldest. The app's own
-  versions ("nifi-healer …") and a canary never qualify. p5's record already names v1, so it still needs the
-  re-baseline above.
-
 ### NFH-64 · Fix · Scenario design problems found live
 - S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
   incident. Alert on bytes queued instead.
@@ -204,6 +193,22 @@ only exists in production.
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-63 · Fix · Import picks the oldest version as baseline
+When a flow is in the catalog but not in the fleet record, `provisioning.import_flow` takes the oldest version as
+baseline. On pdf1019-cdp-env that deployed p3 and p5 on v1, built before NFH-11, whose InvokeHTTP sends a header with
+a space and fails every call. Pick the newest version whose comment starts with "baseline". Then re-baseline p5
+(01 with `--new-baseline`, then 06 `--flow-only`), which is a tenant write the user runs.
+- 2026-10-21: found on S10. Parked.
+- 2026-10-21: built. With no baseline in the fleet record, `import_flow` takes the newest version whose comment
+  starts with "baseline" (the first import, or a rebuild by `--new-baseline`), else the oldest. The app's own
+  versions ("nifi-healer …") and a canary never qualify. p5's record already names v1, so it still needs the
+  re-baseline above.
+- 2026-10-21: p5 re-baselined by the user: 01 `--new-baseline` imported v3 and recorded it, and 06 `--flow-only`
+  moved the deployment from v1 to v3 (one step, the parameters left as they were). p3's record named v1 and it ran
+  v3, the agent's S09 fix built on v1, so its S10 call still sent the bad header; 01 `--new-baseline` imported v4
+  (the same definition as v2, never recorded) and 06 `--flow-only` moved it from v3 to v4, undoing the S09 fix as a
+  reset does. Closed.
 
 ### NFH-68 · Fix · Retry a diagnosis the LLM didn't answer
 The before and after replays (NFH-62) lost 5 and 8 diagnoses to "Request timed out.": the chat client gave the
