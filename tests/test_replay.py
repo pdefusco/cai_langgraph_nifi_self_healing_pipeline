@@ -10,7 +10,7 @@ import pytest
 import config
 from flows import packs
 from nifi_healer import llm
-from nifi_healer.agent import graph
+from nifi_healer.agent import graph, prompts
 from nifi_healer.cdp import client as clients
 from nifi_healer.cdp.mock_client import MockClient
 from nifi_healer.eval import replay, scorecard as sc
@@ -159,6 +159,26 @@ def test_what_the_agent_proposed(replayed):
     assert shown.count('steps: SET_CONCURRENT_TASKS S01 Consumer {"value": 99}') == 3
     assert shown.count("    sent back:") == 3 and "more is better" in shown
     assert "=== S02" in replay.show(snapshot)
+
+
+class PromptKeepingOracle(replay.OracleLLM):
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+
+    def invoke(self, messages):
+        self.prompts.append("\n".join(prompts.text_of(m) for m in messages))
+        return super().invoke(messages)
+
+
+def test_the_agent_reads_the_history_the_app_backfills(replayed):
+    oracle = PromptKeepingOracle()
+    llm.set_chat_model(oracle)
+    replay.run(["S01"])
+
+    # A source back pressure throttles shows its earlier peak, as the app's would.
+    [prompt] = oracle.prompts
+    assert "S01 Source (a source): 1/s out, up to" in prompt and "in the last 2 h" in prompt
 
 
 def test_it_isolates_a_live_project(replayed, tmp_path):

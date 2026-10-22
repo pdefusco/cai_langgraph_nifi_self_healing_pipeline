@@ -15,7 +15,8 @@ Each trial round, over the packs the chosen scenarios are in:
 
   1. a fresh mock tenant: the packs imported and deployed, with three
      hours of faulty history (sim/bootstrap.py)
-  2. the poller opens an incident per fault, polling and moving the clock
+  2. the poller backfills that history from the charts, as the app does,
+     then opens an incident per fault, polling and moving the clock
      on for up to DETECT_SECONDS, or the longest detect_within of the
      scenarios (a slow burn shows after hours, a nightly batch once a
      day); the healthy control should open none
@@ -72,7 +73,7 @@ import time
 
 import config
 from flows import packs
-from nifi_healer import llm
+from nifi_healer import fleet, llm
 from nifi_healer.agent import graph, prompts
 from nifi_healer.cdp import client as clients
 from nifi_healer.cdp.mock_client import MockClient
@@ -210,6 +211,11 @@ def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS) -> 
     faults = {s for s in ids if packs.SCENARIOS[s].family != "NONE"}
     poller = Poller(client, store, on_incident=lambda i: opened.setdefault(i.get("scenario"), i))
     deadline = client.now() + window(ids, seconds)
+
+    # The app fills its store from the longer chart periods once it starts; without it every
+    # reading the agent sees is one sample, flat, with no earlier peak.
+    for name, entry in fleet.deployed_packs().items():
+        poller.backfill(name, entry)
 
     while True:
         poller.poll_now()

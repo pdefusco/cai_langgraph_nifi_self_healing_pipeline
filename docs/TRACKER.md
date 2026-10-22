@@ -92,6 +92,10 @@ them.
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
 | NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
 | NFH-69 | Ops | Why the agent still fixes the wrong stage in a cascade (S22–S27) | In progress | |
+| NFH-70 | Fix | The replay backfills KPI history as the app does, so the agent's readings have trends and peaks | Done | |
+| NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Planned | |
+| NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Planned | |
+| NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Planned | |
 
 ## Open tickets
 
@@ -178,6 +182,45 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 - 2026-10-22: `replay --show DIR` built: per case, the design fix, then each attempt's steps, diagnosis, rationale and
   the validation problems that sent it back, filtered by `--scenario` or `--pack`. Read-only. The user runs it on the
   after run in the CAI session.
+- 2026-10-22: read the user's `--show` of the after run, and the prompts sent locally. Four causes:
+  1. The replay shows the agent one sample per KPI: it never backfills history as the app does, so every reading is
+     "flat" and a throttled source reads 0/s with no earlier peak (S22, S26). The capacity check was starved the
+     same way, so NFH-62 measured NFH-54 and NFH-61 almost blind. Live is not affected. NFH-70.
+  2. A queue with no KPI reads as empty. In S22 the agent called s22-extracted "empty" while s22-to-batch read
+     10001 queued and Batch Orders 0/s out; S24 the same with s24-parsed. The readings give no back-pressure limit
+     or fill either (s23-to-throttle: 1851 queued against 2000). NFH-72, app-side; NFH-65 is the tenant-side fix.
+  3. Validation sent a right answer back. S26 round 1 routed three relationships to the DLQ as three steps, refused
+     as "appears twice"; the retry dropped the diagnosis and invented a JSON problem. NFH-71 and NFH-73. In S27 the
+     agent found the auto-terminated failure on Schema Check, but tried DebugFlow properties it can't edit, and never
+     tied auto-termination to ROUTE_RELATIONSHIP_TO_DLQ. NFH-73.
+  4. Expiration loss isn't recognised (S25): the agent blamed Parse View, though Parse DLQ reads 0/s in; the
+     1-minute expiration on s25-session-buffer is only in the inventory. NFH-72 and NFH-73.
+  S22's one "worked" is most likely noise: the merge's 30-minute bin age flushed inside the verify window.
+
+### NFH-70 · Fix · The replay backfills KPI history
+The app fills its store from the 1 h, 12 h and 1 day charts of each pack when it starts (`Poller.backfill`); the
+replay only polled, so the agent and the capacity check read one sample per KPI.
+- 2026-10-22: found in NFH-69. Built: `detect()` backfills every deployed pack before polling. S01's and S22's
+  sources now read "1/s out, up to 2.28/s in the last 2 h" and "0/s out, up to 56.3/s". The oracle replay on p8–p10
+  is unchanged (6 of 6 design fixes, all worked).
+
+### NFH-71 · Fix · One DLQ step for several relationships
+The duplicate check keys a step by action, target, property and parameter, so three ROUTE_RELATIONSHIP_TO_DLQ steps
+on one processor, one per relationship, are refused as "appears twice", though the action takes a list. Merge such
+steps into one before validating.
+- 2026-10-22: found in NFH-69 (S26). Planned.
+
+### NFH-72 · Feature · Readings in flow order, with limits and expiration
+List every connection of the group in flow order: queued against its back-pressure limit, how full, its expiration,
+and "not measured" where it has no KPI, so a queue nobody watches no longer reads as empty. App-side; NFH-65 adds the
+KPIs on the tenant.
+- 2026-10-22: found in NFH-69 (S22, S23, S24, S25). Planned.
+
+### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
+A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that
+data lost at an auto-terminated relationship is fixed by ROUTE_RELATIONSHIP_TO_DLQ (which enables a disabled DLQ), and
+data expiring on a queue by speeding up its consumer.
+- 2026-10-22: found in NFH-69 (S25, S26, S27). Planned.
 
 ## Closed tickets
 
