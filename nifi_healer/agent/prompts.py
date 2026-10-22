@@ -43,6 +43,10 @@ Rules:
      - high deployment CPU is a sizing problem; more tasks will not help.
   4. A value that leaves the new capacity at or below the intake does not fix it. Never raise a back-pressure
      threshold in front of a slow consumer: that only lets the backlog grow.
+- Data lost without an error is lost where the inventory drops it. A relationship that is auto-terminated discards
+  every FlowFile routed to it: route it with ROUTE_RELATIONSHIP_TO_DLQ, which also enables a disabled DLQ. A queue
+  whose FlowFiles expire discards what waits longer than its expiration: speed up the processor it feeds, as for a
+  backlog, rather than lengthening the expiration.
 - Propose NO_ACTION when the flow is healthy, the signal is a transient, or no catalog action would help.
   A false positive is worse than no proposal.
 - Weigh the past cases as evidence. Prefer what worked on the same kind of fault; do not repeat a fix that was
@@ -87,15 +91,22 @@ Past cases on similar incidents (what was tried, what the reviewer did, what it 
 {feedback}"""
 
 FEEDBACK = """
-Your previous proposal was rejected by validation. Fix these problems and reply again with the full JSON object:
+Your previous proposal was rejected by validation.{previous}
+Problems:
 {problems}
+Keep your diagnosis unless a problem shows it was wrong, and change only what the problems name. Reply again with
+the full JSON object.
 """
+
+PREVIOUS = """
+Diagnosis: {diagnosis}
+Steps: {steps}"""
 
 REPAIR = ("Your reply could not be used: {error}\n"
           "Reply again with only the JSON object described in the instructions.")
 
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM + USER + FEEDBACK + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
+    (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 
 def agent_version(model_id: str, playbooks: str = "") -> str:
@@ -172,8 +183,18 @@ def _playbook_block(hit: dict) -> str:
     return f"[{hit['id']}] {hit.get('heading') or hit.get('title') or ''}\n{hit.get('text', '').strip()}"
 
 
+def _previous(proposal: dict | None) -> str:
+    """The proposal validation sent back, so a retry changes it rather than starting over."""
+
+    if not proposal or not (proposal.get("diagnosis") or proposal.get("steps")):
+        return ""
+
+    return PREVIOUS.format(diagnosis=proposal.get("diagnosis") or "(none)",
+                           steps=json.dumps(proposal.get("steps") or [], default=str))
+
+
 def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list | None = None,
-                memory: list | None = None) -> str:
+                memory: list | None = None, previous: dict | None = None) -> str:
     sizing = context.get("sizing") or {}
 
     return USER.format(
@@ -187,7 +208,8 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         inventory=context.get("inventory") or "(unavailable)",
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
-        feedback=FEEDBACK.format(problems="\n".join(f"- {p}" for p in feedback)) if feedback else "",
+        feedback=FEEDBACK.format(previous=_previous(previous), problems="\n".join(f"- {p}" for p in feedback))
+        if feedback else "",
     )
 
 

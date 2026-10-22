@@ -94,8 +94,8 @@ them.
 | NFH-69 | Ops | Why the agent still fixes the wrong stage in a cascade (S22–S27) | In progress | |
 | NFH-70 | Fix | The replay backfills KPI history as the app does, so the agent's readings have trends and peaks | Done | dc8c3f2 |
 | NFH-71 | Fix | Routing several relationships of one processor to one DLQ is one step, not "appears twice" | Done | e2e5ce3 |
-| NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | |
-| NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Planned | |
+| NFH-72 | Feature | Readings list every connection in flow order, with its limit, how full it is and its expiration | Done | 1848a64 |
+| NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | |
 
 ## Open tickets
 
@@ -197,6 +197,21 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
      1-minute expiration on s25-session-buffer is only in the inventory. NFH-72 and NFH-73.
   S22's one "worked" is most likely noise: the merge's 30-minute bin age flushed inside the verify window.
 
+### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
+A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that
+data lost at an auto-terminated relationship is fixed by ROUTE_RELATIONSHIP_TO_DLQ (which enables a disabled DLQ), and
+data expiring on a queue by speeding up its consumer.
+- 2026-10-22: found in NFH-69 (S25, S26, S27). Planned.
+- 2026-10-22: built. A retry now shows the agent the diagnosis and steps it proposed, with the problems, and says to
+  keep the diagnosis unless a problem shows it wrong and change only what the problems name (a reply that was not a
+  proposal is not shown back). The rules say data lost without an error is lost where the inventory drops it: an
+  auto-terminated relationship is routed with ROUTE_RELATIONSHIP_TO_DLQ, which enables a disabled DLQ; a queue whose
+  FlowFiles expire is fixed by speeding up the processor it feeds, not by lengthening the expiration.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-72 · Feature · Readings in flow order, with limits and expiration
 List every connection of the group in flow order: queued against its back-pressure limit, how full, its expiration,
 and "not measured" where it has no KPI, so a queue nobody watches no longer reads as empty. App-side; NFH-65 adds the
@@ -208,16 +223,7 @@ KPIs on the tenant.
   one with no KPI as "not measured" with its limits, and any expiration ("FlowFiles expire after 1 min"). Then the
   rates in flow order. The prompt says a queue that is not measured may still be full. S22's and S24's cascades now
   read as a row of full queues with unmeasured ones between; S25's buffer shows its 1-minute expiration.
-
-### NFH-73 · Feature · Keep the diagnosis on retry; name the data-loss levers
-A retry after a refused step should keep the diagnosis and change only what was refused. The prompt should say that
-data lost at an auto-terminated relationship is fixed by ROUTE_RELATIONSHIP_TO_DLQ (which enables a disabled DLQ), and
-data expiring on a queue by speeding up its consumer.
-- 2026-10-22: found in NFH-69 (S25, S26, S27). Planned.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in 1848a64.
 
 ### NFH-71 · Fix · One DLQ step for several relationships
 The duplicate check keys a step by action, target, property and parameter, so three ROUTE_RELATIONSHIP_TO_DLQ steps

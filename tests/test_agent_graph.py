@@ -144,6 +144,10 @@ def test_bad_replies_are_repaired_then_fed_back(agent):
     assert "could not be used" in model.calls[1][-1].content                 # the repair prompt
     retry = model.calls[2][1].content
     assert "rejected by validation" in retry and "no processor named 'S02 Drain'" in retry
+
+    # The retry sees what it proposed, and is told to keep the diagnosis and change only what was refused.
+    assert "Diagnosis: S01 Consumer is the bottleneck" in retry and '"target": "S02 Drain"' in retry
+    assert "Keep your diagnosis unless a problem shows it was wrong" in retry
     assert [p["status"] for p in store.proposals(incident["id"])] == ["SUPERSEDED", "VALID"]
     assert graph.pending(incident["id"])["plan"]["ok"]
 
@@ -173,6 +177,23 @@ def test_the_instructions_size_a_fix_by_ceiling_and_intake():
     assert "ceiling, concurrent tasks / run schedule" in text and "exceeds the intake" in text
     assert "the stage whose input queue is full and whose output queue is not" in text
     assert "{" not in text.split("Action catalog:", 1)[0].replace("#{name}", "")    # formatted, no stray braces
+
+
+def test_the_instructions_say_where_data_is_lost_without_an_error():
+    # S27 drops at an auto-terminated failure; S25 lets a session buffer expire.
+    text = prompts.system_prompt()
+
+    assert "auto-terminated discards" in text and "ROUTE_RELATIONSHIP_TO_DLQ, which also enables a disabled DLQ" in text
+    assert "speed up the processor it feeds" in text and "rather than lengthening the expiration" in text
+
+
+def test_a_reply_that_was_not_a_proposal_is_not_shown_back():
+    retry = prompts.user_prompt({"id": "INC-1", "pack": "p1-throughput", "process_group": "S01"}, {}, [],
+                                ["the reply was not a usable proposal: no JSON"],
+                                previous={"diagnosis": "", "steps": [], "parse_error": "no JSON"})
+
+    assert "rejected by validation.\nProblems:\n- the reply was not a usable proposal" in retry
+    assert "Diagnosis:" not in retry
 
 
 def test_invalid_after_all_attempts_goes_to_review(agent):

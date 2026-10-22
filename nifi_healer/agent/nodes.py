@@ -201,7 +201,8 @@ def diagnose_and_propose(state: dict) -> dict:
     version = prompts.agent_version(getattr(model, "model_name", "") or config.LLM_MODEL_ID, retriever.edition())
     messages = [SystemMessage(content=prompts.system_prompt()),
                 HumanMessage(content=prompts.user_prompt(incident, state["context"], state.get("playbooks") or [],
-                                                         state.get("feedback"), state.get("memory")))]
+                                                         state.get("feedback"), state.get("memory"),
+                                                         state.get("proposal")))]
 
     try:
         proposal, raw, error = _ask(model, messages)
