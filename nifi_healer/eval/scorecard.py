@@ -185,7 +185,8 @@ def match(steps: list, scenario) -> str:
     if scenario is None or not scenario.expected:
         return UNKNOWN
 
-    mine = [s for s in steps if isinstance(s, dict)] or [{"action": "NO_ACTION"}]
+    mine = catalog.merge_routes([catalog.normalize(s) for s in steps if isinstance(s, dict)])
+    mine = mine or [{"action": "NO_ACTION"}]
     keys = {step_key(s) for s in mine}
 
     def reached(fixes) -> bool:

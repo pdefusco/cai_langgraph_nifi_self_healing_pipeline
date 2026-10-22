@@ -56,6 +56,17 @@ def test_plan_reports_bad_targets(tenant):
     assert not report["ok"] and "1 to 8" in report["problems"][0]
 
 
+def test_a_route_per_relationship_plans_as_one_step(tenant):
+    _, client, store = tenant("p10-iot")
+    incident = incident_for(client, store, "S26")
+    [fix] = packs.SCENARIOS["S26"].expected
+    report = executor.plan(client, incident, [dict(fix, relationship=r) for r in fix["relationship"]])
+
+    # S26's first-round proposal, which validation used to refuse as "appears twice".
+    assert report["ok"], report["problems"]
+    assert report["steps"] == [dict(fix, relationship=sorted(fix["relationship"]))]
+
+
 def test_flow_edit_dry_run_records_commands(tenant):
     world, client, store = tenant("p1-throughput")
     incident = incident_for(client, store, "S01")

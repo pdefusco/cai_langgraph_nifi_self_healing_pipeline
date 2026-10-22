@@ -221,6 +221,34 @@ def normalize(step: dict) -> dict:
     return out
 
 
+def merge_routes(steps: list) -> list:
+    """
+    The (normalized) steps with every route of one processor to one DLQ
+    as a single step listing all its relationships, where the first of
+    them stood: the action takes a list, so one step per relationship is
+    the same change, not a repeat.
+    """
+
+    out, routes = [], {}
+
+    for step in steps:
+        if step.get("action") != "ROUTE_RELATIONSHIP_TO_DLQ":
+            out.append(step)
+            continue
+
+        key = (step.get("target"), step.get("dlq"))
+
+        if key not in routes:
+            routes[key] = dict(step)
+            out.append(routes[key])
+            continue
+
+        both = sorted(set(relationships_of(routes[key])) | set(relationships_of(step)))
+        routes[key]["relationship"] = both[0] if len(both) == 1 else both
+
+    return out
+
+
 def check(step: dict) -> list:
     """Problems with one (normalized) step; [] when it is in bounds."""
 

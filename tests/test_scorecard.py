@@ -70,6 +70,11 @@ def test_match_takes_a_list_of_relationships_in_any_order():
     assert sc.match([dict(route, relationship=route["relationship"][::-1]), *rest], s10) == sc.EXPECTED
     assert sc.match([dict(route, relationship=route["relationship"][:1]), *rest], s10) == sc.OTHER
     assert sc.match([dict(route, relationship=route["relationship"][0])], s10) == sc.OTHER
+
+    # One step per relationship is the same change as one step with all of them.
+    s26 = packs.SCENARIOS["S26"]
+    [fix] = (dict(s) for s in s26.expected)
+    assert sc.match([dict(fix, relationship=r) for r in fix["relationship"]], s26) == sc.EXPECTED
     fix = [route, *rest]
 
     # Every scenario's own design label matches itself, and each acceptable fix is acceptable.

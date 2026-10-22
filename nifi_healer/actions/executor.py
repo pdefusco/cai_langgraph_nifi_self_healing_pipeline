@@ -82,7 +82,7 @@ def _comments(incident: dict, steps: list) -> str:
 
 
 def plan(client: Client, incident: dict, steps: list, store=None) -> dict:
-    steps = [catalog.normalize(s) for s in steps or []]
+    steps = catalog.merge_routes([catalog.normalize(s) for s in steps or []])
     report = {
         "ok": False,
         "problems": catalog.check_steps(steps),

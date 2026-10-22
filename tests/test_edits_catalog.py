@@ -128,3 +128,16 @@ def test_proposal_shape_rules():
     assert any("at most 4" in p for p in catalog.check_steps([
         dict(tasks, target=f"P{i}") for i in range(5)]))
     assert catalog.risk_of([tasks]) == "low" and catalog.risk_of([scale]) == "high"
+
+
+def test_routes_of_one_processor_to_one_dlq_are_one_step():
+    route = {"action": "ROUTE_RELATIONSHIP_TO_DLQ", "target": "P", "relationship": "Retry", "dlq": "P DLQ"}
+    other = dict(route, target="Q", relationship="failure")
+    tasks = {"action": "SET_CONCURRENT_TASKS", "target": "P", "value": 2}
+
+    merged = catalog.merge_routes([route, other, tasks, dict(route, relationship="Failure"),
+                                   dict(route, relationship=["No Retry", "Retry"])])
+
+    assert merged == [dict(route, relationship=["Failure", "No Retry", "Retry"]), other, tasks]
+    assert catalog.check_steps(merged[:2]) == [] and route["relationship"] == "Retry"     # the input is kept
+    assert catalog.merge_routes([route, dict(route, dlq="Other DLQ")])[1]["dlq"] == "Other DLQ"
