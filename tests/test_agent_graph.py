@@ -442,3 +442,13 @@ def test_an_objection_quotes_the_evidence():
     assert prompts.quoted('"- queue s01-backlog: 2000 queued"', text)       # quotes and its dash too
     assert not prompts.quoted("s01-backlog", text)                          # too short to be a line
     assert not prompts.quoted("queue s01-backlog: 0 queued", text)
+
+
+def test_a_reading_with_no_data_is_no_evidence():
+    text = ("- connection S26 Store Readings → S26 Archive: no data in the last 15 min\n"
+            "- S26 Store Readings: 4.0/s out")
+
+    assert not prompts.quoted("S26 Store Readings → S26 Archive: no data in the last 15 min", text)
+    assert not prompts.quoted("Store Readings → S26 Archive", text)              # part of that line only
+    assert prompts.quoted("S26 Store Readings: 4.0/s out", text)
+    assert "never quote it" in prompts.CRITIC_SYSTEM and "adds no capacity" in prompts.CRITIC_SYSTEM

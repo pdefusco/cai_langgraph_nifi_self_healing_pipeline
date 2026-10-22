@@ -145,6 +145,7 @@ class World:
         self.sims = {}
         self._read_mtime = None
         self._saved_wall = 0.0
+        self._held = None           # the sim time the clock is stopped at, inside held()
         self._fresh()
         self._load()
 
@@ -159,6 +160,9 @@ class World:
         self.sims = {}
 
     def now(self) -> float:
+        if self._held is not None:
+            return self._held
+
         return self.data["sim_epoch"] + (time.time() - self.data["wall_epoch"]) * self.speed
 
     def _load(self) -> None:
@@ -373,6 +377,27 @@ class World:
         with self.mutating():
             self.data["sim_epoch"] += min(seconds, MAX_CATCH_UP)
             self.advance()
+
+    @contextlib.contextmanager
+    def held(self):
+        """
+        Stop this process's clock for the block: the wall time spent in it
+        never reaches the simulation. Mock-only: the replay, while the LLM
+        reads incidents, which on the mock's speed would otherwise run the
+        flows on for minutes with nothing sampling them. Nothing in the
+        block may wait for the mock (a pending change would never apply).
+        """
+
+        with self.mutating():
+            self._held = self.now()
+
+        try:
+            yield
+
+        finally:
+            with self.mutating():
+                self.data["sim_epoch"], self.data["wall_epoch"] = self._held, time.time()
+                self._held = None
 
     def backfill(self, deployment_crn: str, seconds: float) -> None:
         """

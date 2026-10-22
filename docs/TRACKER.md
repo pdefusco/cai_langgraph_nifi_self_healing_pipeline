@@ -98,7 +98,8 @@ them.
 | NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | 6ec47ff |
 | NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | 32e15aa |
 | NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | 37f3236 |
-| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Done | |
+| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Built | bca2d04 |
+| NFH-77 | Fix | The replay's clock runs on while the LLM thinks, so the agent reads empty KPIs on CAI | Done | |
 
 ## Open tickets
 
@@ -239,6 +240,27 @@ the readings showed Sessionize capped below its intake, and S25 round 2 blamed p
   the after-4 agent, and with it the agent version ends in `/critic:<hash>`. Replay `--critic` for the A/B; the run
   shows the second reading under each round. Also: the CDP worker waited on its pipe with `select()`, which fails on a
   descriptor above 1024, as the full test suite now reaches; it uses `poll()`.
+- 2026-10-22: first A/B on CAI (p8–p10, p1, p2, S19; 3 trials each), without → with the critic: design fix 56% →
+  28%, right value 69% → 38%, right lever 82% → 50%, valid on the first try 79% → 20%, attempts 1.2 → 2.4, worked
+  79% → 50%. Read with `--show`: most readings in both arms were "no data in the last 15 min" (NFH-77), and the critic
+  took those as empty queues and zero rates. Its bottleneck rule also fired on fixes that add no capacity: S26's DLQ
+  route ("Store Readings is the bottleneck") and S08's throttled source. Changed: a quote from a line with no data
+  is dropped, the prompt says such a reading was not measured, and the bottleneck rule covers only more tasks, a
+  shorter schedule or a larger deployment; a DLQ route is not a change to what the flow produces. New CRITIC_VERSION.
+  Not judged until both arms are re-run with NFH-77.
+
+### NFH-77 · Fix · The replay's clock runs on while the LLM thinks
+The mock's clock runs at `SELFHEAL_MOCK_SPEED` (20x) against wall time. The replay polls only while it detects, so
+while the agent pool waits on the LLM (tens of seconds a call, AGENT_WORKERS at a time) the flows run on for many sim
+minutes with nothing sampling them, and an incident queued behind others reads "no data in the last 15 min" for most
+KPIs. Locally the oracle answers at once, so the tests and local runs never saw it. The live app polls all the time
+at 1x and is not affected.
+- 2026-10-22: found reading the critic A/B (NFH-76). The CAI replay runs after-3 and after-4 (NFH-69) most likely read
+  mostly empty KPIs too, which fits after-4's S24 round 2 reading the throttled source as "no data"; their numbers
+  measured the agent partly blind. Built: `World.held()` stops this process's clock, and `replay.diagnose` runs the
+  agent inside it, so every incident is read as it was when detection opened it. Approval and judging run with the
+  clock going, as they wait for the mock to apply the change. A test with an LLM that takes wall time checks the
+  clock stands still while it answers.
 
 ## Closed tickets
 

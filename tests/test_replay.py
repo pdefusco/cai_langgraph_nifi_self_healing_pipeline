@@ -4,6 +4,7 @@ mock tenant, auto-approved there only, scored like the live agent.
 """
 
 import json
+import time
 
 import pytest
 
@@ -179,6 +180,33 @@ def test_the_agent_reads_the_history_the_app_backfills(replayed):
     # A source back pressure throttles shows its earlier peak, as the app's would.
     [prompt] = oracle.prompts
     assert "S01 Source (a source): 1/s out, up to" in prompt and "in the last 2 h" in prompt
+
+
+class SlowOracle(PromptKeepingOracle):
+    """Takes wall time to answer, as an LLM does, and notes the mock's clock either side."""
+
+    def __init__(self):
+        super().__init__()
+        self.clock = []
+
+    def invoke(self, messages):
+        before = clients.get_client().now()
+        time.sleep(0.2)
+        self.clock.append((before, clients.get_client().now()))
+
+        return super().invoke(messages)
+
+
+def test_the_clock_stops_while_the_agent_thinks(replayed):
+    # At 20x, a minute an LLM takes is 20 sim minutes in which nothing samples
+    # the flows: the incidents queued behind it read "no data" for every KPI.
+    oracle = SlowOracle()
+    llm.set_chat_model(oracle)
+    replay.run(["S01", "S02"])
+
+    assert len(oracle.clock) == 2 and len({at for pair in oracle.clock for at in pair}) == 1
+    assert all("no data in the last" not in p for p in oracle.prompts)
+    assert all(c["applied"] for c in replay.cases(replay.load()))       # and runs again to apply and judge
 
 
 def test_it_isolates_a_live_project(replayed, tmp_path):

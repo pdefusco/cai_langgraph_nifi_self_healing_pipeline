@@ -116,11 +116,16 @@ the proposal; do not propose a fix of your own.
 Object only to:
 - a claim in the diagnosis or rationale that a reading, the inventory or a signal contradicts: a queue called empty
   that holds FlowFiles, a rate called zero that is not, FlowFiles said to go where the readings show none arrive;
-- for a backlog, a change to a stage that is not the bottleneck. The bottleneck is the first stage, in flow order,
-  whose input queue is full and whose output queue is not; the queues before it are full only from back pressure,
-  even the one that alerted;
+- for a backlog, more capacity (more tasks, a shorter run schedule, a larger deployment) for a stage that is not the
+  bottleneck. The bottleneck is the first stage, in flow order, whose input queue is full and whose output queue is
+  not; the queues before it are full only from back pressure, even the one that alerted. Slowing a source, routing
+  FlowFiles elsewhere, or changing a threshold or an expiration adds no capacity, and this rule does not apply to it;
 - a change to a property or parameter that alters what the flow produces (which fields it reads, how it splits or
-  merges FlowFiles) when the fault is how fast it runs or where it loses data.
+  merges FlowFiles) when the fault is how fast it runs or where it loses data. Routing failures to a dead-letter
+  queue keeps what was lost; it does not alter what the flow produces.
+
+A reading with no data was not measured: it says nothing about the queue or the rate, which may be full or busy. Never
+call it empty or zero, and never quote it.
 
 Do not object to the size of a value; that is checked separately. For each objection, copy as its evidence one line,
 or part of one, exactly as it appears in the signals, the readings or the inventory, without its leading dash. An
@@ -291,11 +296,20 @@ def _plain(text: str) -> str:
 
 
 def quoted(evidence: str, text: str) -> bool:
-    """Whether an objection's evidence is copied from the text: a dozen characters or more, spacing aside."""
+    """
+    Whether an objection's evidence is copied from the text: a dozen
+    characters or more, spacing aside, and not a reading with no data,
+    which shows only that nothing was measured.
+    """
 
     quote = _plain(evidence).strip(" \"'`-")
 
-    return len(quote) >= 12 and quote in _plain(text)
+    if len(quote) < 12 or quote not in _plain(text):
+        return False
+
+    lines = [line for line in map(_plain, str(text).splitlines()) if quote in line]   # none: it spans lines
+
+    return not lines or any("no data in the last" not in line for line in lines)
 
 
 # ---------------------------------------------------------------------

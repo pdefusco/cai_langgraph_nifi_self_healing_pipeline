@@ -22,8 +22,9 @@ Each trial round, over the packs the chosen scenarios are in:
      scenarios (a slow burn shows after hours, a nightly batch once a
      day); the healthy control should open none
   3. the agent diagnoses each chosen scenario's incident, AGENT_WORKERS
-     at a time; one the LLM didn't answer (a timeout) is asked again, up
-     to LLM_TRIES in all, the clock stopped meanwhile
+     at a time, the clock stopped throughout (World.held), so it reads
+     the KPIs as they were when the incident opened; one the LLM didn't
+     answer (a timeout) is asked again, up to LLM_TRIES in all
   4. a valid proposal is approved as proposed, by REVIEWER, and applied
      to the mock; an invalid one is left at review
   5. the clock skips past the deciding verify windows (15 min, 1 h) and
@@ -237,7 +238,18 @@ def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS) -> 
         world.skip(DETECT_STEP)
 
 
-def diagnose(incidents: list) -> None:
+def diagnose(world, incidents: list) -> None:
+    """
+    The agent's proposal for each incident, the clock stopped: an LLM takes
+    a minute of wall time, twenty of sim time on the mock, and with no
+    poller running meanwhile the agent would read empty KPIs.
+    """
+
+    with world.held():
+        _diagnose(incidents)
+
+
+def _diagnose(incidents: list) -> None:
     for tries in range(1, LLM_TRIES + 1):
         for future in [graph.submit(i) for i in incidents]:
             future.result()
@@ -288,7 +300,7 @@ def judge(world, client, store, incidents: list) -> None:
 def attempt(number: int, fix: int, found: dict, world, client, store) -> list:
     """Diagnose, approve and judge each of {scenario id: incident}; the scenarios a fix was applied to."""
 
-    diagnose(list(found.values()))
+    diagnose(world, list(found.values()))
     applied = []
 
     for scenario, incident in found.items():
