@@ -13,7 +13,8 @@ near or fine, as the Monitor tab colours it) and a trend (and its slope
 per minute, for actions/capacity.py). Processor
 counts are shown per second (config.COUNT_WINDOW_SECONDS). Back pressure
 throttles what a source sends, which hides the intake, so a source that
-sent more in the last PEAK_SECONDS shows that peak too.
+sent more in the last PEAK_SECONDS shows that peak too, and so does a
+split (a fan-out), whose output is the intake of the stages after it.
 
 Only the KPIs the pack defines; NFH-65 makes the coverage uniform. Given
 the group's inventory, render() lists every connection in flow order,
@@ -58,7 +59,7 @@ def for_incident(incident: dict, store, now: float) -> list:
     scenario = packs.SCENARIOS.get(incident.get("scenario") or "")
     kpis = [k for k in fleet.pack(incident.get("pack") or "").get("kpis") or []
             if scenario and k.get("scenario") == scenario.id]
-    sources = set(scenario.flow_edges()["in"]) if scenario else set()
+    edges = scenario.flow_edges() if scenario else {"in": [], "split": []}
     crn = incident.get("deployment_crn") or ""
     rows = []
 
@@ -67,7 +68,10 @@ def for_incident(incident: dict, store, now: float) -> list:
         recent = [(t, v) for t, v in raw if t >= now - WINDOW_SECONDS]
         shown = _per_second(kpi, recent)
         latest = shown[-1][1] if shown else None
-        source = kpi.get("metric") == "flowfiles_out" and kpi.get("component") in sources
+        sends = kpi.get("metric") == "flowfiles_out"
+        source = sends and kpi.get("component") in edges["in"]
+        # A split's output is the intake of the stages after it, throttled the same way.
+        feeds = source or sends and kpi.get("component") in edges["split"]
 
         rows.append({
             "key": kpi["key"], "kind": kpi.get("kind"), "component": kpi.get("component") or "",
@@ -78,7 +82,7 @@ def for_incident(incident: dict, store, now: float) -> list:
             "trend": _trend(recent) if recent else "",
             "per_minute": metrics.trend(shown),
             "source": source,
-            "peak": max(v for _, v in _per_second(kpi, raw)) if source and raw else None,
+            "peak": max(v for _, v in _per_second(kpi, raw)) if feeds and raw else None,
         })
 
     return rows

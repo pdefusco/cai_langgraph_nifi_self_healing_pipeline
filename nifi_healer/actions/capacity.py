@@ -21,8 +21,9 @@ Capacity after the change, in FlowFiles per second across the nodes:
 Intake, the highest of what is measured:
   - its own rate in, plus the growth of the queue in front of it;
   - the sources upstream of it, through a plain chain of stages (no
-    split, merge or branch on the way): their highest rate in the last
-    2 h, or what a GenerateFlowFile is set to send, summed.
+    branch on the way, and no split or merge but one whose output is
+    measured, where the chain then starts): their highest rate in the
+    last 2 h, or what a GenerateFlowFile is set to send, summed.
 
 Every estimate leans towards passing: when the capacity or the intake
 isn't known, or the step lowers capacity, nothing is said. The problems go
@@ -107,11 +108,13 @@ def _backlog(rows: dict, connection: dict) -> bool | None:
     return full or (row["state"] or 0) >= 1 or row["trend"] == "rising"
 
 
-def _sources(inv: dict, name: str, seen: frozenset = frozenset()) -> list | None:
+def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) -> list | None:
     """
-    The processors with no input that feed `name`, or None when the way
-    from them splits, merges, branches or loops, so their rate is not
-    what reaches it. A dead-letter branch doesn't count.
+    The processors that feed `name` through a plain chain: those with no
+    input, or a split or merge whose output is measured, as what it sends
+    on is what reaches `name`. None when the way from them branches or
+    loops, or a regrouping is not measured, so their rate is not what
+    reaches it. A dead-letter branch doesn't count.
     """
 
     processors = {p["name"]: p for p in inv["processors"]}
@@ -120,7 +123,7 @@ def _sources(inv: dict, name: str, seen: frozenset = frozenset()) -> list | None
     for connection in _inbound(inv, name):
         upstream = processors.get(connection["source"])
 
-        if upstream is None or upstream["kind"] in REGROUPING or upstream["name"] in seen:
+        if upstream is None or upstream["name"] in seen:
             return None
 
         onward = [c for c in inv["connections"] if c["source"] == upstream["name"] and not c["self_loop"]
@@ -129,11 +132,18 @@ def _sources(inv: dict, name: str, seen: frozenset = frozenset()) -> list | None
         if len(onward) != 1:
             return None
 
+        if upstream["kind"] in REGROUPING:
+            if ("processor", upstream["name"], "flowfiles_out") not in rows:
+                return None
+
+            found.append(upstream)
+            continue
+
         if not _inbound(inv, upstream["name"]):
             found.append(upstream)
             continue
 
-        more = _sources(inv, upstream["name"], seen | {name})
+        more = _sources(inv, rows, upstream["name"], seen | {name})
 
         if more is None:
             return None
@@ -170,7 +180,7 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
 
         estimates.append(own + growth)
 
-    sources = _sources(inv, name)
+    sources = _sources(inv, rows, name)
 
     if sources:
         rates = []
@@ -255,8 +265,10 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         intake = _intake(new, rows, name, nodes)
 
         if capacity is not None and intake and capacity < HEADROOM * intake:
-            problems.append(f"{name}: {how} is about {_number(capacity)}/s, below the intake of about "
-                            f"{_number(intake)}/s. Size it so the new capacity exceeds the intake.")
+            short = "below" if capacity < intake else f"within {100 * (HEADROOM - 1):.0f}% of"
+            problems.append(f"{name}: {how} is about {_number(capacity)}/s, {short} the intake of about "
+                            f"{_number(intake)}/s. Size it so the new capacity exceeds the intake with room to "
+                            f"drain the backlog.")
 
     if measured and measured == considered and not backed:
         problems.append("None of the processors changed has a backlog in front of it; find the stage whose "

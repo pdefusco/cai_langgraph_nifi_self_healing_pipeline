@@ -98,8 +98,9 @@ them.
 | NFH-73 | Feature | A retry keeps its diagnosis; the prompt names auto-terminated and expiration data loss | Done | 6ec47ff |
 | NFH-74 | Fix | The replay reads the mock's processor counts per second, not per 5 minutes as on live | Done | 32e15aa |
 | NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | 37f3236 |
-| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Built | bca2d04 |
-| NFH-77 | Fix | The replay's clock runs on while the LLM thinks, so the agent reads empty KPIs on CAI | Done | |
+| NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Dropped | bca2d04 |
+| NFH-77 | Fix | The replay's clock runs on while the LLM thinks, so the agent reads empty KPIs on CAI | Done | 02a1431 |
+| NFH-78 | Fix | The capacity check reads the intake past a measured split, and doesn't call a fix that matches the intake short of it | Done | |
 
 ## Open tickets
 
@@ -216,6 +217,36 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+### NFH-78 · Fix · The capacity check reads the intake past a split
+In `replay-ab2-on` S24's 2 tasks on Sessionize passed the capacity check (100/s against an intake of 50/s) and changed
+nothing in three rounds. The clicks come out of a SplitText, so the check couldn't trace the source's rate (2 batches/s)
+to the sessionizer, and the intake it had left was Sessionize's own 50/s, held there by back pressure, with its full
+queue not growing. The real intake is 100/s: 2 tasks keep pace and never drain the backlog. The prompt's readings had
+the same blind spot. And a fix within 10% of the intake was sent back as "below" it (S03's 2/s against 2/s).
+- 2026-10-22: built. Every split or fan-out (S07, S18, S24, S33, S44) gets a chart-only KPI on its FlowFiles Out, which
+  the readings show with its 2 h peak as for a source ("S24 Split Clicks: 50/s out, up to 100/s in the last 2 h"),
+  and the capacity check starts the chain at a split or merge whose output is measured. S24's 2 tasks now go back,
+  3 and 4 pass, as the sim agrees (2 tasks leave s24-splits above 8000). A fix that covers the intake but without the
+  headroom reads "within 10% of the intake". Live, the new KPIs exist once the packs' KPIs are written again.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-77 · Fix · The replay's clock runs on while the LLM thinks
+The mock's clock runs at `SELFHEAL_MOCK_SPEED` (20x) against wall time. The replay polls only while it detects, so
+while the agent pool waits on the LLM (tens of seconds a call, AGENT_WORKERS at a time) the flows run on for many sim
+minutes with nothing sampling them, and an incident queued behind others reads "no data in the last 15 min" for most
+KPIs. Locally the oracle answers at once, so the tests and local runs never saw it. The live app polls all the time
+at 1x and is not affected.
+- 2026-10-22: found reading the critic A/B (NFH-76). The CAI replay runs after-3 and after-4 (NFH-69) most likely read
+  mostly empty KPIs too, which fits after-4's S24 round 2 reading the throttled source as "no data"; their numbers
+  measured the agent partly blind. Built: `World.held()` stops this process's clock, and `replay.diagnose` runs the
+  agent inside it, so every incident is read as it was when detection opened it. Approval and judging run with the
+  clock going, as they wait for the mock to apply the change. A test with an LLM that takes wall time checks the
+  clock stands still while it answers.
+- 2026-10-22: done in 02a1431.
+
 ### NFH-76 · Feature · A critic before review
 Two of after-4's misses rest on claims the readings contradict: S24 round 2 fixed the stage next to the alert while
 the readings showed Sessionize capped below its intake, and S25 round 2 blamed parse failures while Parse DLQ read
@@ -248,23 +279,15 @@ the readings showed Sessionize capped below its intake, and S25 round 2 blamed p
   is dropped, the prompt says such a reading was not measured, and the bottleneck rule covers only more tasks, a
   shorter schedule or a larger deployment; a DLQ route is not a change to what the flow produces. New CRITIC_VERSION.
   Not judged until both arms are re-run with NFH-77.
-
-### NFH-77 · Fix · The replay's clock runs on while the LLM thinks
-The mock's clock runs at `SELFHEAL_MOCK_SPEED` (20x) against wall time. The replay polls only while it detects, so
-while the agent pool waits on the LLM (tens of seconds a call, AGENT_WORKERS at a time) the flows run on for many sim
-minutes with nothing sampling them, and an incident queued behind others reads "no data in the last 15 min" for most
-KPIs. Locally the oracle answers at once, so the tests and local runs never saw it. The live app polls all the time
-at 1x and is not affected.
-- 2026-10-22: found reading the critic A/B (NFH-76). The CAI replay runs after-3 and after-4 (NFH-69) most likely read
-  mostly empty KPIs too, which fits after-4's S24 round 2 reading the throttled source as "no data"; their numbers
-  measured the agent partly blind. Built: `World.held()` stops this process's clock, and `replay.diagnose` runs the
-  agent inside it, so every incident is read as it was when detection opened it. Approval and judging run with the
-  clock going, as they wait for the mock to apply the change. A test with an LLM that takes wall time checks the
-  clock stands still while it answers.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: re-run on CAI with NFH-77 and the new CRITIC_VERSION (`replay-ab2-off`, `replay-ab2-on`), without →
+  with: valid on the first try 77% → 39%, design fix 74% → 59%, right lever 85% → 90%, worked 87% → 80%. Read with
+  `--show`, 3 of its 13 objections were right (S08 round 1, S24 round 1 twice). Of the 10 wrong, 5 took a
+  back-pressured rate for the intake (S01 three times, S03 and S08 round 2), 3 called s23's queue at 93% "not full",
+  and 1 read the merge's low output on S24 as FlowFiles not getting through. The critic and the capacity check also
+  disagree on the intake (the throttled 1/s against the source's 3/s peak), so the agent is sent back by one for what
+  the other asked (S01, S03 and S24 round 2). Not kept: the right value falls and most objections are to fixes that
+  work. The code stays, off by default; `replay-ab2-off` is the baseline from here.
+- 2026-10-22: dropped.
 
 ### NFH-75 · Fix · Grade the DLQ a route reaches; accept 3 tasks on S25
 In after-4, S27 round 2 routed Schema Check's failure to S27 Parse DLQ rather than S27 Reject DLQ, and was graded

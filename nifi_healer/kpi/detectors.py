@@ -28,6 +28,7 @@ process group: one fault, one incident, however many KPIs show it.
 
 import config
 from flows import packs
+from flows.builder.processors import SPLITTING
 from nifi_healer.kpi import metrics
 
 CRITICAL = "critical"
@@ -43,11 +44,7 @@ _RATE_BUCKETS = 5
 _TREND_BUCKETS = 10
 
 # Processor kinds whose FlowFile count out differs from in by design.
-REGROUPING = frozenset((
-    "MergeContent", "MergeRecord", "JoinEnrichment", "SplitText", "SplitJson", "SplitXml",
-    "SplitRecord", "SplitContent", "SplitAvro", "SplitExcel", "ForkRecord", "PartitionRecord",
-    "DuplicateFlowFile", "UnpackContent",
-))
+REGROUPING = SPLITTING | frozenset(("MergeContent", "MergeRecord", "JoinEnrichment"))
 
 
 def group_name(scenario_id: str) -> str:

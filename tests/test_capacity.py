@@ -1,9 +1,12 @@
 """A throughput fix too small for the intake goes back to the agent (actions/capacity.py, NFH-61)."""
 
 from flows import packs
+from nifi_healer import fleet
 from nifi_healer.actions import capacity, executor
 from nifi_healer.agent import graph
 from nifi_healer.flow.inventory import inventory
+from nifi_healer.kpi import readings
+from nifi_healer.runtime.poller import Poller
 
 from test_agent_graph import S01_FIX, ScriptedLLM, agent, proposal  # noqa: F401 (agent is a fixture)
 
@@ -45,7 +48,8 @@ def test_the_design_fixes_pass(agent):
     assert problems(client, store, incidents["S30"], [schedule("S30 Pick Items", "0 sec")]) == []
 
     [short] = problems(client, store, incidents["S03"], [tasks("S03 Transform", 2)])
-    assert short.startswith("S03 Transform: 2 task(s) every 1 sec is about 2/s, below the intake of about 2/s")
+    # 2/s against about 2/s: enough to keep up, not to drain the backlog, and not called short of it.
+    assert short.startswith("S03 Transform: 2 task(s) every 1 sec is about 2/s, within 10% of the intake of about 2/s")
 
 
 def test_an_expiring_queue_hides_its_backlog(agent):
@@ -54,7 +58,7 @@ def test_an_expiring_queue_hides_its_backlog(agent):
 
     assert problems(client, store, incidents["S25"], [tasks("S25 Sessionize", 4)]) == []
     [short] = problems(client, store, incidents["S25"], [tasks("S25 Sessionize", 2)])
-    assert "below the intake of about 20/s" in short
+    assert "20/s, within 10% of the intake of about 20/s" in short
 
 
 def test_no_design_fix_is_sent_back(agent):
@@ -78,12 +82,26 @@ def test_the_wrong_stage_is_sent_back(agent):
         "and whose output queue is not."]
 
 
+def test_a_measured_split_is_where_the_intake_starts(agent):
+    # S24: 2 batches/s from the source, split into 100/s of clicks; the sessionizer does 50/s, back
+    # pressure holds every queue full, and 2 tasks (100/s) would only keep pace.
+    _, client, store, incidents, _ = agent("p9-clickstream")
+    incident = incidents["S24"]
+    Poller(client, store).backfill("p9-clickstream", fleet.pack("p9-clickstream"))     # as the app does
+    shown = readings.render(readings.for_incident(incident, store, client.now()))
+
+    assert "- S24 Split Clicks: 50/s out, up to 100/s in the last 2 h: flat" in shown.splitlines()
+    [short] = problems(client, store, incident, [tasks("S24 Sessionize", 2)])
+    assert "2 task(s) every 20 ms is about 100/s, within 10% of the intake of about 100/s" in short
+    assert problems(client, store, incident, [tasks("S24 Sessionize", 3)]) == []
+
+
 def test_quiet_without_a_measure(agent):
     _, client, store, incidents, _ = agent("p9-clickstream", "p12-warehouse")
 
-    # S24's clicks come out of a SplitText, so the source's rate is not what reaches the sessionizer.
+    # Without the split's own rate, the source's is not what reaches the sessionizer.
     plan = executor.plan(client, incidents["S24"], [tasks("S24 Sessionize", 2)], store)
-    assert capacity._sources(inventory(plan["_definition"], incidents["S24"]["process_group"]),
+    assert capacity._sources(inventory(plan["_definition"], incidents["S24"]["process_group"]), {},
                              "S24 Sessionize") is None
 
     # No samples stored at all: nothing to compare with.

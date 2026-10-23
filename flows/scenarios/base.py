@@ -51,7 +51,7 @@ class Kpi:
     alert: bool = True       # False: chart only, read by detectors
     good: str = "down"       # which direction is better: down | up
     primary: bool = True     # primary KPIs decide the outcome verdict
-    rollup: bool = False     # True: only feeds the group's in/out roll-up
+    rollup: bool = False     # True: only feeds the group's in/out roll-up and the agent's readings
 
     def __post_init__(self):
         if self.kind not in ("connection", "processor", "system"):
@@ -116,7 +116,8 @@ class Scenario:
 
     def flow_edges(self) -> dict:
         """
-        {"in": entry processor names, "out": exit processor names}.
+        {"in": entry processor names, "out": exit processor names, "split":
+        the processors that send on more FlowFiles than they take in}.
 
         An entry takes nothing from another processor and sends to one; an
         exit sends to no other processor (a self-loop is not a way out),
@@ -124,11 +125,9 @@ class Scenario:
         auto-terminated relationships is not counted.
         """
 
-        if self.edges:
-            return {"in": list(self.edges[0]), "out": list(self.edges[1])}
-
         if self.id not in _EDGES:
             from flows.builder.lib import ProcessGroup
+            from flows.builder.processors import SPLITTING, kind_of
 
             group = ProcessGroup(self.id, self.group_name)
             self.build(group)
@@ -140,21 +139,28 @@ class Scenario:
             _EDGES[self.id] = {
                 "in": [n for i, n in names.items() if i in feeding and i not in fed],
                 "out": [n for i, n in names.items() if i not in feeding],
+                "split": [p["name"] for p in group.processors.values() if kind_of(p) in SPLITTING],
             }
 
-        return {side: list(names) for side, names in _EDGES[self.id].items()}
+        found = {side: list(names) for side, names in _EDGES[self.id].items()}
+
+        if self.edges:
+            found.update({"in": list(self.edges[0]), "out": list(self.edges[1])})
+
+        return found
 
     def edge_kpis(self) -> tuple:
         """
         Chart-only KPIs for what the group takes in (its entries' FlowFiles
-        Out) and puts out (its exits' FlowFiles In), when no KPI of the
+        Out) and puts out (its exits' FlowFiles In), and for what each split
+        sends on, the intake of the stages after it, when no KPI of the
         scenario already charts them.
         """
 
         edges = self.flow_edges()
         have = {k.key for k in self.kpis}
         wanted = [Kpi(self.id, "processor", name, "flowfiles_out", alert=False, good="up",
-                      primary=False, rollup=True) for name in edges["in"]]
+                      primary=False, rollup=True) for name in edges["in"] + edges["split"]]
         wanted += [Kpi(self.id, "processor", name, "flowfiles_in", alert=False, good="up",
                        primary=False, rollup=True) for name in edges["out"]]
 

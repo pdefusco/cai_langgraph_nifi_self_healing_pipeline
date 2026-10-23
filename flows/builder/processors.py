@@ -255,3 +255,10 @@ def kind_of(processor: dict) -> str:
     """The short kind ("InvokeHTTP") of a processor dict from a definition."""
 
     return (processor.get("type") or "").rsplit(".", 1)[-1]
+
+
+# Processor kinds that send on more FlowFiles than they take in, by design.
+SPLITTING = frozenset((
+    "SplitText", "SplitJson", "SplitXml", "SplitRecord", "SplitContent", "SplitAvro", "SplitExcel",
+    "ForkRecord", "PartitionRecord", "DuplicateFlowFile", "UnpackContent",
+))

@@ -12,14 +12,20 @@ from test_detectors_outcomes import around_change, kpi, windows  # noqa: F401 (w
 
 
 def test_edges_are_inferred_from_the_topology():
-    assert packs.SCENARIOS["S01"].flow_edges() == {"in": ["S01 Source"], "out": ["S01 Consumer"]}
+    assert packs.SCENARIOS["S01"].flow_edges() == {"in": ["S01 Source"], "out": ["S01 Consumer"],
+                                                   "split": []}
 
     # A failure loop is not a way out; a DLQ nothing is routed to yet is.
     assert packs.SCENARIOS["S10"].flow_edges() == {"in": ["S10 Source"],
-                                                   "out": ["S10 Partner Call", "S10 DLQ"]}
+                                                   "out": ["S10 Partner Call", "S10 DLQ"], "split": []}
 
     # Declared where the topology misleads: S17's stub and receiver form a second chain.
-    assert packs.SCENARIOS["S17"].flow_edges() == {"in": ["S17 Source"], "out": ["S17 Received"]}
+    assert packs.SCENARIOS["S17"].flow_edges() == {"in": ["S17 Source"], "out": ["S17 Received"],
+                                                   "split": []}
+
+    # A split sends on more than it takes in: what it sends is the intake of the stages after it.
+    assert packs.SCENARIOS["S24"].flow_edges()["split"] == ["S24 Split Clicks"]
+    assert packs.SCENARIOS["S07"].flow_edges()["split"] == ["S07 Fan Out"]
 
 
 def test_edge_kpis_are_chart_only_and_not_duplicated():
@@ -29,6 +35,7 @@ def test_edge_kpis_are_chart_only_and_not_duplicated():
     added = packs.SCENARIOS["S01"].edge_kpis()
     assert [k.key for k in added] == ["S01:processor:S01 Source:flowfiles_out"]
     assert all(k.rollup and not k.alert and not k.primary for k in added)
+    assert "S24:processor:S24 Split Clicks:flowfiles_out" in [k.key for k in packs.SCENARIOS["S24"].edge_kpis()]
 
     keys = [k.key for p in packs.PACKS.values() for k in p.kpis]
     assert len(keys) == len(set(keys))
