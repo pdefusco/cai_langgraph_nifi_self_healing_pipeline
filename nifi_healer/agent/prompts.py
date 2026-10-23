@@ -78,8 +78,7 @@ Current readings (the last 15 minutes; rates per second). Every queue of the gro
 measured may still be full. Then every rate watched:
 {readings}
 
-{analysis}
-Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
+{analysis}Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
 {context_error}
 Flow inventory (current settings):
 {inventory}
