@@ -118,7 +118,7 @@ graph TD;
 |---|---|---|---|
 | entry (router) | A rollback incident skips the diagnosis | store | no |
 | propose_rollback | Proposes undoing the one action a rollback incident is for | store | no |
-| gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, the current reading of every KPI on the group (kpi/readings.py), and notes on the backlogged stages more capacity would not help (actions/capacity.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
+| gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, and the current reading of every KPI on the group (kpi/readings.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
 | diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable or doesn't answer, leaving the incident NEW for a later try | prompt | yes |
 | validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Checks a tasks or run-schedule change against the measured intake. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
@@ -233,3 +233,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-21 | NFH-68 | A run the LLM didn't answer is queued again on every KPI poll once its wait is over (5, 15, then 30 min); the LLM timeout is a setting |
 | 2026-10-22 | NFH-76 | critique_proposal, after validate_proposal behind `SELFHEAL_CRITIC`: a second LLM reading of a valid fix; a quoted objection is a retry, or a warning on the last attempt |
 | 2026-10-22 | NFH-82 | gather_context notes, for the prompt, the backlogged stages more capacity would not help (disabled, held back, sending nothing, a runaway source, a ControlRate) and high CPU; the sizes it first gave were dropped on 2026-10-23 |
+| 2026-10-23 | NFH-82 | gather_context's notes removed: measured, not kept; the prompt is as before NFH-82 |

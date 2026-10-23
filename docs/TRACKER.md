@@ -104,7 +104,8 @@ them.
 | NFH-79 | Fix | S03 and S24 are labelled with the smallest fix that clears them, 3 tasks, not 4 | Done | 373a739 |
 | NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
 | NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
-| NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | In progress | |
+| NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | Dropped | 55526fb, 9848eee, 61e8bde |
+| NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | In progress | |
 
 ## Open tickets
 
@@ -221,6 +222,15 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+### NFH-83 · Fix · The capacity check asks a fix to drain the backlog, and reads the intake behind a held-back fan-out
+NFH-82's re-run showed the fixes that fail as keeping up but not draining: S07's 90 ms clears 10/s in by 1/s, so its
+10,000 queued take hours, and the outcome is judged at 20 minutes. And the intake behind a fan-out at back pressure is
+read from its throttled output (S07 Fan Out, 1.6–1.8/s), not what it would send, so the check passed 500 ms.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-82 · Feature · The capacity sums in the prompt
 The agent sizes a throughput fix by doing the prompt's sums itself, from the readings and the inventory, and the
 capacity check (NFH-61) then sends a short one back, costing an attempt. Do the sums first, with the check's own code,
@@ -251,10 +261,15 @@ its ceiling, rate and intake, which limit it is at, and the least change that ke
   GenerateFlowFile, a ControlRate; then high CPU. No line when none applies. Across the 20 scenarios it has notes on
   S07, S08, S22, S23, S28, S31, S32 and S33, none on the sizing ones. Oracle replay unchanged. To keep or drop on a
   CAI re-run against replay-82-before.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-23: CAI re-run, replay-82-before (d2c69fe) → replay-82-flags (61e8bde), `--compare`: right value 76% → 64%
+  (−11 pts, luck ±14), valid on the first try 78% → 79% (+1, ±12), worked 85% → 81% (−4, ±13), all within luck.
+  The scenarios without notes read the prompt word for word as before and swung as much (S24 worked 100% → 25%,
+  S25 33% → 75%). S07 worked 0% again, but not from its note: all four rounds fixed S07 Sink, at 500 ms, 900 ms then
+  90 ms, and 500 ms. The agent read the intake as Fan Out's 1.6–1.8/s out, throttled by back pressure the whole 2 h,
+  not the ~10/s it would send; the capacity check read the same and passed 500 ms. The 90 ms keeps up but drains
+  10,000 queued at ~1/s, hours past the 20-minute window. S08 worked 67% → 100% in both runs, but its right value fell
+  67% → 50%. Not kept: the code is removed, the prompt is d2c69fe's again. What S07 shows goes to NFH-83.
+- 2026-10-23: dropped.
 
 ### NFH-81 · Feature · `--compare` says what luck alone could explain
 A before/after replay has one or two cases a scenario, so a few lucky rounds move the totals; and the "all" row

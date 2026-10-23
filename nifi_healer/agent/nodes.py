@@ -3,8 +3,7 @@ The graph's nodes. Each takes the state and returns the fields it changed.
 
     entry                 a rollback incident skips the diagnosis
     propose_rollback      ROLLBACK of the one action it undoes, without the LLM
-    gather_context        the deployed flow's inventory, sizing, version, readings, and notes on
-                          backlogged stages more capacity would not help (actions/capacity.py)
+    gather_context        the deployed flow's inventory, sizing, version
     retrieve_playbooks    playbook sections for the signals and the parameters used,
                           the most similar past cases (rag/memory.py), and, for
                           the reviewer only, the fixes' track records (rag/priors.py)
@@ -126,13 +125,6 @@ def gather_context(state: dict) -> dict:
                              "nodes": sizing.get("staticNodeCount")}
 
     context["readings"] = readings.render(readings.for_incident(incident, store, client.now()), found)
-
-    try:
-        context["analysis"] = "\n".join(capacity.analysis(found, incident, store, client.now()))
-
-    except Exception as exc:  # the notes help the diagnosis; they are not a precondition of it
-        log(f"{incident['id']}: capacity analysis failed: {exc}")
-        context["analysis"] = ""
 
     return {"incident": incident, "context": context, "attempts": 0, "feedback": [],
             "source": "agent", "error": "", "review_error": ""}

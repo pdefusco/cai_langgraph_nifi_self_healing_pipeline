@@ -31,15 +31,6 @@ Every estimate leans towards passing: when the capacity or the intake
 isn't known, or the step lowers capacity, nothing is said. The problems go
 back to the agent as validation problems while it has attempts left, and
 show as warnings after that (agent/nodes.py).
-
-    lines = analysis(inv, incident, store, now)
-
-For the prompt, before the agent proposes (NFH-82): the stages with a
-backlog in front where more capacity would not help (disabled, held back by
-the stage after, sending nothing, fed by a runaway source, a ControlRate),
-and high CPU. No sizes: the intake above is a floor, there to pass a fix;
-given to the agent as the intake, it sized its fixes to that floor, too
-small to drain the backlog (S02, S07, S24).
 """
 
 from nifi_healer.actions import catalog
@@ -284,73 +275,3 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
                         "input queue is full and whose output queue is not.")
 
     return problems
-
-
-def _runaway(inv: dict, rows: dict, name: str) -> dict | None:
-    """A GenerateFlowFile feeding `name` on a 0 sec schedule: it sends as fast as back pressure lets it."""
-
-    for source in _sources(inv, rows, name) or []:
-        if source["kind"] == "GenerateFlowFile" and source.get("scheduling") != "CRON_DRIVEN" \
-                and _period(source) <= 0 and not _inbound(inv, source["name"]):
-            return source
-
-    return None
-
-
-def _flag(processor: dict, inv: dict, rows: dict) -> str:
-    """Why more capacity on this stage would not help, if something says so; '' otherwise."""
-
-    name = processor["name"]
-    held = [c["name"] for c in inv["connections"] if c["source"] == name and not c["self_loop"]
-            and c["destination"] not in inv["dlqs"]
-            and readings.full(rows.get(("connection", c["name"], "queued_count")), c)]
-    runaway = _runaway(inv, rows, name)
-
-    if processor.get("state") in ("DISABLED", "STOPPED"):
-        return f"- {name} is {processor['state']}: it takes nothing in."
-
-    if held:
-        return f"- {name} is held back: its way on ({', '.join(held)}) is at back pressure; look at the stage after it."
-
-    if _rate(rows, name) == 0:
-        return f"- {name} sends nothing: a stall, a failure or a misconfiguration, not capacity."
-
-    if runaway:
-        return (f"- {name} is fed by {runaway['name']}, which runs every {runaway.get('run_schedule')}, as fast as "
-                "back pressure lets it: no number of tasks keeps up, so the source is what to slow.")
-
-    if processor["kind"] == "ControlRate":
-        return f"- {name} is a ControlRate: it passes what its rate properties allow, whatever its tasks."
-
-    return ""
-
-
-def analysis(inv: dict | None, incident: dict, store, now: float) -> list:
-    """
-    One line for each stage with a backlog in front of it where more
-    capacity would not help, in flow order; then the deployment's CPU, when
-    it is high and some stage has a backlog. [] without an inventory.
-    """
-
-    if not inv or inv.get("error"):
-        return []
-
-    rows = {(r["kind"], r["component"], r["metric"]): r for r in readings.for_incident(incident, store, now)}
-    signalled = {s.get("kpi") for s in incident.get("signals") or []}
-    depth, _ = readings.flow_order(inv)
-    lines, backlogged = [], False
-
-    for processor in sorted(inv["processors"], key=lambda p: depth.get(p["name"], len(depth))):
-        if processor.get("scheduling") == "CRON_DRIVEN" \
-                or not any(_backlog(rows, c, signalled) for c in _inbound(inv, processor["name"])):
-            continue
-
-        backlogged = True
-        lines += [line for line in [_flag(processor, inv, rows)] if line]
-
-    cpu = next((r for r in rows.values() if r["kind"] == "system" and r["metric"] == "cpu"), None)
-
-    if backlogged and cpu and cpu["latest"] is not None and (cpu["state"] or 0) >= 1:
-        lines.append(f"- The deployment's CPU is at {cpu['latest']:.0f}%: more tasks will not help, it is sizing.")
-
-    return lines

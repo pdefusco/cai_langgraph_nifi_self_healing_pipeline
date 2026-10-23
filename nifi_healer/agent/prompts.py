@@ -78,7 +78,7 @@ Current readings (the last 15 minutes; rates per second). Every queue of the gro
 measured may still be full. Then every rate watched:
 {readings}
 
-{analysis}Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
+Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
 {context_error}
 Flow inventory (current settings):
 {inventory}
@@ -89,11 +89,6 @@ Playbook sections:
 Past cases on similar incidents (what was tried, what the reviewer did, what it measured):
 {memory}
 {feedback}"""
-
-ANALYSIS = """Notes on the stages with a backlog in front (worked out from the readings and the inventory):
-{analysis}
-
-"""
 
 FEEDBACK = """
 Your previous proposal was rejected by validation.{previous}
@@ -111,8 +106,7 @@ REPAIR = ("Your reply could not be used: {error}\n"
           "Reply again with only the JSON object described in the instructions.")
 
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM + USER + ANALYSIS + FEEDBACK + PREVIOUS + REPAIR
-     + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
+    (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 
 CRITIC_SYSTEM = """You check a remediation proposal for an Apache NiFi 2.6 flow in Cloudera DataFlow (CDF) before a
@@ -271,7 +265,6 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         **_evidence(incident, context),
         flow_version=context.get("flow_version") or "?", state=context.get("state") or "?",
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),
-        analysis=(ANALYSIS.format(analysis=context["analysis"]) if context.get("analysis") else ""),
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
         feedback=FEEDBACK.format(previous=_previous(previous), problems="\n".join(f"- {p}" for p in feedback))
