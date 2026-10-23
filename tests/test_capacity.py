@@ -1,7 +1,7 @@
 """
 A throughput fix too small for the intake goes back to the agent
-(actions/capacity.py, NFH-61), and the same sums reach the prompt before it
-proposes (NFH-82).
+(actions/capacity.py, NFH-61), and the prompt says before it proposes where
+more capacity would not help (NFH-82).
 """
 
 from flows import packs
@@ -191,45 +191,36 @@ def analysed(agent, *names) -> dict:
     return found
 
 
-def test_the_analysis_sizes_the_bottleneck(agent):
-    found = analysed(agent, "p1-throughput", "p2-backpressure", "p9-clickstream", "p12-warehouse")
+def test_the_analysis_says_when_more_capacity_is_not_the_fix(agent):
+    found = analysed(agent, "p1-throughput", "p2-backpressure", "p8-orders", "p9-clickstream", "p11-payments",
+                     "p12-warehouse")
 
-    [s01] = found["S01"]
-    assert s01.startswith("- S01 Consumer: 1 task(s) every 1 sec, a ceiling of about 1/s; it runs at about 1/s; "
-                          "the intake is about 3/s. At its ceiling, the schedule is the limit: 4 task(s) or a run "
-                          "schedule of 302 ms or shorter keeps up with the intake with 10% headroom; to drain the ")
-    # The label is the least that keeps up; draining the queue in the first verify window takes more.
-    assert "queued within 20 min, a run schedule of " in s01
-
-    assert "Sessionize: 1 task(s) every 20 ms, a ceiling of about 50/s; it runs at about 50/s; the intake is about " \
-        "100/s. At its ceiling, the schedule is the limit: 3 task(s) or a run schedule of 9 ms or shorter" \
-        in "\n".join(found["S24"])
-    assert "S30 Label Parcel: 1 task(s) every 200 ms" in "\n".join(found["S30"])
-    assert "5 task(s) or a run schedule of 45 ms or shorter" in "\n".join(found["S30"])
-
-
-def test_the_analysis_says_when_tasks_are_not_the_fix(agent):
-    found = analysed(agent, "p2-backpressure", "p8-orders", "p11-payments")
-
-    # A runaway source: more tasks downstream never catch it.
-    assert "Its source S08 Runaway Source runs every 0 sec, as fast as back pressure lets it: no number of tasks " \
-        "keeps up, so the source is what to slow." in "\n".join(found["S08"])
-    # A writer that could keep up, behind a queue that holds seconds of the intake.
-    assert "s05-buffer back-pressures at 10 FlowFiles" in "\n".join(found["S05"])
-    assert "S22 Batch Orders" in "\n".join(found["S22"]) and "It sends nothing" in "\n".join(found["S22"])
-    assert "S28 Tokenize Lane 3" in "\n".join(found["S28"]) and "It is DISABLED" in "\n".join(found["S28"])
-    assert "held back, its way on (s28-lane-3-authorized) is at back pressure" in "\n".join(found["S28"])
+    assert found["S08"] == ["- S08 Consumer is fed by S08 Runaway Source, which runs every 0 sec, as fast as back "
+                            "pressure lets it: no number of tasks keeps up, so the source is what to slow."]
+    assert "- S22 Batch Orders sends nothing: a stall, a failure or a misconfiguration, not capacity." in found["S22"]
+    assert "- S23 Carrier Throttle is a ControlRate: it passes what its rate properties allow, whatever its tasks." \
+        in found["S23"]
+    assert found["S28"] == [
+        "- S28 Authorize Lane 3 is held back: its way on (s28-lane-3-authorized) is at back pressure; look at the "
+        "stage after it.",
+        "- S28 Tokenize Lane 3 is DISABLED: it takes nothing in."]
+    # No sizes: the intake the check works with is a floor, and an agent given it as the intake sizes to it.
+    assert found["S01"] == found["S24"] == found["S30"] == found["S05"] == []
 
 
 def test_the_analysis_is_in_the_prompt(agent):
     _, _, store, incidents, install = agent("p12-warehouse")
-    model = install(ScriptedLLM(proposal([schedule("S30 Pick Items", "0 sec")])))
+    model = install(ScriptedLLM(proposal([schedule("S30 Pick Items", "0 sec")]),
+                                proposal([schedule("S31 Validate Manifest", "1 sec")])))
 
     graph.start(incidents["S30"]["id"])
+    graph.start(incidents["S31"]["id"])
 
-    prompt = model.calls[0][1].content
-    section = prompt.split("Capacity analysis", 1)[1].split("Deployment:", 1)[0]
-    assert "- S30 Pick Items: 1 task(s) every 125 ms" in section
+    # Nothing to say on S30, so no section; S31's disabled stage is.
+    assert "Notes on the stages" not in model.calls[0][1].content
+    section = model.calls[1][1].content.split("Notes on the stages with a backlog in front", 1)[1]
+    assert section.split("Deployment:", 1)[0].strip().endswith(
+        "- S31 Validate Manifest is DISABLED: it takes nothing in.")
 
 
 def test_no_analysis_without_an_inventory(agent):

@@ -104,7 +104,7 @@ them.
 | NFH-79 | Fix | S03 and S24 are labelled with the smallest fix that clears them, 3 tasks, not 4 | Done | 373a739 |
 | NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
 | NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
-| NFH-82 | Feature | The prompt gets the capacity sums for each stage with a backlog, before the agent proposes | In progress | |
+| NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | In progress | |
 
 ## Open tickets
 
@@ -239,6 +239,18 @@ its ceiling, rate and intake, which limit it is at, and the least change that ke
   keeps up (1.2 s drains in 20 min); S04's 4 tasks where 2 keep up and drain; S07's acceptable 100 ms (10/s) and 4
   tasks (4/s), both short of 10.1/s in, where 86 ms keeps up (the label, 0 sec, clears it); and S30's Label Parcel
   needing 5 tasks.
+- 2026-10-23: CAI replay, replay-82-before (d2c69fe) → replay-82-after (55526fb), `--compare`: valid on the first try
+  77% → 97% (+21 pts, luck ±10: beyond luck), worked 87% → 64% (−23 pts, ±13: beyond luck; worse S02, S05, S06, S07,
+  S24, S30, better S08), right value 77% → 64% (within luck). Lift +35% → +13%. Drop by the rule. Read from the
+  oracle's checkpoints, the sizes did it: the intake is the check's floor, there to pass a fix, and the agent sized to
+  it, too small to drain. S24 read about 50/s and was offered 2 tasks (the trap); S07 read 1.6/s, so 100 ms (short);
+  S02 took the least, 3.6 s; S05's "if slowly, 2 tasks" pulled it to tasks; S06's "no stage has a measured backlog"
+  misled it. The number-free notes helped (S08 67% → 100%).
+- 2026-10-23: sizes removed. The section is now "Notes on the stages with a backlog in front", only where more
+  capacity would not help: disabled or stopped, held back by the stage after, sends nothing, fed by a 0 sec
+  GenerateFlowFile, a ControlRate; then high CPU. No line when none applies. Across the 20 scenarios it has notes on
+  S07, S08, S22, S23, S28, S31, S32 and S33, none on the sizing ones. Oracle replay unchanged. To keep or drop on a
+  CAI re-run against replay-82-before.
 
 ## Closed tickets
 

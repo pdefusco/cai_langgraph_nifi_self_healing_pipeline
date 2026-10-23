@@ -27,8 +27,7 @@ Rules:
 - A property whose value is a parameter reference (#{{name}}) is changed with UPDATE_PARAMETER, never by editing
   the property. Sensitive parameters (shown as ********) cannot be changed.
 - Restarting the deployment is not available and does not drain a backlog.
-- Size a throughput fix from the current readings; the capacity analysis has done these sums for each stage with a
-  backlog, so start from it and check it against the readings:
+- Size a throughput fix from the current readings:
   1. Find the bottleneck: the stage whose input queue is full and whose output queue is not. Queues before it are
      full only because back pressure stops the stages that feed them, even when they are the ones that alerted.
   2. Find the intake: what the bottleneck takes in per second, plus how fast its input queue grows (per minute / 60).
@@ -79,10 +78,7 @@ Current readings (the last 15 minutes; rates per second). Every queue of the gro
 measured may still be full. Then every rate watched:
 {readings}
 
-Capacity analysis (each stage with a backlog in front, worked out from the readings and the inventory by the same
-sums validation checks a throughput fix with):
 {analysis}
-
 Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
 {context_error}
 Flow inventory (current settings):
@@ -94,6 +90,11 @@ Playbook sections:
 Past cases on similar incidents (what was tried, what the reviewer did, what it measured):
 {memory}
 {feedback}"""
+
+ANALYSIS = """Notes on the stages with a backlog in front (worked out from the readings and the inventory):
+{analysis}
+
+"""
 
 FEEDBACK = """
 Your previous proposal was rejected by validation.{previous}
@@ -111,7 +112,8 @@ REPAIR = ("Your reply could not be used: {error}\n"
           "Reply again with only the JSON object described in the instructions.")
 
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
+    (SYSTEM + USER + ANALYSIS + FEEDBACK + PREVIOUS + REPAIR
+     + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 
 CRITIC_SYSTEM = """You check a remediation proposal for an Apache NiFi 2.6 flow in Cloudera DataFlow (CDF) before a
@@ -270,7 +272,7 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         **_evidence(incident, context),
         flow_version=context.get("flow_version") or "?", state=context.get("state") or "?",
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),
-        analysis=context.get("analysis") or "- no stage has a measured backlog in front of it",
+        analysis=(ANALYSIS.format(analysis=context["analysis"]) if context.get("analysis") else ""),
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
         feedback=FEEDBACK.format(previous=_previous(previous), problems="\n".join(f"- {p}" for p in feedback))
