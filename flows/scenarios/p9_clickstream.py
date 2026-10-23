@@ -71,7 +71,7 @@ S24 = Scenario(
     family="FLOW_EDIT",
     kind="cascade",
     clear_within=1800,
-    expected=(action("SET_CONCURRENT_TASKS", "S24 Sessionize", value=4),),
+    expected=(action("SET_CONCURRENT_TASKS", "S24 Sessionize", value=3),),
     acceptable=(action("SET_RUN_SCHEDULE", "S24 Sessionize", value="0 sec"),),
     traps=(
         "The alert is on the splits queue, but S24 Parse Click is back-pressured, not slow.",

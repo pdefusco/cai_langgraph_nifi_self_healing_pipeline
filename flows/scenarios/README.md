@@ -228,7 +228,7 @@ flowchart LR
     class p2 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s03-to-enrich` holds more than 300 FlowFiles for a minute or when the queue `s03-to-transform` holds more than 300 FlowFiles for a minute or when the queue `s03-to-publish` holds more than 300 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s03-to-transform`. The fix we grade as correct is setting the concurrent tasks on S03 Transform to 4 or more. We also accept setting the run schedule of S03 Transform to 250 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s03-to-enrich` holds more than 300 FlowFiles for a minute or when the queue `s03-to-transform` holds more than 300 FlowFiles for a minute or when the queue `s03-to-publish` holds more than 300 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s03-to-transform`. The fix we grade as correct is setting the concurrent tasks on S03 Transform to 3 or more. We also accept setting the run schedule of S03 Transform to 250 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 4 processors, 3 connections</summary>
@@ -1214,7 +1214,7 @@ flowchart TD
     class p5 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s24-splits` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s24-to-sessionize` and FlowFiles out of S24 Sessionize. Whether a fix worked is decided by the size of the queue `s24-splits`. The fix we grade as correct is setting the concurrent tasks on S24 Sessionize to 4 or more. We also accept setting the run schedule of S24 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s24-splits` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s24-to-sessionize` and FlowFiles out of S24 Sessionize. Whether a fix worked is decided by the size of the queue `s24-splits`. The fix we grade as correct is setting the concurrent tasks on S24 Sessionize to 3 or more. We also accept setting the run schedule of S24 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>

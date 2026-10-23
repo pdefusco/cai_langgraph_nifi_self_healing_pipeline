@@ -86,7 +86,7 @@ S03 = Scenario(
         Kpi("S03", "connection", "s03-to-publish", "queued_count", above=300, primary=False),
     ),
     family="FLOW_EDIT",
-    expected=(action("SET_CONCURRENT_TASKS", "S03 Transform", value=4),),
+    expected=(action("SET_CONCURRENT_TASKS", "S03 Transform", value=3),),
     acceptable=(action("SET_RUN_SCHEDULE", "S03 Transform", value="250 ms"),),
     traps=("Adding tasks to S03 Enrich or S03 Publish changes nothing; neither has a backlog.",),
 )

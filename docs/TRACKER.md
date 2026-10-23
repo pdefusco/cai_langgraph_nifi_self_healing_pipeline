@@ -100,7 +100,9 @@ them.
 | NFH-75 | Fix | The Scorecard grades a route to another stage's DLQ short, and accepts 3 tasks on S25 | Done | 37f3236 |
 | NFH-76 | Feature | A critic checks each valid proposal against the readings before review | Dropped | bca2d04 |
 | NFH-77 | Fix | The replay's clock runs on while the LLM thinks, so the agent reads empty KPIs on CAI | Done | 02a1431 |
-| NFH-78 | Fix | The capacity check reads the intake past a measured split, and doesn't call a fix that matches the intake short of it | Done | |
+| NFH-78 | Fix | The capacity check reads the intake past a measured split, and doesn't call a fix that matches the intake short of it | Done  375a12d |
+| NFH-79 | Fix | S03 and S24 are labelled with the smallest fix that clears them, 3 tasks, not 4 | Done | |
+| NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Planned | |
 
 ## Open tickets
 
@@ -217,6 +219,25 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+### NFH-79 · Fix · S03 and S24 labelled at the smallest fix that clears them
+S03 and S24 were labelled 4 tasks, but 3 clears both with room to spare (S03: 3/s against about 2/s; S24: 150/s
+against 100/s), so an agent's 3 worked yet graded short. The user's rule: a label is the smallest value that clears
+the fault with the prompt's 10% headroom.
+- 2026-10-22: both labels lowered to 3 and the scenario guide regenerated. The oracle replay on p1 and p9 clears both
+  at 3 tasks (IMPROVED at 15 and 60 min). The Scorecard re-grades stored steps, so earlier runs read on the new rule.
+
+### NFH-80 · Fix · A burst landing in a queue reads as intake
+S04's source sends 600 FlowFiles every 10 minutes, 1/s on average. In the oracle replay for NFH-79 the incident opened
+on the KPI detector while a burst was still landing, and the capacity check took the queue's growth then as intake
+("about 8/s"), sending the design fix (4 tasks) back twice before it passed as a warning. An earlier oracle run opened
+on the DataFlow alert, after the burst, and passed. The queue's growth should count only when it is sustained, or not
+for a source that sends in bursts.
+- 2026-10-22: found. Planned.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-78 · Fix · The capacity check reads the intake past a split
 In `replay-ab2-on` S24's 2 tasks on Sessionize passed the capacity check (100/s against an intake of 50/s) and changed
 nothing in three rounds. The clicks come out of a SplitText, so the check couldn't trace the source's rate (2 batches/s)
@@ -228,10 +249,7 @@ the same blind spot. And a fix within 10% of the intake was sent back as "below"
   and the capacity check starts the chain at a split or merge whose output is measured. S24's 2 tasks now go back,
   3 and 4 pass, as the sim agrees (2 tasks leave s24-splits above 8000). A fix that covers the intake but without the
   headroom reads "within 10% of the intake". Live, the new KPIs exist once the packs' KPIs are written again.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in 375a12d.
 
 ### NFH-77 · Fix · The replay's clock runs on while the LLM thinks
 The mock's clock runs at `SELFHEAL_MOCK_SPEED` (20x) against wall time. The replay polls only while it detects, so
