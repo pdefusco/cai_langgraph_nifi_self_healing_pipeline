@@ -25,7 +25,13 @@ Intake, the highest of what is measured:
     measured, where the chain then starts): their highest rate in the
     last 2 h when back pressure may be holding them back, else their
     average (a burst is not an intake, S04), or what a GenerateFlowFile is
-    set to send, summed.
+    set to send, summed. A DuplicateFlowFile that back pressure holds back
+    is passed through, its sources' rate times its copies (S07).
+
+A full input queue with FlowFiles waiting behind a fan-out upstream of it
+stays at its limit until they are through, and the queue before the
+fan-out drains too slowly to show, so the fix must also clear those within
+the verify window to show on a KPI (NFH-83).
 
 Every estimate leans towards passing: when the capacity or the intake
 isn't known, or the step lowers capacity, nothing is said. The problems go
@@ -33,6 +39,7 @@ back to the agent as validation problems while it has attempts left, and
 show as warnings after that (agent/nodes.py).
 """
 
+import config
 from nifi_healer.actions import catalog
 from nifi_healer.flow.inventory import inventory
 from nifi_healer.kpi import readings
@@ -107,13 +114,37 @@ def _backlog(rows: dict, connection: dict, signalled: set) -> bool | None:
             or row["trend"] == "rising")
 
 
+def _copies(processor: dict) -> int | None:
+    """FlowFiles out per FlowFile in: 1, or a DuplicateFlowFile's copies and the original; None if unknown."""
+
+    if processor["kind"] not in REGROUPING:
+        return 1
+
+    if processor["kind"] != "DuplicateFlowFile":
+        return None
+
+    try:
+        return int((processor.get("properties") or {}).get("Number of Copies")) + 1
+
+    except (TypeError, ValueError):
+        return None
+
+
+def _onward(inv: dict, name: str) -> list:
+    return [c for c in inv["connections"] if c["source"] == name and not c["self_loop"]
+            and c["destination"] not in inv["dlqs"]]
+
+
 def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) -> list | None:
     """
-    The processors that feed `name` through a plain chain: those with no
-    input, or a split or merge whose output is measured, as what it sends
-    on is what reaches `name`. None when the way from them branches or
-    loops, or a regrouping is not measured, so their rate is not what
-    reaches it. A dead-letter branch doesn't count.
+    [(processor, FlowFiles reaching `name` per FlowFile it sends)] for the
+    processors that feed `name` through a plain chain: those with no input,
+    or a split or merge whose output is measured, as what it sends on is
+    what reaches `name`. A DuplicateFlowFile that back pressure holds back
+    sends less than it is given, so the chain goes on past it, times its
+    copies (S07). None when the way from them branches or loops, or a
+    regrouping is not measured, so their rate is not what reaches it. A
+    dead-letter branch doesn't count.
     """
 
     processors = {p["name"]: p for p in inv["processors"]}
@@ -125,21 +156,21 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
         if upstream is None or upstream["name"] in seen:
             return None
 
-        onward = [c for c in inv["connections"] if c["source"] == upstream["name"] and not c["self_loop"]
-                  and c["destination"] not in inv["dlqs"]]
-
-        if len(onward) != 1:
+        if len(_onward(inv, upstream["name"])) != 1:
             return None
 
-        if upstream["kind"] in REGROUPING:
+        copies = _copies(upstream)
+
+        if upstream["kind"] in REGROUPING and not (copies and _inbound(inv, upstream["name"])
+                                                    and readings.held(inv, rows, upstream["name"])):
             if ("processor", upstream["name"], "flowfiles_out") not in rows:
                 return None
 
-            found.append(upstream)
+            found.append((upstream, 1))
             continue
 
         if not _inbound(inv, upstream["name"]):
-            found.append(upstream)
+            found.append((upstream, 1))
             continue
 
         more = _sources(inv, rows, upstream["name"], seen | {name})
@@ -147,9 +178,46 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
         if more is None:
             return None
 
-        found += more
+        found += [(source, factor * copies) for source, factor in more]
 
     return found or None
+
+
+def _behind(inv: dict, rows: dict, name: str, seen: frozenset = frozenset(), factor: int = 1) -> float:
+    """
+    FlowFiles queued behind a DuplicateFlowFile upstream of `name`, through
+    input queues at back pressure, as many as reach `name` (times the
+    copies). The full queue stays at its limit until they are through, and
+    the queue before the fan-out drains `copies` times slower than the fix,
+    so no KPI shows the fix until then (S07). In a plain chain the queue
+    upstream drains as fast as the fix does, and shows it (S03): nothing is
+    counted. Where the way branches, or a split or merge makes an unknown
+    number, what lies beyond isn't counted either.
+    """
+
+    processors = {p["name"]: p for p in inv["processors"]}
+    total = 0.0
+
+    for connection in _inbound(inv, name):
+        upstream = processors.get(connection["source"])
+
+        if upstream is None or upstream["name"] in seen \
+                or not readings.full(rows.get(("connection", connection["name"], "queued_count")), connection):
+            continue
+
+        copies = _copies(upstream)
+
+        if not copies or len(_onward(inv, upstream["name"])) != 1:
+            continue
+
+        if factor * copies > 1:
+            for feeding in _inbound(inv, upstream["name"]):
+                row = rows.get(("connection", feeding["name"], "queued_count")) or {}
+                total += factor * copies * (row.get("latest") or 0.0)
+
+        total += _behind(inv, rows, upstream["name"], seen | {name}, factor * copies)
+
+    return total
 
 
 def _configured(source: dict, nodes: int) -> float:
@@ -184,10 +252,10 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
     if sources:
         rates = []
 
-        for source in sources:
+        for source, copies in sources:
             row = rows.get(("processor", source["name"], "flowfiles_out")) or {}
             measured = row.get("peak") if readings.held(inv, rows, source["name"]) else row.get("mean")
-            rates.append(max(measured or row.get("latest") or 0.0, _configured(source, nodes)))
+            rates.append(copies * max(measured or row.get("latest") or 0.0, _configured(source, nodes)))
 
         if all(rates):
             estimates.append(sum(rates))
@@ -263,12 +331,23 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         backed += backlog
         capacity, how = _capacity(was, now_is, rows, backlog, nodes)
         intake = _intake(new, rows, name, nodes)
+        behind = _behind(new, rows, name)
 
-        if capacity is not None and intake and capacity < HEADROOM * intake:
+        if capacity is None or not intake:
+            continue
+
+        if capacity < HEADROOM * intake:
             short = "below" if capacity < intake else f"within {100 * (HEADROOM - 1):.0f}% of"
             problems.append(f"{name}: {how} is about {_number(capacity)}/s, {short} the intake of about "
                             f"{_number(intake)}/s. Size it so the new capacity exceeds the intake with room to "
                             f"drain the backlog.")
+
+        elif behind and capacity < intake + behind / config.VERIFY_WINDOW_SECONDS:
+            needed = intake + behind / config.VERIFY_WINDOW_SECONDS
+            problems.append(f"{name}: {how} is about {_number(capacity)}/s against an intake of about "
+                            f"{_number(intake)}/s, but about {_number(behind)} FlowFiles wait upstream of its full "
+                            f"input queue, which stays at its limit until they are through. To clear them within "
+                            f"{config.VERIFY_WINDOW_SECONDS // 60} min it needs about {_number(needed)}/s.")
 
     if measured and measured == considered and not backed:
         problems.append("None of the processors changed has a backlog in front of it; find the stage whose "

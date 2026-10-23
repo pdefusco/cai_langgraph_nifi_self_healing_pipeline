@@ -65,8 +65,10 @@ def test_no_design_fix_is_sent_back(agent):
     names = ("p1-throughput", "p2-backpressure", "p8-orders", "p9-clickstream", "p10-iot", "p11-payments",
              "p12-warehouse", "p13-billing")
     _, client, store, incidents, _ = agent(*names)
+    # S07's acceptable 100 ms and 4 tasks keep pace with the fan-out at best, and leave its backlog in place
+    # (NFH-83); they are sent back.
     fixes = [(s, list(packs.SCENARIOS[s].expected)) for s in incidents] + \
-        [(s, [step]) for s in incidents for step in packs.SCENARIOS[s].acceptable]
+        [(s, [step]) for s in incidents for step in packs.SCENARIOS[s].acceptable if s != "S07"]
 
     # S04 opens later, on a DataFlow alert; the oracle replay covers it.
     assert {s.id for n in names for s in packs.PACKS[n].scenarios} - set(incidents) == {"S04"}
@@ -94,6 +96,36 @@ def test_a_measured_split_is_where_the_intake_starts(agent):
     [short] = problems(client, store, incident, [tasks("S24 Sessionize", 2)])
     assert "2 task(s) every 20 ms is about 100/s, within 10% of the intake of about 100/s" in short
     assert problems(client, store, incident, [tasks("S24 Sessionize", 3)]) == []
+
+
+def test_a_held_fan_out_is_read_through(agent):
+    # S07: 0.1/s from the source, each copied 100 times plus the original, so 10/s reach the sink. Back
+    # pressure holds the fan-out, which shows less than that, and its own input queue fills behind it.
+    _, client, store, incidents, _ = agent("p2-backpressure")
+    incident = incidents["S07"]
+    Poller(client, store).backfill("p2-backpressure", fleet.pack("p2-backpressure"))
+    plan = executor.plan(client, incident, [schedule("S07 Sink", "90 ms")], store)
+    inv = inventory(plan["_definition"], incident["process_group"])
+    rows = {(r["kind"], r["component"], r["metric"]): r
+            for r in readings.for_incident(incident, store, client.now())}
+
+    assert [(s["name"], copies) for s, copies in capacity._sources(inv, rows, "S07 Sink")] == [("S07 Source", 101)]
+    assert round(capacity._intake(inv, rows, "S07 Sink", 1)) == 10
+    assert capacity._behind(inv, rows, "S07 Sink") == 101 * rows[("connection", "s07-to-fanout", "queued_count")]["latest"]
+
+
+def test_a_fix_must_clear_what_waits_upstream(agent):
+    # S07: the sink's queue stays at its limit until the FlowFiles behind the fan-out are through.
+    _, client, store, incidents, _ = agent("p2-backpressure")
+    incident = incidents["S07"]
+    Poller(client, store).backfill("p2-backpressure", fleet.pack("p2-backpressure"))
+
+    assert problems(client, store, incident, [schedule("S07 Sink", "90 ms")])
+    [short] = problems(client, store, incident, [schedule("S07 Sink", "50 ms")])
+    assert short.startswith("S07 Sink: 1 task(s) every 50 ms is about 20/s against an intake of about 10/s, but "
+                            "about ") and "FlowFiles wait upstream of its full input queue" in short
+    assert "To clear them within 15 min it needs about" in short
+    assert problems(client, store, incident, [schedule("S07 Sink", "0 sec")]) == []
 
 
 def test_a_burst_is_not_an_intake(agent):

@@ -226,6 +226,16 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 NFH-82's re-run showed the fixes that fail as keeping up but not draining: S07's 90 ms clears 10/s in by 1/s, so its
 10,000 queued take hours, and the outcome is judged at 20 minutes. And the intake behind a fan-out at back pressure is
 read from its throttled output (S07 Fan Out, 1.6–1.8/s), not what it would send, so the check passed 500 ms.
+- 2026-10-23: built. A DuplicateFlowFile that back pressure holds back is read through: the intake is its sources'
+  rate times its copies plus one (S07: 0.1/s × 101 ≈ 10/s). Behind a fan-out, the full queue stays at its limit
+  until what waits before the fan-out is through, and that queue drains copies-times slower than the fix, so no KPI
+  moves: the fix must also clear those FlowFiles (times the copies) within the 15-minute verify window, and is sent
+  back with the rate it needs. In a plain chain the queue upstream drains as fast as the fix and shows it (S03's 3
+  tasks, measured IMPROVED at 15 min), so nothing is added there. Measured locally on S07: 90 ms and 50 ms NO_CHANGE
+  at 15 and 60 min, 30 ms only at 60 min, all now sent back; 10 ms (100/s against about 108/s needed) is sent back
+  though it showed at 15 min; 0 sec passes. S07's acceptable 100 ms and 4 tasks are sent back now (left for the
+  user). The oracle replay on all 20 scenarios is unchanged: valid on the first try 100%, worked 90%. To keep or drop
+  on a CAI before/after replay.
 
 ## Closed tickets
 
