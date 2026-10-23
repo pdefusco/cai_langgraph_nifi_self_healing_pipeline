@@ -23,7 +23,9 @@ Intake, the highest of what is measured:
   - the sources upstream of it, through a plain chain of stages (no
     branch on the way, and no split or merge but one whose output is
     measured, where the chain then starts): their highest rate in the
-    last 2 h, or what a GenerateFlowFile is set to send, summed.
+    last 2 h when back pressure may be holding them back, else their
+    average (a burst is not an intake, S04), or what a GenerateFlowFile is
+    set to send, summed.
 
 Every estimate leans towards passing: when the capacity or the intake
 isn't known, or the step lowers capacity, nothing is said. The problems go
@@ -88,10 +90,12 @@ def _inbound(inv: dict, name: str) -> list:
     return [c for c in inv["connections"] if c["destination"] == name and not c["self_loop"]]
 
 
-def _backlog(rows: dict, connection: dict) -> bool | None:
+def _backlog(rows: dict, connection: dict, signalled: set) -> bool | None:
     """
     Whether a backlog waits in this queue; None when it has no readings, or
     expires FlowFiles (S25), so it holds steady however far behind it is.
+    A queue whose KPI opened the incident has one, though a sawtooth (S04)
+    may have dipped under the alert since.
     """
 
     row = rows.get(("connection", connection["name"], "queued_count"))
@@ -99,13 +103,8 @@ def _backlog(rows: dict, connection: dict) -> bool | None:
     if not row or row["latest"] is None or parse_duration(connection.get("expiration"), 0.0) > 0:
         return None
 
-    try:
-        full = row["latest"] >= AT_CEILING * float(connection.get("object_threshold"))
-
-    except (TypeError, ValueError):
-        full = False
-
-    return full or (row["state"] or 0) >= 1 or row["trend"] == "rising"
+    return (row["key"] in signalled or bool(readings.full(row, connection)) or (row["state"] or 0) >= 1
+            or row["trend"] == "rising")
 
 
 def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) -> list | None:
@@ -186,9 +185,9 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
         rates = []
 
         for source in sources:
-            row = rows.get(("processor", source["name"], "flowfiles_out"))
-            peak = (row or {}).get("peak") or (row or {}).get("latest") or 0.0
-            rates.append(max(peak, _configured(source, nodes)))
+            row = rows.get(("processor", source["name"], "flowfiles_out")) or {}
+            measured = row.get("peak") if readings.held(inv, rows, source["name"]) else row.get("mean")
+            rates.append(max(measured or row.get("latest") or 0.0, _configured(source, nodes)))
 
         if all(rates):
             estimates.append(sum(rates))
@@ -235,6 +234,7 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
     before = {p["name"]: p for p in old["processors"]}
     after = {p["name"]: p for p in new["processors"]}
     nodes = max(1, int(nodes or 1))
+    signalled = {s.get("kpi") for s in incident.get("signals") or []}
     problems, considered, measured, backed = [], 0, 0, 0
 
     for name in names:
@@ -249,7 +249,7 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         if not more_tasks and not period < period_was:
             continue    # a step that lowers capacity is for something else (a runaway source, the CPU)
 
-        queues = [_backlog(rows, c) for c in _inbound(new, name)]
+        queues = [_backlog(rows, c, signalled) for c in _inbound(new, name)]
 
         if not queues:
             continue    # a source: nothing waits in front of it

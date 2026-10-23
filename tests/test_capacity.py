@@ -96,6 +96,30 @@ def test_a_measured_split_is_where_the_intake_starts(agent):
     assert problems(client, store, incident, [tasks("S24 Sessionize", 3)]) == []
 
 
+def test_a_burst_is_not_an_intake(agent):
+    # S04: 600 FlowFiles every 10 minutes, 1/s on average, with no back pressure on the way. The burst shows
+    # as up to 10/s, and between bursts the queue dips under its alert with FlowFiles still waiting.
+    world, client, store, incidents, _ = agent("p1-throughput")
+    poller = Poller(client, store, on_incident=lambda i: incidents.setdefault(i["scenario"], i))
+    poller.backfill("p1-throughput", fleet.pack("p1-throughput"))
+    found, shown = [], ""
+
+    for _ in range(20):
+        world.skip(60)
+        poller.poll_now()
+
+        if "S04" in incidents:
+            for steps in ([tasks("S04 Drain", 4)], [schedule("S04 Drain", "250 ms")]):
+                found += problems(client, store, incidents["S04"], steps)
+
+            plan = executor.plan(client, incidents["S04"], [tasks("S04 Drain", 4)], store)
+            inv = inventory(plan["_base_definition"], incidents["S04"]["process_group"])
+            shown += readings.render(readings.for_incident(incidents["S04"], store, client.now()), inv)
+
+    assert "S04" in incidents and found == []
+    assert "/s on average" in shown
+
+
 def test_quiet_without_a_measure(agent):
     _, client, store, incidents, _ = agent("p9-clickstream", "p12-warehouse")
 

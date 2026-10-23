@@ -15,6 +15,8 @@ counts are shown per second (config.COUNT_WINDOW_SECONDS). Back pressure
 throttles what a source sends, which hides the intake, so a source that
 sent more in the last PEAK_SECONDS shows that peak too, and so does a
 split (a fan-out), whose output is the intake of the stages after it.
+Where nothing holds the sender back, a peak far above the average is a
+burst (S04), so the average shows too.
 
 Only the KPIs the pack defines; NFH-65 makes the coverage uniform. Given
 the group's inventory, render() lists every connection in flow order,
@@ -53,6 +55,15 @@ def _trend(series: list) -> str:
     return "flat"
 
 
+def _mean(series: list) -> float | None:
+    """The time-weighted mean: each value stands for the gap before it, as a chart bucket does."""
+
+    spans = [(b[0] - a[0], b[1]) for a, b in zip(series, series[1:]) if b[0] > a[0]]
+    total = sum(gap for gap, _ in spans)
+
+    return sum(gap * v for gap, v in spans) / total if total else None
+
+
 def for_incident(incident: dict, store, now: float) -> list:
     """One row per KPI of the incident's scenario, in the pack's order."""
 
@@ -72,6 +83,7 @@ def for_incident(incident: dict, store, now: float) -> list:
         source = sends and kpi.get("component") in edges["in"]
         # A split's output is the intake of the stages after it, throttled the same way.
         feeds = source or sends and kpi.get("component") in edges["split"]
+        rates = _per_second(kpi, raw) if feeds else []
 
         rows.append({
             "key": kpi["key"], "kind": kpi.get("kind"), "component": kpi.get("component") or "",
@@ -82,7 +94,8 @@ def for_incident(incident: dict, store, now: float) -> list:
             "trend": _trend(recent) if recent else "",
             "per_minute": metrics.trend(shown),
             "source": source,
-            "peak": max(v for _, v in _per_second(kpi, raw)) if feeds and raw else None,
+            "peak": max(v for _, v in rates) if rates else None,
+            "mean": _mean(rates),
         })
 
     return rows
@@ -139,7 +152,38 @@ def _fill(row: dict, connection: dict | None) -> str:
     return f", back pressure at {shown(size)} ({100 * row['latest'] / size:.0f}% full)"
 
 
-def _line(row: dict, connection: dict | None = None) -> str:
+def full(row: dict | None, connection: dict) -> bool | None:
+    """Whether a queue is at or near its back-pressure limit; None without a reading or a limit."""
+
+    if not row or row["latest"] is None:
+        return None
+
+    try:
+        return row["latest"] >= metrics.NEAR * float(connection.get("object_threshold"))
+
+    except (TypeError, ValueError):
+        return None
+
+
+def held(inv: dict, rows: dict, name: str) -> bool:
+    """
+    Whether back pressure may be holding back what `name` sends: its way on
+    is at or near its limit, or not measured. Only then does its earlier peak stand
+    for what it would send; otherwise a peak is a burst, and the average is
+    what the stages after it have to keep up with. `rows` by (kind,
+    component, metric).
+    """
+
+    for connection in inv.get("connections") or []:
+        if connection["source"] == name and connection["destination"] != name \
+                and connection["destination"] not in (inv.get("dlqs") or ()):
+            if full(rows.get(("connection", connection["name"], "queued_count")), connection) is not False:
+                return True
+
+    return False
+
+
+def _line(row: dict, connection: dict | None = None, average: bool = False) -> str:
     where = {"connection": _connection(connection) if connection else f"connection {row['component']}",
              "system": "the deployment's nodes"}.get(
         row["kind"], row["component"] + (" (a source)" if row["source"] else ""))
@@ -152,6 +196,9 @@ def _line(row: dict, connection: dict | None = None) -> str:
 
     if row["peak"] is not None and row["peak"] > 1.1 * row["latest"]:
         text += f", up to {shown(row['peak'])} in the last {PEAK_SECONDS // 3600} h"
+
+    if average and row["mean"] is not None and row["mean"] < 0.5 * max(row["peak"] or 0, row["latest"]):
+        text += f", {shown(row['mean'])} on average"
 
     if row["above"] is not None:
         text += f" (alert above {shown(row['above'])})"
@@ -222,5 +269,8 @@ def render(rows: list, inv: dict | None = None) -> str:
 
     rest = [r for r in rows if r["kind"] != "connection"] + [r for found in measured.values() for r in found]
     rest.sort(key=lambda r: (r["kind"] == "system", depth.get(r["component"], len(depth))))
+    keyed = {(r["kind"], r["component"], r["metric"]): r for r in rows}
 
-    return "\n".join(lines + [_line(r) for r in rest])
+    # A burst's average, where nothing holds the sender back.
+    return "\n".join(lines + [_line(r, average=r["kind"] == "processor" and not held(inv, keyed, r["component"]))
+                              for r in rest])
