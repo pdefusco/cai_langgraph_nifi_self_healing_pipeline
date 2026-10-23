@@ -1,4 +1,8 @@
-"""A throughput fix too small for the intake goes back to the agent (actions/capacity.py, NFH-61)."""
+"""
+A throughput fix too small for the intake goes back to the agent
+(actions/capacity.py, NFH-61), and the same sums reach the prompt before it
+proposes (NFH-82).
+"""
 
 from flows import packs
 from nifi_healer import fleet
@@ -161,3 +165,75 @@ def test_a_reviewers_edit_is_never_sent_back(agent):
 
     assert state["plan"]["ok"] and review["plan"]["steps"][0]["value"] == 2
     assert any("below the intake" in w for w in review["plan"]["warnings"])
+
+
+def analysed(agent, *names) -> dict:
+    """{scenario: its analysis lines}, after two hours of history and a dozen minutes of polls, as the app sees it."""
+
+    world, client, store, incidents, _ = agent(*names)
+    poller = Poller(client, store, on_incident=lambda i: incidents.setdefault(i["scenario"], i))
+
+    for name in names:
+        poller.backfill(name, fleet.pack(name))
+
+    for _ in range(12):
+        world.skip(60)
+        poller.poll_now()
+
+    found = {}
+
+    for scenario, incident in incidents.items():
+        facts = client.flow_facts(incident["deployment_crn"], incident["deployed_flow_crn"])
+        definition = client.flow_definition(incident.get("expected_flow_version_crn") or facts["flow_version_crn"])
+        found[scenario] = capacity.analysis(inventory(definition, incident["process_group"]), incident, store,
+                                            client.now())
+
+    return found
+
+
+def test_the_analysis_sizes_the_bottleneck(agent):
+    found = analysed(agent, "p1-throughput", "p2-backpressure", "p9-clickstream", "p12-warehouse")
+
+    [s01] = found["S01"]
+    assert s01.startswith("- S01 Consumer: 1 task(s) every 1 sec, a ceiling of about 1/s; it runs at about 1/s; "
+                          "the intake is about 3/s. At its ceiling, the schedule is the limit: 4 task(s) or a run "
+                          "schedule of 302 ms or shorter keeps up with the intake with 10% headroom; to drain the ")
+    # The label is the least that keeps up; draining the queue in the first verify window takes more.
+    assert "queued within 20 min, a run schedule of " in s01
+
+    assert "Sessionize: 1 task(s) every 20 ms, a ceiling of about 50/s; it runs at about 50/s; the intake is about " \
+        "100/s. At its ceiling, the schedule is the limit: 3 task(s) or a run schedule of 9 ms or shorter" \
+        in "\n".join(found["S24"])
+    assert "S30 Label Parcel: 1 task(s) every 200 ms" in "\n".join(found["S30"])
+    assert "5 task(s) or a run schedule of 45 ms or shorter" in "\n".join(found["S30"])
+
+
+def test_the_analysis_says_when_tasks_are_not_the_fix(agent):
+    found = analysed(agent, "p2-backpressure", "p8-orders", "p11-payments")
+
+    # A runaway source: more tasks downstream never catch it.
+    assert "Its source S08 Runaway Source runs every 0 sec, as fast as back pressure lets it: no number of tasks " \
+        "keeps up, so the source is what to slow." in "\n".join(found["S08"])
+    # A writer that could keep up, behind a queue that holds seconds of the intake.
+    assert "s05-buffer back-pressures at 10 FlowFiles" in "\n".join(found["S05"])
+    assert "S22 Batch Orders" in "\n".join(found["S22"]) and "It sends nothing" in "\n".join(found["S22"])
+    assert "S28 Tokenize Lane 3" in "\n".join(found["S28"]) and "It is DISABLED" in "\n".join(found["S28"])
+    assert "held back, its way on (s28-lane-3-authorized) is at back pressure" in "\n".join(found["S28"])
+
+
+def test_the_analysis_is_in_the_prompt(agent):
+    _, _, store, incidents, install = agent("p12-warehouse")
+    model = install(ScriptedLLM(proposal([schedule("S30 Pick Items", "0 sec")])))
+
+    graph.start(incidents["S30"]["id"])
+
+    prompt = model.calls[0][1].content
+    section = prompt.split("Capacity analysis", 1)[1].split("Deployment:", 1)[0]
+    assert "- S30 Pick Items: 1 task(s) every 125 ms" in section
+
+
+def test_no_analysis_without_an_inventory(agent):
+    _, client, store, incidents, _ = agent("p12-warehouse")
+
+    assert capacity.analysis(None, incidents["S30"], store, client.now()) == []
+    assert capacity.analysis({"error": "no definition"}, incidents["S30"], store, client.now()) == []

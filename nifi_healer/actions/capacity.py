@@ -31,8 +31,17 @@ Every estimate leans towards passing: when the capacity or the intake
 isn't known, or the step lowers capacity, nothing is said. The problems go
 back to the agent as validation problems while it has attempts left, and
 show as warnings after that (agent/nodes.py).
+
+    lines = analysis(inv, incident, store, now, nodes)
+
+The same sums before the agent proposes (NFH-82), for the prompt: each
+stage with a backlog in front, its ceiling, rate and intake, which limit
+it is at, and the smallest change check() would pass.
 """
 
+import math
+
+import config
 from nifi_healer.actions import catalog
 from nifi_healer.flow.inventory import inventory
 from nifi_healer.kpi import readings
@@ -46,6 +55,9 @@ HEADROOM = 1.1
 
 # A processor whose rate is this close to its ceiling is waiting between runs.
 AT_CEILING = 0.9
+
+# analysis() also sizes a fix to drain the backlog by the end of the first verify window.
+DRAIN_SECONDS = config.VERIFY_SETTLE_SECONDS + config.VERIFY_WINDOW_SECONDS
 
 RATES = ("flowfiles_in", "flowfiles_out")
 
@@ -275,3 +287,171 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
                         "input queue is full and whose output queue is not.")
 
     return problems
+
+
+def _rows(incident: dict, store, now: float) -> dict:
+    return {(r["kind"], r["component"], r["metric"]): r for r in readings.for_incident(incident, store, now)}
+
+
+def _clears(processor: dict, rows: dict, need: float, nodes: int, **change) -> bool:
+    capacity, _ = _capacity(processor, dict(processor, **change), rows, True, nodes)
+
+    return capacity is not None and capacity >= need
+
+
+def _options(processor: dict, rows: dict, need: float, nodes: int, at_ceiling: bool) -> list:
+    """The fewest tasks, and at the ceiling the longest schedule, that reach `need` per second."""
+
+    tasks = _int(processor.get("concurrent_tasks"))
+    enough = next((n for n in range(tasks + 1, catalog.MAX_TASKS + 1)
+                   if _clears(processor, rows, need, nodes, concurrent_tasks=n)), None)
+    found = [f"{enough} task(s)"] if enough else []
+
+    if at_ceiling:
+        # tasks / schedule × per run × nodes ≥ need, to the millisecond below.
+        ceiling = _ceiling(processor, nodes)
+        rate = _rate(rows, processor["name"]) or 0.0
+        per_run = max(1.0, rate / ceiling) if ceiling else 1.0
+        ms = math.floor(1000 * tasks * per_run * nodes / need)
+
+        if ms >= 1 and _clears(processor, rows, need, nodes, run_schedule=f"{ms} ms"):
+            found.append(f"a run schedule of {ms} ms or shorter")
+
+    return found
+
+
+def _sized(processor: dict, inv: dict, rows: dict, intake: float, nodes: int, at_ceiling: bool) -> str:
+    """
+    What check() would pass, the least that keeps up with the intake, and
+    what also drains the queue in front by the end of the first verify
+    window, which is what the outcome is judged on.
+    """
+
+    least = _options(processor, rows, HEADROOM * intake, nodes, at_ceiling)
+    text = (" or ".join(least) if least else "nothing the catalog allows") + \
+        f" keeps up with the intake with {100 * (HEADROOM - 1):.0f}% headroom"
+    queued = sum((rows.get(("connection", c["name"], "queued_count")) or {}).get("latest") or 0
+                 for c in _inbound(inv, processor["name"]))
+
+    if least and queued:
+        need = max(HEADROOM * intake, intake + queued / DRAIN_SECONDS)
+        drains = _options(processor, rows, need, nodes, at_ceiling)
+
+        if drains != least:
+            text += f"; to drain the {_number(queued)} queued within {DRAIN_SECONDS // 60} min, " + (
+                " or ".join(drains) if drains else "nothing the catalog allows is enough")
+
+    return text
+
+
+def _runaway(inv: dict, rows: dict, name: str) -> dict | None:
+    """A GenerateFlowFile feeding `name` on a 0 sec schedule: it sends as fast as back pressure lets it."""
+
+    for source in _sources(inv, rows, name) or []:
+        if source["kind"] == "GenerateFlowFile" and source.get("scheduling") != "CRON_DRIVEN" \
+                and _period(source) <= 0 and not _inbound(inv, source["name"]):
+            return source
+
+    return None
+
+
+def _small(inv: dict, name: str, intake: float) -> str:
+    """Its input queues that back-pressure at under a minute of the intake: a burst fills them."""
+
+    found = []
+
+    for connection in _inbound(inv, name):
+        try:
+            limit = float(connection.get("object_threshold"))
+
+        except (TypeError, ValueError):
+            continue
+
+        if 0 < limit < 60 * intake:
+            found.append(f" {connection['name']} back-pressures at {limit:.0f} FlowFiles, about "
+                         f"{_number(limit / intake)} s of the intake.")
+
+    return "".join(found)
+
+
+def _stage(processor: dict, inv: dict, rows: dict, nodes: int) -> str:
+    name, tasks = processor["name"], _int(processor.get("concurrent_tasks"))
+    ceiling, rate = _ceiling(processor, nodes), _rate(rows, name)
+    intake = _intake(inv, rows, name, nodes)
+    text = f"- {name}: {tasks} task(s) every {processor.get('run_schedule')}, " + (
+        f"a ceiling of about {_number(ceiling)}/s" if ceiling else "no ceiling (0 sec)")
+    text += f"; it runs at about {_number(rate)}/s" if rate is not None else "; its rate is not measured"
+    text += f"; the intake is about {_number(intake)}/s" if intake else "; the intake is not measured"
+    runaway = _runaway(inv, rows, name)
+
+    if processor.get("state") in ("DISABLED", "STOPPED"):
+        return text + f". It is {processor['state']}: it takes nothing in."
+
+    if rate == 0:
+        return text + ". It sends nothing: a stall, a failure or a misconfiguration, not capacity."
+
+    if runaway:
+        return text + (f". Its source {runaway['name']} runs every {runaway.get('run_schedule')}, as fast as back "
+                       "pressure lets it: no number of tasks keeps up, so the source is what to slow.")
+
+    if processor["kind"] == "ControlRate":
+        return text + ". A ControlRate passes what its rate properties allow, whatever its tasks."
+
+    if not intake or rate is None and ceiling is None:
+        return text + "."
+
+    if _clears(processor, rows, HEADROOM * intake, nodes):
+        return text + ". It already has the capacity for the intake: the limit is something else." \
+            + _small(inv, name, intake)
+
+    if rate is None:
+        return text + f". If the schedule is the limit, {_sized(processor, inv, rows, intake, nodes, True)}."
+
+    if ceiling is not None and rate >= AT_CEILING * ceiling:
+        return text + f". At its ceiling, the schedule is the limit: {_sized(processor, inv, rows, intake, nodes, True)}."
+
+    if ceiling is not None and ceiling >= HEADROOM * intake:
+        return text + (f". Its ceiling already clears the intake, so it waits for FlowFiles or works slowly on each; "
+                       f"if slowly, {_sized(processor, inv, rows, intake, nodes, False)}." + _small(inv, name, intake))
+
+    return text + (f". Below its ceiling, the work per FlowFile is the limit (about {_number(rate / tasks)}/s a task): "
+                   f"{_sized(processor, inv, rows, intake, nodes, False)}; a shorter schedule does nothing.")
+
+
+def analysis(inv: dict | None, incident: dict, store, now: float, nodes: int = 1) -> list:
+    """
+    One line per stage with a backlog in front of it, in flow order: one
+    whose own way on is at back pressure is held by the stage after it;
+    any other gets the sums. Then the deployment's CPU, when it is high.
+    [] without an inventory or a backlog.
+    """
+
+    if not inv or inv.get("error"):
+        return []
+
+    rows = _rows(incident, store, now)
+    signalled = {s.get("kpi") for s in incident.get("signals") or []}
+    nodes = max(1, int(nodes or 1))
+    depth, _ = readings.flow_order(inv)
+    lines = []
+
+    for processor in sorted(inv["processors"], key=lambda p: depth.get(p["name"], len(depth))):
+        name = processor["name"]
+        inbound = _inbound(inv, name)
+
+        if processor.get("scheduling") == "CRON_DRIVEN" or not any(_backlog(rows, c, signalled) for c in inbound):
+            continue
+
+        held = [c["name"] for c in inv["connections"] if c["source"] == name and not c["self_loop"]
+                and c["destination"] not in inv["dlqs"]
+                and readings.full(rows.get(("connection", c["name"], "queued_count")), c)]
+
+        lines.append(f"- {name}: held back, its way on ({', '.join(held)}) is at back pressure; look at the stage "
+                     "after it." if held else _stage(processor, inv, rows, nodes))
+
+    cpu = next((r for r in rows.values() if r["kind"] == "system" and r["metric"] == "cpu"), None)
+
+    if lines and cpu and cpu["latest"] is not None and (cpu["state"] or 0) >= 1:
+        lines.append(f"- The deployment's CPU is at {cpu['latest']:.0f}%: more tasks will not help, it is sizing.")
+
+    return lines

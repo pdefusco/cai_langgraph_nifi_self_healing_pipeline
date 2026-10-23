@@ -27,7 +27,8 @@ Rules:
 - A property whose value is a parameter reference (#{{name}}) is changed with UPDATE_PARAMETER, never by editing
   the property. Sensitive parameters (shown as ********) cannot be changed.
 - Restarting the deployment is not available and does not drain a backlog.
-- Size a throughput fix from the current readings:
+- Size a throughput fix from the current readings; the capacity analysis has done these sums for each stage with a
+  backlog, so start from it and check it against the readings:
   1. Find the bottleneck: the stage whose input queue is full and whose output queue is not. Queues before it are
      full only because back pressure stops the stages that feed them, even when they are the ones that alerted.
   2. Find the intake: what the bottleneck takes in per second, plus how fast its input queue grows (per minute / 60).
@@ -77,6 +78,10 @@ Signals:
 Current readings (the last 15 minutes; rates per second). Every queue of the group, in flow order; one that is not
 measured may still be full. Then every rate watched:
 {readings}
+
+Capacity analysis (each stage with a backlog in front, worked out from the readings and the inventory by the same
+sums validation checks a throughput fix with):
+{analysis}
 
 Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
 {context_error}
@@ -265,6 +270,7 @@ def user_prompt(incident: dict, context: dict, playbooks: list, feedback: list |
         **_evidence(incident, context),
         flow_version=context.get("flow_version") or "?", state=context.get("state") or "?",
         context_error=(f"Note: {context['error']}\n" if context.get("error") else ""),
+        analysis=context.get("analysis") or "- no stage has a measured backlog in front of it",
         playbooks="\n\n".join(_playbook_block(h) for h in playbooks) or "(none found)",
         memory="\n\n".join(h["text"].strip() for h in memory or []) or "(none)",
         feedback=FEEDBACK.format(previous=_previous(previous), problems="\n".join(f"- {p}" for p in feedback))

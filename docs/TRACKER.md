@@ -103,7 +103,8 @@ them.
 | NFH-78 | Fix | The capacity check reads the intake past a measured split, and doesn't call a fix that matches the intake short of it | Done | 375a12d |
 | NFH-79 | Fix | S03 and S24 are labelled with the smallest fix that clears them, 3 tasks, not 4 | Done | 373a739 |
 | NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
-| NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | |
+| NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
+| NFH-82 | Feature | The prompt gets the capacity sums for each stage with a backlog, before the agent proposes | In progress | |
 
 ## Open tickets
 
@@ -220,6 +221,29 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+### NFH-82 · Feature · The capacity sums in the prompt
+The agent sizes a throughput fix by doing the prompt's sums itself, from the readings and the inventory, and the
+capacity check (NFH-61) then sends a short one back, costing an attempt. Do the sums first, with the check's own code,
+and give them to the agent as a "Capacity analysis" section: for each stage with a backlog in front, in flow order,
+its ceiling, rate and intake, which limit it is at, and the least change that keeps up. No LLM call.
+- 2026-10-22: built. A stage whose own way on is at back pressure reads "held back; look at the stage after it". Any
+  other gets its ceiling, rate and intake, then the first of: disabled or stopped; sends nothing (a stall, not
+  capacity); fed by a GenerateFlowFile at 0 sec (slow the source; no number of tasks keeps up); a ControlRate; already
+  has the capacity (and an input queue that back-pressures at under a minute of the intake, S05); at its ceiling or
+  not measured (tasks or a run schedule); below a ceiling that clears the intake (waiting, or slow per FlowFile);
+  below its ceiling (tasks only). Each size is the least that keeps up with 10% headroom and, when FlowFiles are
+  queued, what also drains them by the end of the first verify window (20 min), which is what the outcome is judged
+  on. Then the deployment's CPU when it is high. The oracle replay on all 20 scenarios is unchanged (S30 and S32
+  NO_CHANGE as before). To keep or drop on a CAI before/after replay.
+- 2026-10-22: the analysis disagrees with four labels, left as they are for the user: S02's 1 sec where about 3.6 s
+  keeps up (1.2 s drains in 20 min); S04's 4 tasks where 2 keep up and drain; S07's acceptable 100 ms (10/s) and 4
+  tasks (4/s), both short of 10.1/s in, where 86 ms keeps up (the label, 0 sec, clears it); and S30's Label Parcel
+  needing 5 tasks.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-81 · Feature · `--compare` says what luck alone could explain
 A before/after replay has one or two cases a scenario, so a few lucky rounds move the totals; and the "all" row
 counted scenarios only one side had. To tell a change that helps from noise, the comparison needs the scenarios that
@@ -229,10 +253,7 @@ did better and worse, and how big a change luck alone makes.
   the pooled rate, and the band 90% of 2000 shuffles fall in, each dealing a scenario's cases to before and after at
   random, as if one agent ran both times; a change past it reads "beyond luck". Ten scenarios each going from wrong
   to right is beyond luck (±60 pts); two are not. The rule to keep or drop a change is agreed before each run.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in d2c69fe.
 
 ### NFH-80 · Fix · A burst landing in a queue reads as intake
 S04's source sends 600 FlowFiles every 10 minutes, 1/s on average. In the oracle replay for NFH-79 the incident opened
