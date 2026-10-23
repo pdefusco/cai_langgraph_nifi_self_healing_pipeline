@@ -102,7 +102,8 @@ them.
 | NFH-77 | Fix | The replay's clock runs on while the LLM thinks, so the agent reads empty KPIs on CAI | Done | 02a1431 |
 | NFH-78 | Fix | The capacity check reads the intake past a measured split, and doesn't call a fix that matches the intake short of it | Done | 375a12d |
 | NFH-79 | Fix | S03 and S24 are labelled with the smallest fix that clears them, 3 tasks, not 4 | Done | 373a739 |
-| NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | |
+| NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
+| NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | |
 
 ## Open tickets
 
@@ -219,6 +220,20 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+### NFH-81 · Feature · `--compare` says what luck alone could explain
+A before/after replay has one or two cases a scenario, so a few lucky rounds move the totals; and the "all" row
+counted scenarios only one side had. To tell a change that helps from noise, the comparison needs the scenarios that
+did better and worse, and how big a change luck alone makes.
+- 2026-10-22: built. "all" counts the scenarios both records have, and a line names the ones only one has. For the
+  right value, valid on the first try and worked, a line gives the scenarios that did better and worse, the change in
+  the pooled rate, and the band 90% of 2000 shuffles fall in, each dealing a scenario's cases to before and after at
+  random, as if one agent ran both times; a change past it reads "beyond luck". Ten scenarios each going from wrong
+  to right is beyond luck (±60 pts); two are not. The rule to keep or drop a change is agreed before each run.
+
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-80 · Fix · A burst landing in a queue reads as intake
 S04's source sends 600 FlowFiles every 10 minutes, 1/s on average. In the oracle replay for NFH-79 the incident opened
 on the KPI detector while a burst was still landing, and the capacity check took the queue's growth then as intake
@@ -233,10 +248,7 @@ for a source that sends in bursts.
   and the readings show it beside the peak ("…, 1/s on average", where the peak is far above it). A queue whose KPI opened the incident counts as a backlog. In the
   oracle replay on all 20 scenarios S04's 4 tasks are valid on the first try; S30 and S32 read NO_CHANGE as before
   (two faults, one fix applied). Left as is: the check only asks for keeping pace on average, so 2 tasks on S04 pass.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-22: done in 6032349.
 
 ### NFH-79 · Fix · S03 and S24 labelled at the smallest fix that clears them
 S03 and S24 were labelled 4 tasks, but 3 clears both with room to spare (S03: 3/s against about 2/s; S24: 150/s

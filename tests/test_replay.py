@@ -124,8 +124,8 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     llm.set_chat_model(OutOfBoundsLLM())
     replay.run(["S01"], directory=str(tmp_path / "after"))
 
-    header, s01, s02, total = replay.compare(replay.load(str(tmp_path / "before")),
-                                             replay.load(str(tmp_path / "after"))).splitlines()
+    header, s01, s02, total, shared, value, first, worked = replay.compare(
+        replay.load(str(tmp_path / "before")), replay.load(str(tmp_path / "after"))).splitlines()
 
     def cells(line):
         return line[32:].split()
@@ -134,7 +134,29 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     assert s01.startswith("S01 Slow Consumer") and cells(s01)[:7] == [
         "1→1", "100%→0%", "100%→0%", "100%→0%", "100%→0%", "1.0→3.0", "100%→-"]
     assert cells(s02)[:2] == ["1→-", "100%→-"] and cells(s02)[-1].endswith("→-")     # S02 not in the after run
-    assert total.startswith("all") and cells(total)[:2] == ["2→1", "100%→0%"]
+    assert total.startswith("all") and cells(total)[:2] == ["1→1", "100%→0%"]     # S01 alone: in both
+    assert shared == "all: the 1 scenario(s) in both; only before: S02"
+    # One case a side: a shuffle swaps them half the time, so luck alone makes the whole change.
+    assert value == ("value     0 better, 1 worse (S01), 0 same; 100%→0% over 1 scenario(s), -100 pts, "
+                     "luck alone ±100 pts: within luck")
+    assert first.startswith("valid 1st 0 better, 1 worse (S01)") and worked == "worked    nothing to compare"
+
+
+def case(scenario, right):
+    return {"scenario": scenario, "proposed": True, "match": sc.EXPECTED if right else sc.OTHER,
+            "valid_first": True, "result": sc.WORKED if right else sc.NO_HELP}
+
+
+def test_luck_is_the_change_a_shuffle_makes():
+    counted = dict(replay.TALLIED)["value"]
+    ten = {f"S{n:02}": ([case(f"S{n:02}", False)], [case(f"S{n:02}", True)]) for n in range(1, 11)}
+    two = {s: pair for s, pair in list(ten.items())[:2]}
+    same = {"S01": ([case("S01", True)] * 3, [case("S01", True)] * 3)}
+
+    assert replay.tally("value", counted, ten).endswith("+100 pts, luck alone ±60 pts: beyond luck")
+    assert replay.tally("value", counted, two).endswith("+100 pts, luck alone ±100 pts: within luck")
+    assert replay.tally("value", counted, same).endswith("0 better, 0 worse, 1 same; 100%→100% over 1 scenario(s), "
+                                                         "+0 pts, luck alone ±0 pts: within luck")
 
 
 class TooManyTasksLLM(OutOfBoundsLLM):

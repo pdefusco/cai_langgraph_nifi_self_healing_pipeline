@@ -71,6 +71,7 @@ a live tenant would take a day.
 import argparse
 import json
 import os
+import random
 import re
 import sqlite3
 import statistics
@@ -98,6 +99,8 @@ DETECT_STEP = 120
 RECORD = "record.json"
 LLM_TRIES = 3                   # diagnoses of an incident the LLM didn't answer, in a round
 LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
+LUCK_DRAWS = 2000               # shuffles behind compare()'s luck band
+LUCK_SHARE = 0.9                # of the shuffles the band holds
 
 # Every config setting isolate() changes.
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
@@ -478,13 +481,82 @@ COMPARED = (
 )
 
 
+# What tally() counts, per case: True, False, or None where it doesn't count.
+TALLIED = (
+    ("value", lambda c: c["match"] in sc.RIGHT_VALUE if c["proposed"] and c["match"] != sc.UNKNOWN else None),
+    ("valid 1st", lambda c: bool(c["valid_first"]) if c["proposed"] else None),
+    ("worked", lambda c: c["result"] == sc.WORKED if c["result"] in (sc.WORKED, sc.NO_HELP, sc.WORSE) else None),
+)
+
+
+def _counted(group: list, counted) -> list:
+    return [v for v in map(counted, group) if v is not None]
+
+
+def _change(pairs) -> float:
+    """The after rate less the before rate, every case of every scenario pooled."""
+
+    before, after = [v for b, _ in pairs for v in b], [v for _, a in pairs for v in a]
+
+    return sum(after) / len(after) - sum(before) / len(before)
+
+
+def tally(name: str, counted, groups: dict) -> str:
+    """
+    One measure over {scenario: (before cases, after cases)}: the scenarios
+    that did better, worse or the same, the change in the pooled rate, and
+    how big a change luck alone makes. That is the band LUCK_SHARE of
+    LUCK_DRAWS shuffles fall in, each shuffle dealing a scenario's cases
+    out to before and after at random, as if one agent had run both times.
+    """
+
+    scored = {s: (_counted(b, counted), _counted(a, counted)) for s, (b, a) in groups.items()}
+    scored = {s: pair for s, pair in scored.items() if all(pair)}
+
+    if not scored:
+        return f"{name:<9} nothing to compare"
+
+    def rate(values):
+        return sum(values) / len(values)
+
+    better = [s for s, (b, a) in scored.items() if rate(a) > rate(b)]
+    worse = [s for s, (b, a) in scored.items() if rate(a) < rate(b)]
+    same = len(scored) - len(better) - len(worse)
+    seen = _change(scored.values())
+    rng = random.Random(0)
+    shuffles = []
+
+    for _ in range(LUCK_DRAWS):
+        dealt = []
+
+        for b, a in scored.values():
+            pool = rng.sample(b + a, len(b) + len(a))
+            dealt.append((pool[:len(b)], pool[len(b):]))
+
+        shuffles.append(abs(_change(dealt)))
+
+    luck = sorted(shuffles)[int(LUCK_SHARE * LUCK_DRAWS) - 1]
+    before = rate([v for b, _ in scored.values() for v in b])
+
+    def listed(found):
+        return f" ({', '.join(found)})" if found else ""
+
+    return (f"{name:<9} {len(better)} better{listed(better)}, {len(worse)} worse{listed(worse)}, {same} same; "
+            f"{_pct(before)}→{_pct(before + seen)} over {len(scored)} scenario(s), {seen * 100:+.0f} pts, "
+            f"luck alone ±{luck * 100:.0f} pts: " + ("beyond luck" if abs(seen) > luck else "within luck"))
+
+
 def compare(before: dict, after: dict) -> str:
     """
     Two replay records side by side, per scenario and in all, as
     before→after, both graded by the Scorecard as it is now: the design
     fix, the right value (design or acceptable), the right lever (also a
     value too small), valid on the first try, proposals per case, fixes
-    that worked and the median outcome lift.
+    that worked and the median outcome lift. "all" counts the scenarios
+    both records have. Then, for the right value, valid on the first try
+    and worked, the scenarios that did better and worse, and whether the
+    change is beyond what luck alone makes (tally()). Agree before a run
+    which of these decides whether a change stays.
     """
 
     sides = [cases(snapshot or {}) for snapshot in (before, after)]
@@ -501,7 +573,14 @@ def compare(before: dict, after: dict) -> str:
     for scenario in ids:
         rows.append(row(titles[scenario], [[c for c in side if c["scenario"] == scenario] for side in sides]))
 
-    rows.append(row("all", sides))
+    shared = [s for s in ids if all(any(c["scenario"] == s for c in side) for side in sides)]
+    rows.append(row("all", [[c for c in side if c["scenario"] in shared] for side in sides]))
+    alone = [f"only {name}: {', '.join(s for s in ids if s not in shared and any(c['scenario'] == s for c in side))}"
+             for name, side in zip(("before", "after"), sides)
+             if any(c["scenario"] not in shared for c in side)]
+    rows.append(f"all: the {len(shared)} scenario(s) in both" + "".join(f"; {a}" for a in alone))
+    groups = {s: tuple([c for c in side if c["scenario"] == s] for side in sides) for s in shared}
+    rows += [tally(name, counted, groups) for name, counted in TALLIED]
 
     return "\n".join(rows)
 
