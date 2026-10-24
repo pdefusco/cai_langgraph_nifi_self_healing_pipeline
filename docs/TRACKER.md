@@ -105,7 +105,7 @@ them.
 | NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
 | NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
 | NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | Dropped | 55526fb, 9848eee, 61e8bde |
-| NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70 |
+| NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70, fab34b9 |
 
 ## Open tickets
 
@@ -222,6 +222,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-83 · Fix · The capacity check asks a fix to drain the backlog, and reads the intake behind a held-back fan-out
 NFH-82's re-run showed the fixes that fail as keeping up but not draining: S07's 90 ms clears 10/s in by 1/s, so its
 10,000 queued take hours, and the outcome is judged at 20 minutes. And the intake behind a fan-out at back pressure is
@@ -250,10 +254,7 @@ read from its throttled output (S07 Fan Out, 1.6–1.8/s), not what it would sen
 - 2026-10-23: kept, by the user's decision. The keep or drop rule gains a line: a change to the capacity check itself
   is judged on worked and right value, not on valid on the first try, which falls by design whenever the check sends
   back fixes that wouldn't work.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-10-23: done in 0eeab70 and fab34b9.
 
 ### NFH-82 · Feature · The capacity sums in the prompt
 The agent sizes a throughput fix by doing the prompt's sums itself, from the readings and the inventory, and the
