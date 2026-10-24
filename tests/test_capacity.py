@@ -120,11 +120,13 @@ def test_a_fix_must_clear_what_waits_upstream(agent):
     incident = incidents["S07"]
     Poller(client, store).backfill("p2-backpressure", fleet.pack("p2-backpressure"))
 
-    assert problems(client, store, incident, [schedule("S07 Sink", "90 ms")])
-    [short] = problems(client, store, incident, [schedule("S07 Sink", "50 ms")])
-    assert short.startswith("S07 Sink: 1 task(s) every 50 ms is about 20/s against an intake of about 10/s, but "
-                            "about ") and "FlowFiles wait upstream of its full input queue" in short
-    assert "To clear them within 15 min it needs about" in short
+    # Short of the intake or not, the one message names the rate that also clears the backlog.
+    for value in ("90 ms", "50 ms"):
+        [found] = problems(client, store, incident, [schedule("S07 Sink", value)])
+        assert found.startswith(f"S07 Sink: 1 task(s) every {value} is about ") \
+            and " the intake of about 10/s. About " in found
+        assert "FlowFiles also wait upstream of its full input queue" in found
+        assert "To clear them within 15 min it needs about" in found
     assert problems(client, store, incident, [schedule("S07 Sink", "0 sec")]) == []
 
 

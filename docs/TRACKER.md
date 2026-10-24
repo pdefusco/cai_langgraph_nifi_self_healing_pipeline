@@ -105,7 +105,7 @@ them.
 | NFH-80 | Fix | The capacity check reads a burst landing in a queue as intake (S04) | Done | 6032349 |
 | NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
 | NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | Dropped | 55526fb, 9848eee, 61e8bde |
-| NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | In progress | |
+| NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70 |
 
 ## Open tickets
 
@@ -236,6 +236,20 @@ read from its throttled output (S07 Fan Out, 1.6–1.8/s), not what it would sen
   though it showed at 15 min; 0 sec passes. S07's acceptable 100 ms and 4 tasks are sent back now (left for the
   user). The oracle replay on all 20 scenarios is unchanged: valid on the first try 100%, worked 90%. To keep or drop
   on a CAI before/after replay.
+- 2026-10-23: CAI replay, replay-82-before → replay-83-after, 14 scenarios, `--compare`: every measure within luck.
+  S07 worked 67% → 100%, right value 67% → 100%, valid on the first try 100% → 33%. Then S07 alone, 8 trials
+  (replay-83-s07-before → after): worked 62% → 88%, right value 88% → 100%, valid on the first try 100% → 62%. Both
+  runs pooled, 11 cases a side: worked 7 → 10 (p ≈ 0.31), right value 9 → 11 (p ≈ 0.48), valid on the first try
+  11 → 6 (p ≈ 0.035, beyond luck downward). Read with `--show`, every fix sent back was one that doesn't work: 50 ms
+  for the backlog, 100 ms and 90 ms for headroom. None was a working fix refused. But round 8 was sent back twice at
+  90 ms for headroom, then tried 50 ms, short of the backlog, which on the last attempt went to review as a warning
+  and didn't help.
+- 2026-10-23: one rate in the message. When FlowFiles wait behind the fan-out, the problem names the larger of the
+  headroom rate and the rate that clears them within the verify window, so a retry isn't sent back again for the
+  other reason. Suite and oracle replay unchanged.
+- 2026-10-23: kept, by the user's decision. The keep or drop rule gains a line: a change to the capacity check itself
+  is judged on worked and right value, not on valid on the first try, which falls by design whenever the check sends
+  back fixes that wouldn't work.
 
 ## Closed tickets
 
@@ -291,6 +305,8 @@ did better and worse, and how big a change luck alone makes.
   random, as if one agent ran both times; a change past it reads "beyond luck". Ten scenarios each going from wrong
   to right is beyond luck (±60 pts); two are not. The rule to keep or drop a change is agreed before each run.
 - 2026-10-22: done in d2c69fe.
+- 2026-10-23: the rule gains a line, the user's decision on NFH-83: a change to the capacity check itself is judged on
+  worked and right value, not on valid on the first try.
 
 ### NFH-80 · Fix · A burst landing in a queue reads as intake
 S04's source sends 600 FlowFiles every 10 minutes, 1/s on average. In the oracle replay for NFH-79 the incident opened

@@ -336,17 +336,22 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         if capacity is None or not intake:
             continue
 
-        if capacity < HEADROOM * intake:
-            short = "below" if capacity < intake else f"within {100 * (HEADROOM - 1):.0f}% of"
-            problems.append(f"{name}: {how} is about {_number(capacity)}/s, {short} the intake of about "
-                            f"{_number(intake)}/s. Size it so the new capacity exceeds the intake with room to "
-                            f"drain the backlog.")
+        # One rate to aim for, so a retry isn't sent back again for the other reason (S07, round 8).
+        needed = max(HEADROOM * intake, intake + behind / config.VERIFY_WINDOW_SECONDS)
 
-        elif behind and capacity < intake + behind / config.VERIFY_WINDOW_SECONDS:
-            needed = intake + behind / config.VERIFY_WINDOW_SECONDS
-            problems.append(f"{name}: {how} is about {_number(capacity)}/s against an intake of about "
-                            f"{_number(intake)}/s, but about {_number(behind)} FlowFiles wait upstream of its full "
-                            f"input queue, which stays at its limit until they are through. To clear them within "
+        if capacity >= needed:
+            continue
+
+        short = "below" if capacity < intake else f"within {100 * (HEADROOM - 1):.0f}% of" \
+            if capacity < HEADROOM * intake else "above"
+        found = f"{name}: {how} is about {_number(capacity)}/s, {short} the intake of about {_number(intake)}/s."
+
+        if not behind:
+            problems.append(f"{found} Size it so the new capacity exceeds the intake with room to drain the backlog.")
+
+        else:
+            problems.append(f"{found} About {_number(behind)} FlowFiles also wait upstream of its full input queue, "
+                            f"which stays at its limit until they are through. To clear them within "
                             f"{config.VERIFY_WINDOW_SECONDS // 60} min it needs about {_number(needed)}/s.")
 
     if measured and measured == considered and not backed:
