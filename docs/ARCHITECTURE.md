@@ -120,7 +120,7 @@ graph TD;
 | propose_rollback | Proposes undoing the one action a rollback incident is for | store | no |
 | gather_context | The deployed flow's inventory of the incident's process group, its parameters, sizing and version, and the current reading of every KPI on the group (kpi/readings.py) | CDF: flow facts, flow definition, flow configuration, deployment configuration; the store's KPI samples | no |
 | retrieve_playbooks | Playbook sections for the signals and the parameters used, the most similar past cases, and the fixes' track records (for the reviewer only) | Chroma, store | embeddings |
-| diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. Ends the run if the LLM is unavailable or doesn't answer, leaving the incident NEW for a later try | prompt | yes |
+| diagnose_and_propose | Asks for a diagnosis and a proposal, with one repair turn on an unusable reply. With `SELFHEAL_SAMPLES` above 1 (off by default), draws that many at once on the first attempt, checks each as validate_proposal would, and keeps the valid fix most of them agree on, by what it changes and then by its values. Ends the run if the LLM is unavailable or doesn't answer, leaving the incident NEW for a later try | prompt | yes |
 | validate_proposal | Checks the proposal against the catalog, its bounds and the flow, and builds the diff and commands. Checks a tasks or run-schedule change against the measured intake. Marks the incident's older proposals SUPERSEDED | CDF flow definition, executor | no |
 | critique_proposal | With `SELFHEAL_CRITIC` (off by default), reads a valid fix of the agent's against the same signals, readings and inventory, and objects where they contradict it. An objection counts only with a line it quotes from them; the rest are kept, as dropped. No reply is a warning | prompt | yes |
 | human_review | Pauses for a decision: approve, edit, reject or rediagnose. An invalid decision asks again | the reviewer | no |
@@ -149,8 +149,8 @@ record; the state carries only what the next node needs.
 | incident_id, incident | start, gather_context | The incident row, with its signals |
 | context | gather_context | Inventory text, parameters, sizing, flow version, a read error |
 | playbooks, memory, priors | retrieve_playbooks | Retrieved sections, past cases, track records |
-| proposal, attempts, agent_version, source | diagnose_and_propose, human_review | The reply, how many tries, prompt and model version, agent or review |
-| plan, proposal_id, feedback | validate_proposal, critique_proposal | The validation report (with the critique, when read), its store row, the problems for a retry |
+| proposal, attempts, agent_version, source, vote | diagnose_and_propose, human_review | The reply, how many tries, prompt and model version, agent or review, how the drawn proposals agreed |
+| plan, proposal_id, feedback | validate_proposal, critique_proposal | The validation report (with the vote, when several were drawn, and the critique, when read), its store row, the problems for a retry |
 | review, review_error | human_review | The decision, or why it was refused |
 | result | apply_remediation | The action's status and flow versions |
 | error | diagnose_and_propose | Why the run stopped |
@@ -234,3 +234,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-22 | NFH-76 | critique_proposal, after validate_proposal behind `SELFHEAL_CRITIC`: a second LLM reading of a valid fix; a quoted objection is a retry, or a warning on the last attempt |
 | 2026-10-22 | NFH-82 | gather_context notes, for the prompt, the backlogged stages more capacity would not help (disabled, held back, sending nothing, a runaway source, a ControlRate) and high CPU; the sizes it first gave were dropped on 2026-10-23 |
 | 2026-10-23 | NFH-82 | gather_context's notes removed: measured, not kept; the prompt is as before NFH-82 |
+| 2026-10-26 | NFH-86 | diagnose_and_propose, behind `SELFHEAL_SAMPLES`: several first proposals drawn at once, the valid fix most agree on kept; with none valid the first is sent back as before. The vote is on the validation report |

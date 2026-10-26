@@ -311,6 +311,15 @@ PRIORS_TOP_K = _int("SELFHEAL_PRIORS_TOP_K", 5)
 # Off until the replay shows it helps (eval/replay.py --critic).
 CRITIC = _bool("SELFHEAL_CRITIC", False)
 
+# Proposals drawn at once on the first attempt (agent/nodes.diagnose_and_propose):
+# of those the validators and the capacity check pass, the fix most of
+# them agree on goes on, and with none valid the first is sent back as
+# today. The endpoint answers one prompt differently from call to call
+# even at temperature 0, so one draw is a sample of one. SAMPLES times
+# the LLM calls on the first attempt. 1 (off) until the replay shows it
+# helps (eval/replay.py --samples).
+SAMPLES = max(1, _int("SELFHEAL_SAMPLES", 1))
+
 # A rejection, or a WRONG_FIX label, has the LLM draft an edit of the
 # playbook section the agent relied on (rag/drafter.py), for a person to
 # approve on the Playbooks tab. Off: nothing is drafted.

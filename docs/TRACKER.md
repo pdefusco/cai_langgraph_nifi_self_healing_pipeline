@@ -108,6 +108,7 @@ them.
 | NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70, fab34b9 |
 | NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | 54662b0 |
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
+| NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | In progress | |
 
 ## Open tickets
 
@@ -118,6 +119,18 @@ timeout, which the same fix shortens. S13's is sent back as "none of the process
 it". `test_no_design_fix_is_sent_back` covers p1, p2 and p8–p13 only, so neither showed. The oracle's third try
 passes as a warning, so both still work; the agent's first try isn't valid.
 - 2026-10-26: found on the NFH-84 A/A. Open.
+
+### NFH-86 · Feature · Draw several first proposals and keep the valid fix most of them agree on
+The NFH-84 A/A showed that the endpoint answers one prompt differently from call to call at temperature 0: 42 of 42
+pairs had the same prompt, and only 12 of 42 the same first proposal. One draw is a sample of one. With
+`SELFHEAL_SAMPLES` above 1, diagnose_and_propose draws that many proposals at once on the first attempt, drops those
+the validators or the capacity check would send back, and keeps the fix most of the rest agree on: first by what it
+changes, then by its values, the first drawn on a tie. With none valid, the first goes on and is sent back with its
+problems as today; retries are one draw. The vote is on the validation report and in `replay --show`; the agent
+version ends /samples:N. Costs N times the LLM calls on the first attempt. Off until the replay shows it helps
+(`replay --samples 3`, against replay-84-c and replay-84-d).
+- 2026-10-26: built, off by default. The oracle replay of p1 and p12 with 3 samples matches one draw case for case.
+  The LLM after run is next.
 
 ### NFH-50 · Ops · Phase 4 M6: live rollout and the review pass
 p1–p13 are deployed on pdf1019-cdp-env, each EXTRA_SMALL ×1. Every pack's first incidents are being reviewed against

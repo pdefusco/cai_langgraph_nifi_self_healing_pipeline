@@ -164,7 +164,8 @@ def agent_version(model_id: str, playbooks: str = "") -> str:
     # with approved playbook edits (`playbooks`, their rag/overlay.edition), or with the critic checking
     # its proposals; none leaves the name as it was.
     return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory") \
-        + (f"/playbooks:{playbooks}" if playbooks else "") + (f"/critic:{CRITIC_VERSION}" if config.CRITIC else "")
+        + (f"/playbooks:{playbooks}" if playbooks else "") + (f"/critic:{CRITIC_VERSION}" if config.CRITIC else "") \
+        + (f"/samples:{config.SAMPLES}" if config.SAMPLES > 1 else "")
 
 
 # ---------------------------------------------------------------------

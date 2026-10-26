@@ -7,7 +7,9 @@ The graph's nodes. Each takes the state and returns the fields it changed.
     retrieve_playbooks    playbook sections for the signals and the parameters used,
                           the most similar past cases (rag/memory.py), and, for
                           the reviewer only, the fixes' track records (rag/priors.py)
-    diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry)
+    diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry); with
+                          SELFHEAL_SAMPLES, several drawn at once on the first attempt
+                          and the valid fix most of them agree on kept
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv; capacity
                           against the intake (actions/capacity.py)
     critique_proposal     with SELFHEAL_CRITIC, the LLM again: objections to a valid fix,
@@ -22,6 +24,10 @@ status) as it happens; the state carries only what the next node needs.
 Nodes read the client and store through get_client()/get_store(), so
 tests can swap both.
 """
+
+import collections
+import json
+from concurrent.futures import ThreadPoolExecutor
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
@@ -43,6 +49,9 @@ from nifi_healer.store.db import get_store
 MAX_ATTEMPTS = 3
 
 DECISIONS = ("approve", "reject", "edit", "rediagnose")
+
+# What a step changes, as against what it changes it to (the scorecard's identity).
+LEVER = ("action", "target", "property", "parameter", "relationship")
 
 
 def log(message: str) -> None:
@@ -189,6 +198,77 @@ def _ask(model, messages: list, schema=Proposal) -> tuple:
     return None, raw, error
 
 
+def _fix(steps: list, values: bool = True) -> frozenset:
+    """The steps as one fix, however they are ordered or written: what they change, and with `values` to what."""
+
+    found = set()
+
+    for step in catalog.merge_routes([catalog.normalize(s) for s in steps]):
+        fields = {k: v for k, v in step.items() if values or k in LEVER}
+
+        if "relationship" in fields:
+            fields["relationship"] = catalog.relationships_of(step)
+
+        found.add(json.dumps(fields, sort_keys=True, default=str))
+
+    return frozenset(found)
+
+
+def _valid(proposal, incident: dict, state: dict) -> bool:
+    """Whether the validators and the capacity check would pass this proposal on a first attempt."""
+
+    try:
+        full = executor.plan(get_client(), incident, proposal.as_dict()["steps"], get_store())
+
+        return bool(full["ok"]) and not _capacity(full, incident, state)
+
+    except Exception as exc:  # a reason to leave this draw out, not to fail the diagnosis
+        log(f"{incident['id']}: could not check a drawn proposal: {exc}")
+
+        return False
+
+
+def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> tuple:
+    """
+    (a Proposal | None, raw text, error, vote) from `samples` proposals
+    drawn at once (NFH-86). Of those that pass validation and the capacity
+    check, the most of them that change the same things, then the most of
+    those that set the same values; the first drawn on a tie. With none
+    valid, the first usable reply goes on, to be sent back as one draw
+    would be. Raises only if every call raised.
+    """
+
+    with ThreadPoolExecutor(max_workers=samples) as pool:
+        futures = [pool.submit(_ask, model, messages) for _ in range(samples)]
+        drawn, failed = [], None
+
+        for future in futures:
+            try:
+                drawn.append(future.result())
+
+            except Exception as exc:  # the endpoint, for this draw
+                failed = failed or exc
+
+    if not drawn:
+        raise failed
+
+    usable = [d for d in drawn if d[0] is not None]
+    valid = [d for d in usable if _valid(d[0], incident, state)]
+    vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_lever": 0, "agreeing": 0}
+
+    if not valid:
+        return (usable or drawn)[0] + (vote,)
+
+    steps = [d[0].as_dict()["steps"] for d in valid]
+    levers = collections.Counter(_fix(s, values=False) for s in steps)
+    lever = max(levers, key=levers.get)
+    fixes = collections.Counter(_fix(s) for s in steps if _fix(s, values=False) == lever)
+    fix = max(fixes, key=fixes.get)
+    vote.update(same_lever=levers[lever], agreeing=fixes[fix])
+
+    return next(d for d, s in zip(valid, steps) if _fix(s) == fix) + (vote,)
+
+
 def diagnose_and_propose(state: dict) -> dict:
     incident = state["incident"]
     ok, reason = llm.chat_available()
@@ -206,8 +286,17 @@ def diagnose_and_propose(state: dict) -> dict:
                                                          state.get("feedback"), state.get("memory"),
                                                          state.get("proposal")))]
 
+    attempts = state.get("attempts", 0) + 1
+    vote = {}
+
     try:
-        proposal, raw, error = _ask(model, messages)
+        if attempts == 1 and config.SAMPLES > 1:
+            proposal, raw, error, vote = _draw(model, messages, incident, state, config.SAMPLES)
+            log(f"{incident['id']}: {vote['valid']} of {vote['samples']} drawn proposals valid, "
+                f"{vote['agreeing']} agreeing")
+
+        else:
+            proposal, raw, error = _ask(model, messages)
 
     except Exception as exc:  # the endpoint, not the reply
         log(f"{incident['id']}: LLM call failed: {exc}")
@@ -215,17 +304,15 @@ def diagnose_and_propose(state: dict) -> dict:
 
         return {"error": f"LLM call failed: {exc}"}
 
-    attempts = state.get("attempts", 0) + 1
-
     if proposal is None:
         log(f"{incident['id']}: attempt {attempts}: unusable reply: {error}")
 
         return {"proposal": {"diagnosis": "", "steps": [], "rationale": raw[:2000], "citations": [],
                              "confidence": 0.0, "parse_error": error},
-                "attempts": attempts, "agent_version": version, "source": "agent"}
+                "attempts": attempts, "agent_version": version, "source": "agent", "vote": vote}
 
     return {"proposal": proposal.as_dict(), "attempts": attempts, "agent_version": version,
-            "source": "agent"}
+            "source": "agent", "vote": vote}
 
 
 def after_diagnosis(state: dict) -> str:
@@ -249,6 +336,9 @@ def validate_proposal(state: dict) -> dict:
         full = executor.plan(client, incident, proposal.get("steps") or [], store)
         report = executor.public(full)
         report["capacity"] = _capacity(full, incident, state)
+
+    if state.get("source") == "agent" and state.get("vote"):
+        report["vote"] = state["vote"]
 
     known = {h["id"] for h in (state.get("playbooks") or []) + (state.get("memory") or [])}
     cited = list(proposal.get("citations") or [])
