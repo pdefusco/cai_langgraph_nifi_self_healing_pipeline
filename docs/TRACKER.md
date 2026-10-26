@@ -106,37 +106,10 @@ them.
 | NFH-81 | Feature | `replay --compare` counts shared scenarios, wins and losses, and the change luck alone makes | Done | d2c69fe |
 | NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | Dropped | 55526fb, 9848eee, 61e8bde |
 | NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70, fab34b9 |
-| NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | |
+| NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | 54662b0 |
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 
 ## Open tickets
-
-### NFH-84 · Feature · The replay deals every run the same rounds, and `--compare` pairs them
-One scenario swings 25–50 points between two runs of the same code at 8 trials, so a change has to be large to show.
-A probe of 4 oracle rounds per scenario (noise-1) found the prompt differs in nearly every round: the sim clock follows
-the wall clock at 20× while the agent detects and applies, so each round's readings are caught at another moment, and
-the outcome differs with them. The endpoint's own variance can't be seen under that.
-- 2026-10-26: built. The replay's world runs on a stepped clock that moves only when the harness or the mock's sleep
-  skips it, and each round starts at a fixed sim time and history (round n: 10:00 UTC + (n−1) × 7 h 1 min 37 s, a
-  different time of day so the daily crons are covered, and 3 h + (n−1) × 37 s of history, a different phase). A
-  second run in the same directory starts one day later. So round n of any run sees the same flows and, with the same
-  code, the same prompt. Each trial records its round's start and history and a hash of each first prompt (incident
-  id suffix stripped). `--compare` pairs the cases of two runs with the same start, history and fix number, and the
-  luck band flips a coin per pair instead of reshuffling them: what remains is the agent's and the endpoint's own
-  variance. A new line says how many pairs saw the same prompt and, of those, how many got the same first proposal:
-  on an A/A (the same code twice), the endpoint's variance on identical input. Harness only: the agent, its prompt and
-  the live app are unchanged.
-- 2026-10-26: oracle A/A locally, all 38 scenarios × 4 rounds into two directories: identical tables, 152 of 152
-  pairs with the same prompt and the same first proposal, luck alone ±0 pts on every measure. Every fault detected
-  at all four times of day (152 of 152), the controls quiet. The 20 scenarios of the CAI replays read as before (valid
-  on the first try 100%, worked 90%). Three things the spread of start times shows, none from the stepped clock:
-  - S18 works in 1 of 4 rounds of the full set but 4 of 4 alone: a round diagnoses only once its last fault opens,
-    S39's nightly batch up to 19 h after the rest, and S18's backlog by then takes longer than 60 min to drain. Not
-    in the 20 scenarios.
-  - S36 is judged at 15 min WORSENED when its fix lands just before the hour's bad records (2 of 4 rounds alone), and
-    IMPROVED at 60 min. The outcome hangs on the phase of the hourly batch.
-  - The capacity check sends back the design fixes of S10 (4 tasks with a 5 s timeout, read at today's 0.017/s per
-    task) and S13 ("no backlog"), so their first try is never valid. Was so before; to NFH-85.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
@@ -262,6 +235,38 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-84 · Feature · The replay deals every run the same rounds, and `--compare` pairs them
+One scenario swings 25–50 points between two runs of the same code at 8 trials, so a change has to be large to show.
+A probe of 4 oracle rounds per scenario (noise-1) found the prompt differs in nearly every round: the sim clock follows
+the wall clock at 20× while the agent detects and applies, so each round's readings are caught at another moment, and
+the outcome differs with them. The endpoint's own variance can't be seen under that.
+- 2026-10-26: built. The replay's world runs on a stepped clock that moves only when the harness or the mock's sleep
+  skips it, and each round starts at a fixed sim time and history (round n: 10:00 UTC + (n−1) × 7 h 1 min 37 s, a
+  different time of day so the daily crons are covered, and 3 h + (n−1) × 37 s of history, a different phase). A
+  second run in the same directory starts one day later. So round n of any run sees the same flows and, with the same
+  code, the same prompt. Each trial records its round's start and history and a hash of each first prompt (incident
+  id suffix stripped). `--compare` pairs the cases of two runs with the same start, history and fix number, and the
+  luck band flips a coin per pair instead of reshuffling them: what remains is the agent's and the endpoint's own
+  variance. A new line says how many pairs saw the same prompt and, of those, how many got the same first proposal:
+  on an A/A (the same code twice), the endpoint's variance on identical input. Harness only: the agent, its prompt and
+  the live app are unchanged.
+- 2026-10-26: oracle A/A locally, all 38 scenarios × 4 rounds into two directories: identical tables, 152 of 152
+  pairs with the same prompt and the same first proposal, luck alone ±0 pts on every measure. Every fault detected
+  at all four times of day (152 of 152), the controls quiet. The 20 scenarios of the CAI replays read as before (valid
+  on the first try 100%, worked 90%). Three things the spread of start times shows, none from the stepped clock:
+  - S18 works in 1 of 4 rounds of the full set but 4 of 4 alone: a round diagnoses only once its last fault opens,
+    S39's nightly batch up to 19 h after the rest, and S18's backlog by then takes longer than 60 min to drain. Not
+    in the 20 scenarios.
+  - S36 is judged at 15 min WORSENED when its fix lands just before the hour's bad records (2 of 4 rounds alone), and
+    IMPROVED at 60 min. The outcome hangs on the phase of the hourly batch.
+  - The capacity check sends back the design fixes of S10 (4 tasks with a 5 s timeout, read at today's 0.017/s per
+    task) and S13 ("no backlog"), so their first try is never valid. Was so before; to NFH-85.
+- 2026-10-26: CAI A/A with the LLM, the same code twice (replay-84-c → replay-84-d), 14 scenarios × 3: 42 of 42
+  pairs with the same prompt, 12 of 42 of those with the same first proposal, at temperature 0. Every measure within
+  luck: value 71% → 67% (luck alone ±14 pts), valid on the first try 74% → 76% (±12), worked 83% → 83% (±10). Single
+  scenarios still move 33–100 points (S24 lever 100% → 0%, S01 valid on the first try 67% → 0%): that is the
+  endpoint's own variance on identical input, and the floor a change has to clear on this set.
 
 ### NFH-83 · Fix · The capacity check asks a fix to drain the backlog, and reads the intake behind a held-back fan-out
 NFH-82's re-run showed the fixes that fail as keeping up but not draining: S07's 90 ms clears 10/s in by 1/s, so its
