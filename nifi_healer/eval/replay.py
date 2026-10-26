@@ -15,7 +15,10 @@ the configured LLM, scored the way the Scorecard scores the live agent.
 Each trial round, over the packs the chosen scenarios are in:
 
   1. a fresh mock tenant: the packs imported and deployed, with three
-     hours of faulty history (sim/bootstrap.py)
+     hours of faulty history (sim/bootstrap.py), on a stepped clock that
+     moves only when the replay moves it, from a start set by the round
+     (EPOCH): round n sees the same flows in every run, and the prompt
+     hashes in the record show whether the agent read the same thing
   2. the poller backfills that history from the charts, as the app does,
      then opens an incident per fault, polling and moving the clock
      on for up to DETECT_SECONDS, or the longest detect_within of the
@@ -69,6 +72,7 @@ a live tenant would take a day.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -101,6 +105,16 @@ LLM_TRIES = 3                   # diagnoses of an incident the LLM didn't answer
 LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
 LUCK_DRAWS = 2000               # shuffles behind compare()'s luck band
 LUCK_SHARE = 0.9                # of the shuffles the band holds
+
+# Where each round's stepped clock starts (NFH-84): a run's rounds start at 10:00 UTC on 2026-10-01 and then
+# ROUND_SHIFT later each, so they cover the day's schedules (a nightly batch, business hours), and with
+# PHASE_STEP more history each, so the faults are caught at other points of their cycles. The nth run in a
+# directory is that many days on, apart from the earlier runs in its store; the first run of any directory
+# replays the same flows.
+EPOCH = 1790848800.0
+DAY = 86400
+ROUND_SHIFT = 7 * 3600 + 97
+PHASE_STEP = 37
 
 # Every config setting isolate() changes.
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
@@ -183,6 +197,7 @@ def isolate(directory: str):
 
     worlds._WORLD = None
     world = worlds.get_world()
+    world.stepped = True                     # no wall time reaches the flows (World.now)
     clients.set_client(MockClient(world))
     db.set_store(db.Store(config.DB_PATH))
     graph.reset()
@@ -300,10 +315,32 @@ def judge(world, client, store, incidents: list) -> None:
         poller.evaluate_outcomes()
 
 
-def attempt(number: int, fix: int, found: dict, world, client, store) -> list:
-    """Diagnose, approve and judge each of {scenario id: incident}; the scenarios a fix was applied to."""
+def prompt_hash(incident_id: str) -> str | None:
+    """
+    A short hash of the first prompt the agent was given on the incident,
+    the random end of incident ids left out: two cases with the same hash
+    showed the agent the same thing. None before it gathered its context.
+    """
+
+    state = graph.state(incident_id)
+
+    if not state.get("context"):
+        return None
+
+    text = prompts.system_prompt() + prompts.user_prompt(state["incident"], state["context"],
+                                                         state.get("playbooks") or [], memory=state.get("memory"))
+
+    return hashlib.sha1(re.sub(r"\b(INC-\d{8}-\d{6}-\w+)-[0-9a-f]{4}\b", r"\1", text).encode()).hexdigest()[:8]
+
+
+def attempt(number: int, fix: int, found: dict, world, client, store) -> tuple:
+    """
+    Diagnose, approve and judge each of {scenario id: incident}: (the
+    scenarios a fix was applied to, {scenario id: prompt_hash}).
+    """
 
     diagnose(world, list(found.values()))
+    shown = {scenario: prompt_hash(incident["id"]) for scenario, incident in found.items()}
     applied = []
 
     for scenario, incident in found.items():
@@ -317,36 +354,48 @@ def attempt(number: int, fix: int, found: dict, world, client, store) -> list:
 
     judge(world, client, store, list(found.values()))
 
-    return applied
+    return applied, shown
+
+
+def setting(number: int, day: int = 0) -> tuple:
+    """(the sim time round `number` of the run `day` days on starts at, its seconds of history); see EPOCH."""
+
+    return EPOCH + day * DAY + (number - 1) * ROUND_SHIFT % DAY, HISTORY_SECONDS + (number - 1) * PHASE_STEP
 
 
 def trial_round(number: int, ids: list, world, client, store, detect_seconds: float = DETECT_SECONDS,
-                fixes: int = 1) -> list:
+                fixes: int = 1, day: int = 0) -> list:
     """
     One trial of each scenario in `ids` on a fresh tenant, with up to `fixes`
-    fixes each: [{round, scenario, incident, incidents, fixes, cleared,
-    control, at}]. `incident` is the first; `cleared` is None unless
-    `fixes` is above 1 (nothing was watched after the fix), and for a
-    missed fault or a control.
+    fixes each: [{round, scenario, incident, incidents, prompts, fixes,
+    cleared, control, at, world}]. `incident` is the first, and `prompts`
+    their prompt_hash; `cleared` is None unless `fixes` is above 1 (nothing
+    was watched after the fix), and for a missed fault or a control.
+    `world` is where in the day the round started, and its history: two
+    trials with the same one, on the same flows and code, saw the same
+    tenant.
     """
 
     if not _on_mock():
         raise RuntimeError("the replay runs on the mock tenant only")
 
-    bootstrap.build(HISTORY_SECONDS, list(dict.fromkeys(packs.pack_of(s).name for s in ids)), reset=True)
+    start, history = setting(number, day)
+    bootstrap.build(history, list(dict.fromkeys(packs.pack_of(s).name for s in ids)), reset=True, epoch=start)
     at = client.now()
     found = detect(world, client, store, ids, detect_seconds)
     missed = [s for s in ids if s not in found and packs.SCENARIOS[s].family != "NONE"]
     log(f"round {number}: {len(found)} incident(s)" + (f"; no incident for {', '.join(missed)}" if missed else ""))
     trials = {s: {"round": number, "scenario": s, "incident": (found.get(s) or {}).get("id"), "incidents": [],
-                  "fixes": 0, "cleared": None, "control": packs.SCENARIOS[s].family == "NONE", "at": at}
+                  "prompts": [], "fixes": 0, "cleared": None, "control": packs.SCENARIOS[s].family == "NONE",
+                  "at": at, "world": [(start - EPOCH) % DAY, history]}
               for s in ids}
 
     for fix in range(1, fixes + 1):
-        applied = attempt(number, fix, found, world, client, store)
+        applied, shown = attempt(number, fix, found, world, client, store)
 
         for scenario, incident in found.items():
             trials[scenario]["incidents"].append(incident["id"])
+            trials[scenario]["prompts"].append(shown.get(scenario))
             trials[scenario]["fixes"] += scenario in applied
 
             if fixes > 1 and scenario not in applied:
@@ -399,22 +448,28 @@ def _trials(snapshot: dict, since: float = 0.0) -> list:
         return f"{run['id']} · {run.get('model') or '?'}" + (" · no memory" if run.get("memory") is False else "") \
             + (" · no priors" if run.get("priors") is False else "") + (" · critic" if run.get("critic") else "")
 
+    # A stepped run's sim clock is on EPOCH's day, so it counts from when it ran.
     return [dict(t, run=name(run)) for run in snapshot.get("runs") or []
-            for t in run.get("trials") or [] if t.get("at", 0) >= since]
+            for t in run.get("trials") or [] if max(t.get("at", 0), run.get("started_at") or 0) >= since]
 
 
 def cases(snapshot: dict, since: float = 0.0) -> list:
-    """The Scorecard's cases for the replay's trials, each with its run; the store's other incidents are not."""
+    """
+    The Scorecard's cases for the replay's trials, each with its run, round,
+    fix, world and prompt hash (trial_round); the store's other incidents
+    are not.
+    """
 
     trials = {}
 
     for t in _trials(snapshot, since):
+        shown = t.get("prompts") or []
+
         for fix, incident in enumerate(t.get("incidents") or [t.get("incident")], 1):
             if incident:
-                trials[incident] = dict(t, fix=fix)
+                trials[incident] = dict(t, fix=fix, prompt=shown[fix - 1] if fix <= len(shown) else None)
 
-    return [dict(c, run=trials[c["incident"]]["run"], round=trials[c["incident"]]["round"],
-                 fix=trials[c["incident"]]["fix"])
+    return [dict(c, **{key: trials[c["incident"]].get(key) for key in ("run", "round", "fix", "world", "prompt")})
             for c in sc.cases(snapshot.get("record") or {}) if c["incident"] in trials]
 
 
@@ -501,6 +556,36 @@ def _change(pairs) -> float:
     return sum(after) / len(after) - sum(before) / len(before)
 
 
+def _pairs(before: list, after: list) -> tuple:
+    """
+    ([(before case, after case)], the before cases left, the after cases
+    left): a case pairs with the other record's case of the same world and
+    fix, in order, so round n of a stepped run meets round n of the other
+    (trial_round). Cases from before NFH-84 have no world and pair with none.
+    """
+
+    waiting = {}
+
+    for c in after:
+        if c.get("world") is not None:
+            waiting.setdefault((tuple(c["world"]), c["fix"]), []).append(c)
+
+    matched, left = [], []
+
+    for c in before:
+        found = waiting.get((tuple(c["world"]), c["fix"])) if c.get("world") is not None else None
+
+        if found:
+            matched.append((c, found.pop(0)))
+
+        else:
+            left.append(c)
+
+    taken = {id(a) for _, a in matched}
+
+    return matched, left, [c for c in after if id(c) not in taken]
+
+
 def tally(name: str, counted, groups: dict) -> str:
     """
     One measure over {scenario: (before cases, after cases)}: the scenarios
@@ -508,10 +593,21 @@ def tally(name: str, counted, groups: dict) -> str:
     how big a change luck alone makes. That is the band LUCK_SHARE of
     LUCK_DRAWS shuffles fall in, each shuffle dealing a scenario's cases
     out to before and after at random, as if one agent had run both times.
+    A pair of cases on the same tenant (_pairs) is dealt together, one to
+    each side, so the band holds the agent's own luck and not the tenant's.
     """
 
-    scored = {s: (_counted(b, counted), _counted(a, counted)) for s, (b, a) in groups.items()}
-    scored = {s: pair for s, pair in scored.items() if all(pair)}
+    scored = {}
+
+    for scenario, (b, a) in groups.items():
+        matched, b_left, a_left = _pairs(b, a)
+        values = [(counted(x), counted(y)) for x, y in matched]
+        pairs = [v for v in values if None not in v]
+        b_left = _counted(b_left, counted) + [x for x, y in values if x is not None and y is None]
+        a_left = _counted(a_left, counted) + [y for x, y in values if y is not None and x is None]
+
+        if (pairs or b_left) and (pairs or a_left):
+            scored[scenario] = (pairs, b_left, a_left)
 
     if not scored:
         return f"{name:<9} nothing to compare"
@@ -519,31 +615,72 @@ def tally(name: str, counted, groups: dict) -> str:
     def rate(values):
         return sum(values) / len(values)
 
-    better = [s for s, (b, a) in scored.items() if rate(a) > rate(b)]
-    worse = [s for s, (b, a) in scored.items() if rate(a) < rate(b)]
-    same = len(scored) - len(better) - len(worse)
-    seen = _change(scored.values())
+    def sides(pairs, b_left, a_left):
+        return [x for x, _ in pairs] + b_left, [y for _, y in pairs] + a_left
+
+    split = {s: sides(*found) for s, found in scored.items()}
+    better = [s for s, (b, a) in split.items() if rate(a) > rate(b)]
+    worse = [s for s, (b, a) in split.items() if rate(a) < rate(b)]
+    same = len(split) - len(better) - len(worse)
+    seen = _change(split.values())
     rng = random.Random(0)
     shuffles = []
 
     for _ in range(LUCK_DRAWS):
         dealt = []
 
-        for b, a in scored.values():
-            pool = rng.sample(b + a, len(b) + len(a))
-            dealt.append((pool[:len(b)], pool[len(b):]))
+        for pairs, b_left, a_left in scored.values():
+            flipped = [(y, x) if rng.random() < 0.5 else (x, y) for x, y in pairs]
+            pool = rng.sample(b_left + a_left, len(b_left) + len(a_left))
+            dealt.append(sides(flipped, pool[:len(b_left)], pool[len(b_left):]))
 
         shuffles.append(abs(_change(dealt)))
 
     luck = sorted(shuffles)[int(LUCK_SHARE * LUCK_DRAWS) - 1]
-    before = rate([v for b, _ in scored.values() for v in b])
+    before = rate([v for b, _ in split.values() for v in b])
+    paired = sum(len(pairs) for pairs, _, _ in scored.values())
 
     def listed(found):
         return f" ({', '.join(found)})" if found else ""
 
     return (f"{name:<9} {len(better)} better{listed(better)}, {len(worse)} worse{listed(worse)}, {same} same; "
-            f"{_pct(before)}→{_pct(before + seen)} over {len(scored)} scenario(s), {seen * 100:+.0f} pts, "
-            f"luck alone ±{luck * 100:.0f} pts: " + ("beyond luck" if abs(seen) > luck else "within luck"))
+            f"{_pct(before)}→{_pct(before + seen)} over {len(split)} scenario(s), {seen * 100:+.0f} pts, "
+            f"luck alone ±{luck * 100:.0f} pts" + (f" ({paired} paired)" if paired else "") + ": "
+            + ("beyond luck" if abs(seen) > luck else "within luck"))
+
+
+def _first_steps(snapshot: dict) -> dict:
+    """{incident id: the steps of the agent's first proposal on it}."""
+
+    first = {}
+
+    for p in sorted(snapshot.get("record", {}).get("proposals") or [], key=lambda p: p["id"]):
+        first.setdefault(p["incident_id"], json.dumps(p.get("action") or [], sort_keys=True))
+
+    return first
+
+
+def sameness(before: dict, after: dict, groups: dict) -> str:
+    """
+    Of the pairs of cases on the same tenant (_pairs), how many showed the
+    agent the same prompt (prompt_hash), and of those how many it answered
+    with the same first proposal: on one agent run twice, what the LLM
+    alone changes.
+    """
+
+    matched = [pair for b, a in groups.values() for pair in _pairs(b, a)[0]]
+
+    if not matched:
+        return "same tenant: no pairs (a record from before NFH-84, or other rounds)"
+
+    hashed = [(b, a) for b, a in matched if b.get("prompt") and a.get("prompt")]
+    alike = [(b, a) for b, a in hashed if b["prompt"] == a["prompt"]]
+    steps = [_first_steps(snapshot) for snapshot in (before, after)]
+    answered = [(b, a) for b, a in alike if b["incident"] in steps[0] and a["incident"] in steps[1]]
+    kept = sum(steps[0][b["incident"]] == steps[1][a["incident"]] for b, a in answered)
+
+    return (f"same tenant: {len(matched)} pair(s), {len(alike)} of {len(hashed)} with the same prompt"
+            + (f", and {kept} of {len(answered)} of those with the same first proposal" if answered else ""))
 
 
 def compare(before: dict, after: dict) -> str:
@@ -555,8 +692,9 @@ def compare(before: dict, after: dict) -> str:
     that worked and the median outcome lift. "all" counts the scenarios
     both records have. Then, for the right value, valid on the first try
     and worked, the scenarios that did better and worse, and whether the
-    change is beyond what luck alone makes (tally()). Agree before a run
-    which of these decides whether a change stays.
+    change is beyond what luck alone makes (tally()), and how alike the
+    cases on the same tenant were (sameness()). Agree before a run which
+    of these decides whether a change stays.
     """
 
     sides = [cases(snapshot or {}) for snapshot in (before, after)]
@@ -581,6 +719,7 @@ def compare(before: dict, after: dict) -> str:
     rows.append(f"all: the {len(shared)} scenario(s) in both" + "".join(f"; {a}" for a in alone))
     groups = {s: tuple([c for c in side if c["scenario"] == s] for side in sides) for s in shared}
     rows += [tally(name, counted, groups) for name, counted in TALLIED]
+    rows.append(sameness(before or {}, after or {}, groups))
 
     return "\n".join(rows)
 
@@ -696,6 +835,7 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         model = getattr(llm.chat_model(), "model_name", "") or config.LLM_MODEL_ID
         previous = load(directory) or {}
         runs = previous.get("runs") or []
+        day = len(runs)
         entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
                  "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
                  "critic": critic, "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
@@ -708,8 +848,8 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
 
         for number in range(1, trials + 1):
             getattr(llm.chat_model(), "forget", lambda: None)()
-            entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds, fixes)
-            now = max(now, client.now())
+            entry["trials"] += trial_round(number, ids, world, client, store, detect_seconds, fixes, day)
+            now = max(now, client.now(), time.time())
             save(directory, runs, now)
 
         entry["finished_at"] = time.time()

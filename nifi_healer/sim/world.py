@@ -146,6 +146,7 @@ class World:
         self._read_mtime = None
         self._saved_wall = 0.0
         self._held = None           # the sim time the clock is stopped at, inside held()
+        self.stepped = False        # the clock moves only by skip(), see now()
         self._fresh()
         self._load()
 
@@ -153,15 +154,25 @@ class World:
     # Clock and persistence
     # -----------------------------------------------------------------
 
-    def _fresh(self) -> None:
+    def _fresh(self, epoch: float | None = None) -> None:
         wall = time.time()
-        self.data = {"format": 1, "wall_epoch": wall, "sim_epoch": wall,
+        self.data = {"format": 1, "wall_epoch": wall, "sim_epoch": wall if epoch is None else epoch,
                      "flows": {}, "deployments": {}}
         self.sims = {}
 
     def now(self) -> float:
+        """
+        Sim time. On a stepped clock (`stepped`, the replay's) no wall time
+        reaches it: it moves only by skip(), and by MockClient.sleep, so
+        what a run sees doesn't hang on how long its polls and LLM calls
+        take, and the same run sees the same flows every time (NFH-84).
+        """
+
         if self._held is not None:
             return self._held
+
+        if self.stepped:
+            return self.data["sim_epoch"]
 
         return self.data["sim_epoch"] + (time.time() - self.data["wall_epoch"]) * self.speed
 
@@ -264,9 +275,11 @@ class World:
 
             self.save()
 
-    def reset(self) -> None:
+    def reset(self, epoch: float | None = None) -> None:
+        """Start over with no flows or deployments, the clock at `epoch` (sim time), or now."""
+
         with self.lock:
-            self._fresh()
+            self._fresh(epoch)
 
             with contextlib.suppress(OSError):
                 os.remove(self.path)

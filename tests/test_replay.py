@@ -124,7 +124,7 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     llm.set_chat_model(OutOfBoundsLLM())
     replay.run(["S01"], directory=str(tmp_path / "after"))
 
-    header, s01, s02, total, shared, value, first, worked = replay.compare(
+    header, s01, s02, total, shared, value, first, worked, same = replay.compare(
         replay.load(str(tmp_path / "before")), replay.load(str(tmp_path / "after"))).splitlines()
 
     def cells(line):
@@ -136,10 +136,12 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     assert cells(s02)[:2] == ["1→-", "100%→-"] and cells(s02)[-1].endswith("→-")     # S02 not in the after run
     assert total.startswith("all") and cells(total)[:2] == ["1→1", "100%→0%"]     # S01 alone: in both
     assert shared == "all: the 1 scenario(s) in both; only before: S02"
-    # One case a side: a shuffle swaps them half the time, so luck alone makes the whole change.
+    # One case a side, on the same tenant: a shuffle swaps them half the time, so luck alone makes the whole change.
     assert value == ("value     0 better, 1 worse (S01), 0 same; 100%→0% over 1 scenario(s), -100 pts, "
-                     "luck alone ±100 pts: within luck")
+                     "luck alone ±100 pts (1 paired): within luck")
     assert first.startswith("valid 1st 0 better, 1 worse (S01)") and worked == "worked    nothing to compare"
+    # The same first prompt (a stepped clock, NFH-84), answered differently by another model.
+    assert same == "same tenant: 1 pair(s), 1 of 1 with the same prompt, and 0 of 1 of those with the same first proposal"
 
 
 def case(scenario, right):
@@ -157,6 +159,53 @@ def test_luck_is_the_change_a_shuffle_makes():
     assert replay.tally("value", counted, two).endswith("+100 pts, luck alone ±100 pts: within luck")
     assert replay.tally("value", counted, same).endswith("0 better, 0 worse, 1 same; 100%→100% over 1 scenario(s), "
                                                          "+0 pts, luck alone ±0 pts: within luck")
+
+
+def test_a_pair_on_the_same_tenant_is_dealt_together():
+    # Each tenant decides its case alike both times: paired, no shuffle moves the rate; dealt freely, they do.
+    counted = dict(replay.TALLIED)["value"]
+
+    def on(world, scenario, right):
+        return dict(case(scenario, right), world=world, fix=1)
+
+    paired = {f"S{n:02}": ([on([0, n], f"S{n:02}", True), on([1, n], f"S{n:02}", False)],
+                           [on([1, n], f"S{n:02}", False), on([0, n], f"S{n:02}", True)]) for n in range(1, 6)}
+    loose = {s: ([dict(c, world=None) for c in b], [dict(c, world=None) for c in a]) for s, (b, a) in paired.items()}
+
+    assert replay.tally("value", counted, paired).endswith("+0 pts, luck alone ±0 pts (10 paired): within luck")
+    assert not replay.tally("value", counted, loose).endswith("±0 pts: within luck")
+    assert replay.sameness({}, {}, loose).startswith("same tenant: no pairs")
+
+
+def test_a_stepped_clock_moves_only_when_told(replayed):
+    world = replay.isolate(config.REPLAY_DIR)
+    world.reset(epoch=replay.EPOCH)
+    start = world.now()
+    time.sleep(0.05)
+
+    assert start == replay.EPOCH and world.now() == start
+    clients.get_client().sleep(20)          # a wait on the mock, such as a deployment's
+    assert world.now() == start + 20
+
+
+def test_every_run_sees_the_same_rounds(replayed, tmp_path):
+    for name in ("one", "two"):
+        replay.run(["S01", "S03"], 2, str(tmp_path / name), oracle=True)
+
+    one, two = (replay.load(str(tmp_path / name)) for name in ("one", "two"))
+    shown = [[(t["scenario"], t["round"], t["world"], t["prompts"]) for t in r["runs"][0]["trials"]] for r in (one, two)]
+
+    assert shown[0] == shown[1] and all(t[3][0] for t in shown[0])
+    assert shown[0][0][2] != shown[0][2][2] and shown[0][0][3] != shown[0][2][3]     # round 2 is another tenant
+    assert replay.sameness(one, two, {s: tuple([c for c in replay.cases(r) if c["scenario"] == s] for r in (one, two))
+                                      for s in ("S01", "S03")}) == (
+        "same tenant: 4 pair(s), 4 of 4 with the same prompt, and 4 of 4 of those with the same first proposal")
+
+    # A second run in a directory is a day on, apart from the first's incidents in the store.
+    replay.run(["S01"], 1, str(tmp_path / "one"), oracle=True)
+    again = replay.load(str(tmp_path / "one"))["runs"]
+    assert again[1]["trials"][0]["at"] - again[0]["trials"][0]["at"] == replay.DAY
+    assert again[1]["trials"][0]["world"] == again[0]["trials"][0]["world"]
 
 
 class TooManyTasksLLM(OutOfBoundsLLM):

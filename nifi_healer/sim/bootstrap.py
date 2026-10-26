@@ -22,7 +22,9 @@ from nifi_healer.sim.world import get_world
 HISTORY_SECONDS = 3600
 
 
-def build(history: float = HISTORY_SECONDS, names=None, reset: bool = False) -> dict:
+def build(history: float = HISTORY_SECONDS, names=None, reset: bool = False, epoch: float | None = None) -> dict:
+    """The packs `names` (all by default) on the mock; `reset` starts over first, the clock at `epoch` or now."""
+
     if not config.MOCK:
         raise SystemExit("bootstrap builds the mock tenant; SELFHEAL_DF_CLIENT is 'live'.")
 
@@ -30,7 +32,7 @@ def build(history: float = HISTORY_SECONDS, names=None, reset: bool = False) -> 
     client = MockClient(world)
 
     if reset:
-        world.reset()
+        world.reset(epoch)
 
         if os.path.exists(config.FLEET_FILE):
             os.remove(config.FLEET_FILE)

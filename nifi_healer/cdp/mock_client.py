@@ -129,6 +129,10 @@ class MockClient(Client):
         return self.world.now()
 
     def sleep(self, seconds: float) -> None:
+        if self.world.stepped:
+            self.world.skip(max(0.0, seconds))     # no wall time reaches a stepped clock
+            return
+
         time.sleep(max(0.0, seconds) / self.world.speed)
 
     def workload_endpoint(self) -> str:
