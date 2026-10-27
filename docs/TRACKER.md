@@ -110,9 +110,22 @@ them.
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
 | NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
-| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | In progress | |
+| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | In progress | e6648f7, a810646 |
+| NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | In progress | |
 
 ## Open tickets
+
+### NFH-89 · Fix · The vote throws out the right stage's draws when all are short (S24)
+With NFH-88's check, replay-88-s24-after2 drew two short Sessionize fixes (2 tasks, 10 ms: about 100/s against
+about 100/s) and one valid Merge Sessions fix in rounds 1 and 4, and one of each in round 6. The vote kept only the
+valid draws, so Merge Sessions won and didn't help. In round 3 all three were short, the first went back with the
+intake, and the retry (0 sec) worked: a short draw names the right stage, and its feedback is what gets the value
+right. 10 ms and 2 tasks are different levers, so a vote on levers alone wouldn't group them.
+- 2026-10-27: built. The vote counts stages first, short draws as well as valid ones (short: the validators pass
+  and the capacity check finds only a shortfall, not "no backlog"); a stage with a valid draw wins a tie. Within the
+  stage, valid draws vote on lever and value as before; with none valid there, its first short draw goes on and is
+  sent back with the intake. Replayed by hand on replay-88-s24-after2: rounds 1 and 4 would go back on Sessionize
+  instead of approving Merge Sessions; rounds 2, 3, 5 and 6 are unchanged. NFH-88 is judged with it.
 
 ### NFH-88 · Fix · The capacity check reads a held-back split's own rate as the intake (S24)
 On replay-87-after every S24 round was valid on the first try, and every rationale sized Sessionize against "the

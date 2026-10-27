@@ -59,6 +59,10 @@ AT_CEILING = 0.9
 
 RATES = ("flowfiles_in", "flowfiles_out")
 
+# The wrong stage, as against a right one sized short of its intake.
+NO_BACKLOG = ("None of the processors changed has a backlog in front of it; find the stage whose input queue is "
+              "full and whose output queue is not.")
+
 
 def _number(value: float) -> str:
     return f"{value:.0f}" if abs(value) >= 10 else f"{value:.2g}"
@@ -385,7 +389,6 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
                             f"{config.VERIFY_WINDOW_SECONDS // 60} min it needs about {_number(needed)}/s.")
 
     if measured and measured == considered and not backed:
-        problems.append("None of the processors changed has a backlog in front of it; find the stage whose "
-                        "input queue is full and whose output queue is not.")
+        problems.append(NO_BACKLOG)
 
     return problems
