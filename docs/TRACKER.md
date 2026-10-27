@@ -109,24 +109,9 @@ them.
 | NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | 54662b0 |
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
-| NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | In progress | |
+| NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939 |
 
 ## Open tickets
-
-### NFH-87 · Fix · A merge's small output reads as the slow stage, and an expiring queue hides the intake
-On replay-86-after the agent misses S24 in all 3 rounds and S25 in one. S24's readings show Sessionize at 50/s, its
-ceiling (1 task every 20 ms), behind a 93% full queue, and Publish Sessions at 0.1/s; the agent reads the drop as Merge
-Sessions being slow (Minimum Number of Entries 500) and lowers its batch, or cuts the source. A merge sends one
-FlowFile per bin, so every rate after it counts bins. The batching playbook's "far below its input" points the same
-way. S25's third round sized Sessionize from the 10/s it takes in, but its queue expires after 1 min, so it cannot grow
-to show the rest: 2 tasks (20/s) were sent back, and the retry turned to Merge Sessions.
-- 2026-10-26: built. A processor's rate in the readings names the fan-outs and merges it is counted after ("S24
-  Publish Sessions: 0.1/s in, counted after a fan-out (S24 Split Clicks) and a merge (S24 Merge Sessions)"). The
-  prompt's sizing rules say to compare rates only between stages with no fan-out or merge between them, that a
-  merge is the bottleneck only when its own input queue is full, and that what an expiring queue drops is intake
-  too. The batching playbook says a merge's small output is by design. The oracle replay of p1 and p9 matches the
-  earlier one case for case (S04's 4 tasks WORSENED at 15 min and IMPROVED at 60, as before). The LLM run against
-  replay-86-after is next.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
@@ -252,6 +237,27 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-87 · Fix · A merge's small output reads as the slow stage, and an expiring queue hides the intake
+On replay-86-after the agent misses S24 in all 3 rounds and S25 in one. S24's readings show Sessionize at 50/s, its
+ceiling (1 task every 20 ms), behind a 93% full queue, and Publish Sessions at 0.1/s; the agent reads the drop as Merge
+Sessions being slow (Minimum Number of Entries 500) and lowers its batch, or cuts the source. A merge sends one
+FlowFile per bin, so every rate after it counts bins. The batching playbook's "far below its input" points the same
+way. S25's third round sized Sessionize from the 10/s it takes in, but its queue expires after 1 min, so it cannot grow
+to show the rest: 2 tasks (20/s) were sent back, and the retry turned to Merge Sessions.
+- 2026-10-26: built. A processor's rate in the readings names the fan-outs and merges it is counted after ("S24
+  Publish Sessions: 0.1/s in, counted after a fan-out (S24 Split Clicks) and a merge (S24 Merge Sessions)"). The
+  prompt's sizing rules say to compare rates only between stages with no fan-out or merge between them, that a
+  merge is the bottleneck only when its own input queue is full, and that what an expiring queue drops is intake
+  too. The batching playbook says a merge's small output is by design. The oracle replay of p1 and p9 matches the
+  earlier one case for case (S04's 4 tasks WORSENED at 15 min and IMPROVED at 60, as before). The LLM run against
+  replay-86-after is next.
+- 2026-10-27: measured on CAI, replay-87-after (--samples 3, the 14 scenarios × 3) against replay-86-after. Right
+  value 69% → 69% (+0 pts, luck alone ±10), valid on the first try 93% → 88% (−5, ±10), worked 83% → 86% (+2, ±7):
+  all within luck, so not kept under the rule, and reverted. S24 now targeted Sessionize in 2 of 3 rounds (lever
+  0% → 67%) but none worked: its run schedule was shortened and measured NO_CHANGE. A scenario moving that far is
+  within the endpoint's variance (S24's lever went 100% → 0% on the NFH-84 A/A), so it is no evidence on its own.
+  Measured, not kept; the prompt, readings and playbook are as before NFH-87.
 
 ### NFH-86 · Feature · Draw several first proposals and keep the valid fix most of them agree on
 The NFH-84 A/A showed that the endpoint answers one prompt differently from call to call at temperature 0: 42 of 42

@@ -22,15 +22,11 @@ Only the KPIs the pack defines; NFH-65 makes the coverage uniform. Given
 the group's inventory, render() lists every connection in flow order,
 each against its back-pressure limit and with its expiration, and says
 so of one no KPI measures: in a cascade the full queue nobody watches
-would otherwise read as empty. A processor's rate also names the
-fan-outs and merges before it: a merge sends one FlowFile for hundreds,
-and read against the rates before it, that looks like the stage that is
-slow (S24, S25).
+would otherwise read as empty.
 """
 
 import config
 from flows import packs
-from flows.builder.processors import SPLITTING
 from nifi_healer import fleet
 from nifi_healer.kpi import detectors, metrics
 from nifi_healer.sim.model import parse_duration, parse_size
@@ -187,42 +183,7 @@ def held(inv: dict, rows: dict, name: str) -> bool:
     return False
 
 
-def regrouped(inv: dict, name: str, metric: str) -> list:
-    """
-    The splits and merges, in flow order, that the FlowFiles `name`
-    counts as `metric` have passed: its own when it counts what it sends.
-    """
-
-    kinds = {p["name"]: p.get("kind") for p in inv.get("processors") or []}
-    into = {}
-
-    for c in inv.get("connections") or []:
-        if c["source"] != c["destination"]:
-            into.setdefault(c["destination"], set()).add(c["source"])
-
-    seen, frontier = {name} if metric == "flowfiles_out" else set(), [name]
-
-    while frontier:
-        frontier = [s for n in frontier for s in into.get(n, ()) if s not in seen]
-        seen.update(frontier)
-
-    depth, _ = flow_order(inv)
-
-    return sorted((n for n in seen if kinds.get(n) in detectors.REGROUPING), key=lambda n: (depth.get(n, 0), n))
-
-
-def _after(inv: dict, row: dict) -> str:
-    if row["kind"] != "processor" or row["metric"] not in RATES:
-        return ""
-
-    kinds = {p["name"]: p.get("kind") for p in inv.get("processors") or []}
-    found = [f"a {'fan-out' if kinds[n] in SPLITTING else 'merge'} ({n})"
-             for n in regrouped(inv, row["component"], row["metric"])]
-
-    return ", counted after " + " and ".join(found) if found else ""
-
-
-def _line(row: dict, connection: dict | None = None, average: bool = False, after: str = "") -> str:
+def _line(row: dict, connection: dict | None = None, average: bool = False) -> str:
     where = {"connection": _connection(connection) if connection else f"connection {row['component']}",
              "system": "the deployment's nodes"}.get(
         row["kind"], row["component"] + (" (a source)" if row["source"] else ""))
@@ -245,7 +206,6 @@ def _line(row: dict, connection: dict | None = None, average: bool = False, afte
     elif row["below"] is not None:
         text += f" (alert below {shown(row['below'])})"
 
-    text += after
     found = [metrics.STATE_TEXT[row["state"]]] if row["state"] is not None else []
 
     return text + _expiry(connection) + ": " + ", ".join(found + [row["trend"]])
@@ -312,6 +272,5 @@ def render(rows: list, inv: dict | None = None) -> str:
     keyed = {(r["kind"], r["component"], r["metric"]): r for r in rows}
 
     # A burst's average, where nothing holds the sender back.
-    return "\n".join(lines + [_line(r, average=r["kind"] == "processor" and not held(inv, keyed, r["component"]),
-                                    after=_after(inv, r))
+    return "\n".join(lines + [_line(r, average=r["kind"] == "processor" and not held(inv, keyed, r["component"]))
                               for r in rest])

@@ -120,28 +120,6 @@ def test_with_the_inventory_every_queue_reads_in_flow_order(tmp_path, monkeypatc
     assert readings.render(rows, {"error": "no group"}) == readings.render(rows)
 
 
-def test_a_rate_names_the_fan_outs_and_merges_before_it():
-    # S24 cut down: a merge sends one FlowFile per bin, which read against the rates before it looks slow.
-    inv = {"processors": [{"name": n, "kind": k} for n, k in (
-        ("Batches", "GenerateFlowFile"), ("Split", "SplitText"), ("Sessionize", "UpdateAttribute"),
-        ("Merge", "MergeContent"), ("Publish", "UpdateAttribute"))],
-        "connections": [{"name": f"{a}-{b}", "source": a, "destination": b, "object_threshold": 10000}
-                        for a, b in (("Batches", "Split"), ("Split", "Sessionize"), ("Sessionize", "Merge"),
-                                     ("Merge", "Publish"), ("Merge", "Merge"))]}
-    rows = [{"key": c, "kind": "processor", "component": c, "metric": m, "latest": v, "above": None,
-             "below": None, "state": None, "trend": "flat", "source": False, "peak": None, "mean": None}
-            for c, m, v in (("Split", "flowfiles_out", 50), ("Sessionize", "flowfiles_out", 50),
-                            ("Merge", "flowfiles_in", 50), ("Publish", "flowfiles_in", 0.1))]
-
-    assert readings.render(rows, inv).splitlines()[-4:] == [
-        "- Split: 50/s out, counted after a fan-out (Split): flat",
-        "- Sessionize: 50/s out, counted after a fan-out (Split): flat",
-        "- Merge: 50/s in, counted after a fan-out (Split): flat",
-        "- Publish: 0.1/s in, counted after a fan-out (Split) and a merge (Merge): flat",
-    ]
-    assert readings.regrouped(inv, "Batches", "flowfiles_out") == []
-
-
 def test_flow_order_follows_the_connections_from_the_sources():
     depth, connections = readings.flow_order(INVENTORY)
 

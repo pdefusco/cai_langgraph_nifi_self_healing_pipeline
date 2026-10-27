@@ -13,12 +13,6 @@ never comes or is not running at all. The queue may grow only slowly, so a
 count threshold can take a long time to fire. A rate KPI that stays below
 its floor is often the first sign.
 
-A merge (MergeContent, MergeRecord) sends one FlowFile for every bin it
-fills, so its output is far below its input by design and every rate after
-it counts bins. That is not a stall: a merge is stuck only when it sends
-nothing at all, or its own input queue is full. When a queue before it is
-full, look for the slow stage before the merge.
-
 ## MergeContent bin that never fills
 <!-- actions: SET_PROCESSOR_PROPERTY -->
 <!-- symptoms: latency -->
