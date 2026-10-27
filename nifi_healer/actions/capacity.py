@@ -26,7 +26,9 @@ Intake, the highest of what is measured:
     last 2 h when back pressure may be holding them back, else their
     average (a burst is not an intake, S04), or what a GenerateFlowFile is
     set to send, summed. A DuplicateFlowFile that back pressure holds back
-    is passed through, its sources' rate times its copies (S07).
+    is passed through, its sources' rate times its copies (S07), and so,
+    as a second estimate, is a split it holds back: held for longer than
+    its peak goes back, it shows only what it is let send (S24, NFH-88).
 
 A full input queue with FlowFiles waiting behind a fan-out upstream of it
 stays at its limit until they are through, and the queue before the
@@ -40,6 +42,7 @@ show as warnings after that (agent/nodes.py).
 """
 
 import config
+from flows.builder.processors import SPLITTING
 from nifi_healer.actions import catalog
 from nifi_healer.flow.inventory import inventory
 from nifi_healer.kpi import readings
@@ -135,16 +138,18 @@ def _onward(inv: dict, name: str) -> list:
             and c["destination"] not in inv["dlqs"]]
 
 
-def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) -> list | None:
+def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset(), through: bool = False) -> list | None:
     """
     [(processor, FlowFiles reaching `name` per FlowFile it sends)] for the
     processors that feed `name` through a plain chain: those with no input,
     or a split or merge whose output is measured, as what it sends on is
     what reaches `name`. A DuplicateFlowFile that back pressure holds back
     sends less than it is given, so the chain goes on past it, times its
-    copies (S07). None when the way from them branches or loops, or a
-    regrouping is not measured, so their rate is not what reaches it. A
-    dead-letter branch doesn't count.
+    copies (S07). With `through`, so does a split back pressure holds back,
+    times what it sends now per FlowFile its sources send now (_split).
+    None when the way from them branches or loops, or a regrouping is not
+    measured, so their rate is not what reaches it. A dead-letter branch
+    doesn't count.
     """
 
     processors = {p["name"]: p for p in inv["processors"]}
@@ -166,14 +171,14 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
             if ("processor", upstream["name"], "flowfiles_out") not in rows:
                 return None
 
-            found.append((upstream, 1))
+            found += (through and _split(inv, rows, upstream, seen | {name})) or [(upstream, 1)]
             continue
 
         if not _inbound(inv, upstream["name"]):
             found.append((upstream, 1))
             continue
 
-        more = _sources(inv, rows, upstream["name"], seen | {name})
+        more = _sources(inv, rows, upstream["name"], seen | {name}, through)
 
         if more is None:
             return None
@@ -181,6 +186,32 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
         found += [(source, factor * copies) for source, factor in more]
 
     return found or None
+
+
+def _split(inv: dict, rows: dict, split: dict, seen: frozenset) -> list | None:
+    """
+    The sources behind a split that back pressure holds back, each times
+    what the split sends now per FlowFile it sends now. Held for longer
+    than its peak goes back, the split's rate is what it is let send, not
+    what it is given (S24, a backlog older than 2 h); its sources' peak,
+    times its fan-out, is. None when that isn't measured.
+    """
+
+    if split["kind"] not in SPLITTING or not readings.held(inv, rows, split["name"]):
+        return None
+
+    sent = (rows.get(("processor", split["name"], "flowfiles_out")) or {}).get("latest")
+    more = _sources(inv, rows, split["name"], seen, through=True)
+    taken = (rows.get(("processor", split["name"], "flowfiles_in")) or {}).get("latest")
+
+    if not sent or not more:
+        return None
+
+    if taken is None:
+        now = [(rows.get(("processor", source["name"], "flowfiles_out")) or {}).get("latest") for source, _ in more]
+        taken = sum(factor * rate for (_, factor), rate in zip(more, now)) if all(now) else None
+
+    return [(source, factor * sent / taken) for source, factor in more] if taken else None
 
 
 def _behind(inv: dict, rows: dict, name: str, seen: frozenset = frozenset(), factor: int = 1) -> float:
@@ -247,17 +278,16 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
 
         estimates.append(own + growth)
 
-    sources = _sources(inv, rows, name)
-
-    if sources:
+    # From a measured split, and from the sources behind it: the higher counts.
+    for sources in (_sources(inv, rows, name), _sources(inv, rows, name, through=True)):
         rates = []
 
-        for source, copies in sources:
+        for source, copies in sources or ():
             row = rows.get(("processor", source["name"], "flowfiles_out")) or {}
             measured = row.get("peak") if readings.held(inv, rows, source["name"]) else row.get("mean")
             rates.append(copies * max(measured or row.get("latest") or 0.0, _configured(source, nodes)))
 
-        if all(rates):
+        if rates and all(rates):
             estimates.append(sum(rates))
 
     return max(estimates) if estimates else None

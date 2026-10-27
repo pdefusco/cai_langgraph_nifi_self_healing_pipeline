@@ -237,3 +237,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-26 | NFH-86 | diagnose_and_propose, behind `SELFHEAL_SAMPLES`: several first proposals drawn at once, the valid fix most agree on kept; with none valid the first is sent back as before. The vote is on the validation report |
 | 2026-10-26 | NFH-87 | gather_context's readings name the fan-outs and merges a rate is counted after; the prompt compares rates only across stages with none between them, and counts what an expiring queue drops as intake |
 | 2026-10-27 | NFH-87 | The readings note and the prompt rules removed: measured, not kept; the prompt and readings are as before NFH-87 |
+| 2026-10-27 | NFH-88 | validate_proposal's capacity check reads the intake through a split back pressure holds back too, the higher estimate counting |

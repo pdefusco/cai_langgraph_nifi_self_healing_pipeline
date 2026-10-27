@@ -109,9 +109,24 @@ them.
 | NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | 54662b0 |
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
-| NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939 |
+| NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
+| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | In progress | |
 
 ## Open tickets
+
+### NFH-88 · Fix · The capacity check reads a held-back split's own rate as the intake (S24)
+On replay-87-after every S24 round was valid on the first try, and every rationale sized Sessionize against "the
+intake rate of 50/s". The replay's backlog is older than the 2 h a peak goes back, so Split Clicks has sent the
+throttled 50/s for as long as its peak shows, and the capacity check took that as the intake: 2 tasks and 10 ms
+(100/s, only keeping pace with the real 100/s) passed. The source's peak does go back: 2 batches/s, 50 clicks each.
+- 2026-10-27: built. A split back pressure holds back is read through as a second estimate: its sources' rate times
+  what it sends per FlowFile they send now, the higher estimate counting. With 4 h of history 2 tasks and 10 ms are
+  sent back ("about 100/s, within 10% of the intake of about 100/s") and 3 tasks and 0 sec pass; no design fix of
+  p1, p2 or p8–p13 is sent back at 1 h or at 4 h of history.
+- 2026-10-27: a drain-time rule for S02 (the agent's 3 sec, graded short) was weighed and left out. Against the
+  waiting backlog, S01's and S03's design fixes take 166 min to drain and S02's 2 sec 145 min, though the key grades
+  2 sec short: no bound sends back S02's short values without sending back those design fixes. It is a label
+  question, for the label review after NFH-88.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
