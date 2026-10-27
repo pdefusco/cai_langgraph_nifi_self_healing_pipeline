@@ -126,6 +126,10 @@ right. 10 ms and 2 tasks are different levers, so a vote on levers alone wouldn'
   stage, valid draws vote on lever and value as before; with none valid there, its first short draw goes on and is
   sent back with the intake. Replayed by hand on replay-88-s24-after2: rounds 1 and 4 would go back on Sessionize
   instead of approving Merge Sessions; rounds 2, 3, 5 and 6 are unchanged. NFH-88 is judged with it.
+- 2026-10-27: measured on S24 alone, replay-88-s24-before (07c85de) against replay-89-s24-after (c5fa239), 6
+  paired rounds: right value 0% → 67%, worked 0% → 67%, right lever 50% → 67%, valid on the first try 100% → 100%,
+  lift +4% → +46%. Within luck (±67): 4 wins and no losses in 6 pairs is the most 6 rounds of one scenario can show
+  short of 6 of 6. The full run is next, for the other scenarios and for S24 with its rounds there.
 
 ### NFH-88 · Fix · The capacity check reads a held-back split's own rate as the intake (S24)
 On replay-87-after every S24 round was valid on the first try, and every rationale sized Sessionize against "the
