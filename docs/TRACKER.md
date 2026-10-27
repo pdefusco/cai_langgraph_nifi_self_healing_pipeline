@@ -127,6 +127,13 @@ throttled 50/s for as long as its peak shows, and the capacity check took that a
   waiting backlog, S01's and S03's design fixes take 166 min to drain and S02's 2 sec 145 min, though the key grades
   2 sec short: no bound sends back S02's short values without sending back those design fixes. It is a label
   question, for the label review after NFH-88.
+- 2026-10-27: measured. replay-86-after against replay-88-after, all scenarios: right value 69% → 71% (±12), valid
+  on the first try 93% → 95% (±7), worked 83% → 83% (±10), all within luck; S24 there was unchanged, its draws all
+  valid. On S24 alone (6 rounds, from 07c85de and from e6648f7): right lever 50% → 17%, right value and worked 0% →
+  17% (±17), within luck. The one win, 0 sec, passes the old check too. Every round before had 3 of 3 draws valid,
+  and every round after 2 of 3: the check most likely threw out a short Sessionize draw each round, and with
+  NFH-86's vote a discarded draw is not sent back, so a valid draw on the wrong stage won. The vote now keeps each
+  draw's steps and what it would have been sent back for, shown by `replay --show`, to check that on a rerun.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4

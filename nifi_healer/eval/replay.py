@@ -748,7 +748,8 @@ def show(snapshot: dict, ids=()) -> str:
     What the agent proposed in a replay record, case by case: the design
     fix, then each attempt's steps, diagnosis and rationale, and the
     validation problems that sent it back, what the critic said of it
-    (--critic), and how the drawn proposals voted (--samples). Only the scenarios in ids, if any.
+    (--critic), and how the drawn proposals voted (--samples), each draw
+    with what it would have been sent back for. Only the scenarios in ids, if any.
     """
 
     proposals = {}
@@ -772,6 +773,14 @@ def show(snapshot: dict, ids=()) -> str:
                         + (f" · {vote['valid']} of {vote['samples']} drawn valid, {vote['agreeing']} agreeing"
                            if vote else ""))
             rows.append("    steps: " + ("; ".join(_step(s) for s in p.get("action") or []) or "none"))
+
+            for d in (vote or {}).get("drawn") or []:
+                rows.append("    drawn: " + ("; ".join(_step(s) for s in d["steps"]) or "none")
+                            + (" · valid" if not d["problems"] else ""))
+
+                if d["problems"]:
+                    rows.append(_wrapped("  would be sent back", " | ".join(d["problems"]), 600))
+
             rows.append(_wrapped("diagnosis", p.get("diagnosis"), 600))
             rows.append(_wrapped("rationale", p.get("rationale"), 900))
             problems = (p.get("validation") or {}).get("problems") or []

@@ -40,7 +40,9 @@ def test_the_fix_most_agree_on(agent, monkeypatch):
     assert len(model.calls) == 3 and state["attempts"] == 1
     assert row["status"] == "VALID" and row["action"] == list(S01_FIX)
     assert row["agent_version"].endswith("/samples:3")
-    assert state["plan"]["vote"] == {"samples": 3, "replies": 3, "valid": 3, "same_lever": 2, "agreeing": 2}
+    vote = dict(state["plan"]["vote"])
+    assert [d["problems"] for d in vote.pop("drawn")] == [[], [], []]
+    assert vote == {"samples": 3, "replies": 3, "valid": 3, "same_lever": 2, "agreeing": 2}
 
 
 def test_the_lever_first_then_the_value(agent, monkeypatch):
@@ -66,7 +68,14 @@ def test_the_rejected_draws_do_not_vote(agent, monkeypatch):
 
     assert len(model.calls) == 3 and state["attempts"] == 1
     assert state["plan"]["ok"] and state["plan"]["steps"] == [schedule("S30 Pick Items", "0 sec")]
-    assert state["plan"]["vote"] == {"samples": 3, "replies": 3, "valid": 1, "same_lever": 1, "agreeing": 1}
+    vote = dict(state["plan"]["vote"])
+    drawn = vote.pop("drawn")
+    assert vote == {"samples": 3, "replies": 3, "valid": 1, "same_lever": 1, "agreeing": 1}
+
+    # Each draw is kept with what it would have been sent back for.
+    assert [d["steps"] for d in drawn] == [[tasks("S30 Pick Items", 2)], [schedule("S30 Pick Items", "0 sec")],
+                                           [tasks("S30 Pick Items", 2)]]
+    assert [len(d["problems"]) for d in drawn] == [1, 0, 1] and "below the intake" in drawn[0]["problems"][0]
 
 
 def test_none_valid_is_sent_back_as_one_would_be(agent, monkeypatch):

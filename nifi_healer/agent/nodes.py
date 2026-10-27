@@ -214,18 +214,18 @@ def _fix(steps: list, values: bool = True) -> frozenset:
     return frozenset(found)
 
 
-def _valid(proposal, incident: dict, state: dict) -> bool:
-    """Whether the validators and the capacity check would pass this proposal on a first attempt."""
+def _problems(proposal, incident: dict, state: dict) -> list:
+    """What the validators and the capacity check would send this proposal back for on a first attempt; [] if none."""
 
     try:
         full = executor.plan(get_client(), incident, proposal.as_dict()["steps"], get_store())
 
-        return bool(full["ok"]) and not _capacity(full, incident, state)
+        return list(full["problems"]) if not full["ok"] else _capacity(full, incident, state)
 
     except Exception as exc:  # a reason to leave this draw out, not to fail the diagnosis
         log(f"{incident['id']}: could not check a drawn proposal: {exc}")
 
-        return False
+        return [f"could not be checked: {exc}"]
 
 
 def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> tuple:
@@ -235,7 +235,9 @@ def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> t
     check, the most of them that change the same things, then the most of
     those that set the same values; the first drawn on a tie. With none
     valid, the first usable reply goes on, to be sent back as one draw
-    would be. Raises only if every call raised.
+    would be. The vote keeps every usable draw's steps and what it would
+    have been sent back for, to read in `replay --show`. Raises only if
+    every call raised.
     """
 
     with ThreadPoolExecutor(max_workers=samples) as pool:
@@ -253,8 +255,10 @@ def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> t
         raise failed
 
     usable = [d for d in drawn if d[0] is not None]
-    valid = [d for d in usable if _valid(d[0], incident, state)]
-    vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_lever": 0, "agreeing": 0}
+    checked = [(d, _problems(d[0], incident, state)) for d in usable]
+    valid = [d for d, problems in checked if not problems]
+    vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_lever": 0, "agreeing": 0,
+            "drawn": [{"steps": d[0].as_dict()["steps"], "problems": problems} for d, problems in checked]}
 
     if not valid:
         return (usable or drawn)[0] + (vote,)

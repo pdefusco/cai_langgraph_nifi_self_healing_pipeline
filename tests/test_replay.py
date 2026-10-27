@@ -233,6 +233,16 @@ def test_what_the_agent_proposed(replayed):
     assert "=== S02" in replay.show(snapshot)
 
 
+def test_what_each_draw_would_have_been_sent_back_for(replayed):
+    llm.set_chat_model(TooManyTasksLLM())
+    replay.run(["S01"], samples=3)
+    shown = replay.show(replay.load())
+
+    # The first attempt's three draws, each out of bounds; the retries are one draw each.
+    assert shown.count('    drawn: SET_CONCURRENT_TASKS S01 Consumer {"value": 99}\n      would be sent back:') == 3
+    assert "· valid" not in shown
+
+
 class PromptKeepingOracle(replay.OracleLLM):
     def __init__(self):
         super().__init__()
