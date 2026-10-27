@@ -110,47 +110,10 @@ them.
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
 | NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
-| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | In progress | e6648f7, a810646 |
-| NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | In progress | |
+| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646 |
+| NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732 |
 
 ## Open tickets
-
-### NFH-89 · Fix · The vote throws out the right stage's draws when all are short (S24)
-With NFH-88's check, replay-88-s24-after2 drew two short Sessionize fixes (2 tasks, 10 ms: about 100/s against
-about 100/s) and one valid Merge Sessions fix in rounds 1 and 4, and one of each in round 6. The vote kept only the
-valid draws, so Merge Sessions won and didn't help. In round 3 all three were short, the first went back with the
-intake, and the retry (0 sec) worked: a short draw names the right stage, and its feedback is what gets the value
-right. 10 ms and 2 tasks are different levers, so a vote on levers alone wouldn't group them.
-- 2026-10-27: built. The vote counts stages first, short draws as well as valid ones (short: the validators pass
-  and the capacity check finds only a shortfall, not "no backlog"); a stage with a valid draw wins a tie. Within the
-  stage, valid draws vote on lever and value as before; with none valid there, its first short draw goes on and is
-  sent back with the intake. Replayed by hand on replay-88-s24-after2: rounds 1 and 4 would go back on Sessionize
-  instead of approving Merge Sessions; rounds 2, 3, 5 and 6 are unchanged. NFH-88 is judged with it.
-- 2026-10-27: measured on S24 alone, replay-88-s24-before (07c85de) against replay-89-s24-after (c5fa239), 6
-  paired rounds: right value 0% → 67%, worked 0% → 67%, right lever 50% → 67%, valid on the first try 100% → 100%,
-  lift +4% → +46%. Within luck (±67): 4 wins and no losses in 6 pairs is the most 6 rounds of one scenario can show
-  short of 6 of 6. The full run is next, for the other scenarios and for S24 with its rounds there.
-
-### NFH-88 · Fix · The capacity check reads a held-back split's own rate as the intake (S24)
-On replay-87-after every S24 round was valid on the first try, and every rationale sized Sessionize against "the
-intake rate of 50/s". The replay's backlog is older than the 2 h a peak goes back, so Split Clicks has sent the
-throttled 50/s for as long as its peak shows, and the capacity check took that as the intake: 2 tasks and 10 ms
-(100/s, only keeping pace with the real 100/s) passed. The source's peak does go back: 2 batches/s, 50 clicks each.
-- 2026-10-27: built. A split back pressure holds back is read through as a second estimate: its sources' rate times
-  what it sends per FlowFile they send now, the higher estimate counting. With 4 h of history 2 tasks and 10 ms are
-  sent back ("about 100/s, within 10% of the intake of about 100/s") and 3 tasks and 0 sec pass; no design fix of
-  p1, p2 or p8–p13 is sent back at 1 h or at 4 h of history.
-- 2026-10-27: a drain-time rule for S02 (the agent's 3 sec, graded short) was weighed and left out. Against the
-  waiting backlog, S01's and S03's design fixes take 166 min to drain and S02's 2 sec 145 min, though the key grades
-  2 sec short: no bound sends back S02's short values without sending back those design fixes. It is a label
-  question, for the label review after NFH-88.
-- 2026-10-27: measured. replay-86-after against replay-88-after, all scenarios: right value 69% → 71% (±12), valid
-  on the first try 93% → 95% (±7), worked 83% → 83% (±10), all within luck; S24 there was unchanged, its draws all
-  valid. On S24 alone (6 rounds, from 07c85de and from e6648f7): right lever 50% → 17%, right value and worked 0% →
-  17% (±17), within luck. The one win, 0 sec, passes the old check too. Every round before had 3 of 3 draws valid,
-  and every round after 2 of 3: the check most likely threw out a short Sessionize draw each round, and with
-  NFH-86's vote a discarded draw is not sent back, so a valid draw on the wrong stage won. The vote now keeps each
-  draw's steps and what it would have been sent back for, shown by `replay --show`, to check that on a rerun.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
@@ -276,6 +239,52 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-89 · Fix · The vote throws out the right stage's draws when all are short (S24)
+With NFH-88's check, replay-88-s24-after2 drew two short Sessionize fixes (2 tasks, 10 ms: about 100/s against
+about 100/s) and one valid Merge Sessions fix in rounds 1 and 4, and one of each in round 6. The vote kept only the
+valid draws, so Merge Sessions won and didn't help. In round 3 all three were short, the first went back with the
+intake, and the retry (0 sec) worked: a short draw names the right stage, and its feedback is what gets the value
+right. 10 ms and 2 tasks are different levers, so a vote on levers alone wouldn't group them.
+- 2026-10-27: built. The vote counts stages first, short draws as well as valid ones (short: the validators pass
+  and the capacity check finds only a shortfall, not "no backlog"); a stage with a valid draw wins a tie. Within the
+  stage, valid draws vote on lever and value as before; with none valid there, its first short draw goes on and is
+  sent back with the intake. Replayed by hand on replay-88-s24-after2: rounds 1 and 4 would go back on Sessionize
+  instead of approving Merge Sessions; rounds 2, 3, 5 and 6 are unchanged. NFH-88 is judged with it.
+- 2026-10-27: measured on S24 alone, replay-88-s24-before (07c85de) against replay-89-s24-after (c5fa239), 6
+  paired rounds: right value 0% → 67%, worked 0% → 67%, right lever 50% → 67%, valid on the first try 100% → 100%,
+  lift +4% → +46%. Within luck (±67): 4 wins and no losses in 6 pairs is the most 6 rounds of one scenario can show
+  short of 6 of 6. The full run is next, for the other scenarios and for S24 with its rounds there.
+- 2026-10-27: measured on CAI, replay-89-after (--samples 3, the 14 scenarios × 3) against replay-88-after: valid on
+  the first try 95% → 79% (−17 pts, luck alone ±12), beyond luck downward; right value 71% → 71% and worked 83% →
+  83%, within luck. S01, S07, S24, S25 and S30 went back for a short draw where a valid one had been approved; only
+  S24 gained from it, and S30's right value fell 100% → 33%. Against replay-86-after (NFH-88 and NFH-89 together):
+  right value 69% → 71% (±12), valid on the first try 93% → 79% (±14), worked 83% → 83%, all within luck. Measured,
+  not kept, and reverted: the vote is as NFH-86 built it.
+
+### NFH-88 · Fix · The capacity check reads a held-back split's own rate as the intake (S24)
+On replay-87-after every S24 round was valid on the first try, and every rationale sized Sessionize against "the
+intake rate of 50/s". The replay's backlog is older than the 2 h a peak goes back, so Split Clicks has sent the
+throttled 50/s for as long as its peak shows, and the capacity check took that as the intake: 2 tasks and 10 ms
+(100/s, only keeping pace with the real 100/s) passed. The source's peak does go back: 2 batches/s, 50 clicks each.
+- 2026-10-27: built. A split back pressure holds back is read through as a second estimate: its sources' rate times
+  what it sends per FlowFile they send now, the higher estimate counting. With 4 h of history 2 tasks and 10 ms are
+  sent back ("about 100/s, within 10% of the intake of about 100/s") and 3 tasks and 0 sec pass; no design fix of
+  p1, p2 or p8–p13 is sent back at 1 h or at 4 h of history.
+- 2026-10-27: a drain-time rule for S02 (the agent's 3 sec, graded short) was weighed and left out. Against the
+  waiting backlog, S01's and S03's design fixes take 166 min to drain and S02's 2 sec 145 min, though the key grades
+  2 sec short: no bound sends back S02's short values without sending back those design fixes. It is a label
+  question, for the label review after NFH-88.
+- 2026-10-27: measured. replay-86-after against replay-88-after, all scenarios: right value 69% → 71% (±12), valid
+  on the first try 93% → 95% (±7), worked 83% → 83% (±10), all within luck; S24 there was unchanged, its draws all
+  valid. On S24 alone (6 rounds, from 07c85de and from e6648f7): right lever 50% → 17%, right value and worked 0% →
+  17% (±17), within luck. The one win, 0 sec, passes the old check too. Every round before had 3 of 3 draws valid,
+  and every round after 2 of 3: the check most likely threw out a short Sessionize draw each round, and with
+  NFH-86's vote a discarded draw is not sent back, so a valid draw on the wrong stage won. The vote now keeps each
+  draw's steps and what it would have been sent back for, shown by `replay --show`, to check that on a rerun.
+- 2026-10-27: not kept. Within luck on its own and with NFH-89 (above), on right value and worked, the two a
+  capacity-check change is judged on; reverted, so the check is as before NFH-88. Each draw's steps and what it would
+  have been sent back for stay on the vote and in `replay --show` (a810646): they change nothing the agent does.
 
 ### NFH-87 · Fix · A merge's small output reads as the slow stage, and an expiring queue hides the intake
 On replay-86-after the agent misses S24 in all 3 rounds and S25 in one. S24's readings show Sessionize at 50/s, its

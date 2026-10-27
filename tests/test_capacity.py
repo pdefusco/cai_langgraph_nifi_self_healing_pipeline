@@ -98,23 +98,6 @@ def test_a_measured_split_is_where_the_intake_starts(agent):
     assert problems(client, store, incident, [tasks("S24 Sessionize", 3)]) == []
 
 
-def test_a_split_held_longer_than_its_peak_is_read_through(agent):
-    # S24 with 4 h of backlog: the split has sent 50/s for as long as its peak goes back, and the source is
-    # held to 1/s. 50 clicks per batch times the source's 2/s is the intake (replay-87-after, NFH-88).
-    _, client, store, incidents, _ = agent("p9-clickstream", history=4 * 3600)
-    incident = incidents["S24"]
-    Poller(client, store).backfill("p9-clickstream", fleet.pack("p9-clickstream"))
-    shown = readings.render(readings.for_incident(incident, store, client.now())).splitlines()
-
-    assert "- S24 Split Clicks: 50/s out: flat" in shown
-    assert "- S24 Click Batches (a source): 1/s out, up to 2/s in the last 2 h: flat" in shown
-    for steps in ([tasks("S24 Sessionize", 2)], [schedule("S24 Sessionize", "10 ms")]):
-        [short] = problems(client, store, incident, steps)
-        assert "is about 100/s, within 10% of the intake of about 100/s" in short
-    assert problems(client, store, incident, [tasks("S24 Sessionize", 3)]) == []
-    assert problems(client, store, incident, [schedule("S24 Sessionize", "0 sec")]) == []
-
-
 def test_a_held_fan_out_is_read_through(agent):
     # S07: 0.1/s from the source, each copied 100 times plus the original, so 10/s reach the sink. Back
     # pressure holds the fan-out, which shows less than that, and its own input queue fills behind it.

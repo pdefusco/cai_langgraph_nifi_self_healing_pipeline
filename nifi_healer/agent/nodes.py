@@ -8,8 +8,8 @@ The graph's nodes. Each takes the state and returns the fields it changed.
                           the most similar past cases (rag/memory.py), and, for
                           the reviewer only, the fixes' track records (rag/priors.py)
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry); with
-                          SELFHEAL_SAMPLES, several drawn at once on the first attempt,
-                          the stage most of them change and the valid fix there kept
+                          SELFHEAL_SAMPLES, several drawn at once on the first attempt
+                          and the valid fix most of them agree on kept
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv; capacity
                           against the intake (actions/capacity.py)
     critique_proposal     with SELFHEAL_CRITIC, the LLM again: objections to a valid fix,
@@ -214,49 +214,30 @@ def _fix(steps: list, values: bool = True) -> frozenset:
     return frozenset(found)
 
 
-def _stage(steps: list) -> frozenset:
-    """The processors and connections a fix changes, whatever it changes on them."""
-
-    return frozenset(s.get("target") for s in steps)
-
-
-def _problems(proposal, incident: dict, state: dict) -> tuple:
-    """
-    (what the validators and the capacity check would send this proposal
-    back for on a first attempt, [] if none; whether it is only short of
-    the intake, at a stage with a backlog).
-    """
+def _problems(proposal, incident: dict, state: dict) -> list:
+    """What the validators and the capacity check would send this proposal back for on a first attempt; [] if none."""
 
     try:
         full = executor.plan(get_client(), incident, proposal.as_dict()["steps"], get_store())
 
-        if not full["ok"]:
-            return list(full["problems"]), False
-
-        problems = _capacity(full, incident, state)
-
-        return problems, bool(problems) and capacity.NO_BACKLOG not in problems
+        return list(full["problems"]) if not full["ok"] else _capacity(full, incident, state)
 
     except Exception as exc:  # a reason to leave this draw out, not to fail the diagnosis
         log(f"{incident['id']}: could not check a drawn proposal: {exc}")
 
-        return [f"could not be checked: {exc}"], False
+        return [f"could not be checked: {exc}"]
 
 
 def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> tuple:
     """
     (a Proposal | None, raw text, error, vote) from `samples` proposals
-    drawn at once (NFH-86). The stage the most of them change, counting
-    those only short of the intake as well as the valid (NFH-89): a short
-    draw names the right stage as surely as a valid one, and left out, a
-    lone valid draw elsewhere wins (S24). Of the valid draws for it, the
-    most that change the same things, then the most that set the same
-    values; the first drawn on a tie, and a stage with a valid draw on a
-    tie of stages. With none valid for it, its first short draw goes on, to
-    be sent back with the intake to size against; with none valid or short,
-    the first usable reply, as one draw would be. The vote keeps every
-    usable draw's steps and what it would have been sent back for, to read
-    in `replay --show`. Raises only if every call raised.
+    drawn at once (NFH-86). Of those that pass validation and the capacity
+    check, the most of them that change the same things, then the most of
+    those that set the same values; the first drawn on a tie. With none
+    valid, the first usable reply goes on, to be sent back as one draw
+    would be. The vote keeps every usable draw's steps and what it would
+    have been sent back for, to read in `replay --show`. Raises only if
+    every call raised.
     """
 
     with ThreadPoolExecutor(max_workers=samples) as pool:
@@ -274,24 +255,13 @@ def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> t
         raise failed
 
     usable = [d for d in drawn if d[0] is not None]
-    checked = [(d, *_problems(d[0], incident, state)) for d in usable]
-    valid = [d for d, problems, _ in checked if not problems]
-    short = [d for d, _, only_short in checked if only_short]
-    vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_stage": 0, "same_lever": 0,
-            "agreeing": 0,
-            "drawn": [{"steps": d[0].as_dict()["steps"], "problems": problems} for d, problems, _ in checked]}
-
-    if not valid and not short:
-        return (usable or drawn)[0] + (vote,)
-
-    stages = collections.Counter(_stage(d[0].as_dict()["steps"]) for d in valid + short)
-    held = {_stage(d[0].as_dict()["steps"]) for d in valid}
-    stage = max(stages, key=lambda s: (stages[s], s in held))
-    vote.update(same_stage=stages[stage])
-    valid = [d for d in valid if _stage(d[0].as_dict()["steps"]) == stage]
+    checked = [(d, _problems(d[0], incident, state)) for d in usable]
+    valid = [d for d, problems in checked if not problems]
+    vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_lever": 0, "agreeing": 0,
+            "drawn": [{"steps": d[0].as_dict()["steps"], "problems": problems} for d, problems in checked]}
 
     if not valid:
-        return next(d for d in short if _stage(d[0].as_dict()["steps"]) == stage) + (vote,)
+        return (usable or drawn)[0] + (vote,)
 
     steps = [d[0].as_dict()["steps"] for d in valid]
     levers = collections.Counter(_fix(s, values=False) for s in steps)
@@ -327,7 +297,7 @@ def diagnose_and_propose(state: dict) -> dict:
         if attempts == 1 and config.SAMPLES > 1:
             proposal, raw, error, vote = _draw(model, messages, incident, state, config.SAMPLES)
             log(f"{incident['id']}: {vote['valid']} of {vote['samples']} drawn proposals valid, "
-                f"{vote['same_stage']} on one stage, {vote['agreeing']} agreeing")
+                f"{vote['agreeing']} agreeing")
 
         else:
             proposal, raw, error = _ask(model, messages)
