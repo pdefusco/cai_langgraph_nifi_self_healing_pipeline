@@ -116,7 +116,7 @@ WALKTHROUGHS = {
         imbalance changes.
 
         The fix is to give the consumer more capacity. Four concurrent tasks gives it four a second, and a
-        250 ms run schedule does the same thing with a single task, so we accept either one. Raising the back
+        300 ms run schedule gives it 3.3 a second with a single task, so we accept either one. Raising the back
         pressure threshold on `s01-backlog` is the tempting wrong answer, since it makes the alert go away for a
         while, but the queue just grows bigger. Restarting the deployment doesn't drain anything either.
     """,
@@ -127,8 +127,9 @@ WALKTHROUGHS = {
 
         Concurrency can't fix this one. Even at eight tasks, the most the agent is
         allowed to set, the drain would reach 0.8 a second and the queue would still grow. The setting that's
-        actually wrong is the run schedule. Changing it to 1 sec gives four a second, and 0 sec is accepted
-        too.
+        actually wrong is the run schedule. Changing it to 1 sec gives four a second. We accept 3 sec too, 1.3
+        a second, the slowest schedule that kept up in every test round (3.6 sec didn't), though it takes
+        longer to drain.
     """,
     "S03": """
         A three-stage pipeline with a weak middle. Two FlowFiles arrive each second. S03 Enrich and S03 Publish
@@ -183,8 +184,9 @@ WALKTHROUGHS = {
         on `s07-fanout` just stores the flood. The design fix is to let the sink run as fast as it can, with a
         0 sec schedule.
 
-        A 100 ms schedule and four concurrent tasks are also on the accepted list. On paper neither quite keeps
-        up (10 a second and 4 a second against 10.1), so those two entries probably deserve a second look.
+        A 20 ms schedule, 50 a second, is accepted too. Settings that only just keep up, like 50 or 100 ms or
+        more tasks, don't help: the FlowFiles waiting behind the fan-out keep `s07-fanout` at its limit until
+        they're through, and only a sink well ahead of 10.1 a second clears them in time.
     """,
     "S08": """
         S08 Runaway Source is a GenerateFlowFile with a run schedule of 0 sec, so it produces FlowFiles as fast
@@ -419,9 +421,9 @@ WALKTHROUGHS = {
         after the sessionizer, takes in half as many FlowFiles as the source sends out, and Score Engagement's
         input is what decides the outcome.
 
-        The fix is to give the sessionizer four tasks, or a 0 sec schedule, so it keeps up and nothing waits
-        long enough to expire. Removing the expiration on its own isn't enough. It just turns the silent loss
-        into a backlog growing by ten a second.
+        The fix is to give the sessionizer four tasks, three, or a schedule of 40 ms or shorter, so it keeps
+        up and nothing waits long enough to expire. Removing the expiration on its own isn't enough. It just
+        turns the silent loss into a backlog growing by ten a second.
     """,
     "S26": """
         Sensor readings arrive at 50 a second and are parsed, converted and tagged with their site before S26
@@ -493,8 +495,8 @@ WALKTHROUGHS = {
 
         Fixing one stage only moves the problem. If picking runs at full speed, the labeller gets all 20 orders a
         second and falls further behind. If labelling is fixed first, picking is still as slow as it was. Both
-        run schedules have to change before the KPIs clear, and the replay checks that the agent gets there
-        over two rounds.
+        stages have to speed up before the KPIs clear, and the replay checks that the agent gets there
+        over two rounds. Three tasks on picking and five on labelling, or 40 ms on either, are accepted too.
 
         The stages in between are back-pressured, not slow, and a bigger queue in front of picking only holds a
         bigger backlog.

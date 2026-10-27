@@ -139,7 +139,7 @@ This is the simplest scenario we have, and the others build on it. A source crea
 
 That leaves two FlowFiles a second behind, 120 a minute, and `s01-backlog` passes the alert threshold of 500 roughly four minutes after the flow starts. It never levels off, because nothing about the imbalance changes.
 
-The fix is to give the consumer more capacity. Four concurrent tasks gives it four a second, and a 250 ms run schedule does the same thing with a single task, so we accept either one. Raising the back pressure threshold on `s01-backlog` is the tempting wrong answer, since it makes the alert go away for a while, but the queue just grows bigger. Restarting the deployment doesn't drain anything either.
+The fix is to give the consumer more capacity. Four concurrent tasks gives it four a second, and a 300 ms run schedule gives it 3.3 a second with a single task, so we accept either one. Raising the back pressure threshold on `s01-backlog` is the tempting wrong answer, since it makes the alert go away for a while, but the queue just grows bigger. Restarting the deployment doesn't drain anything either.
 
 ```mermaid
 flowchart LR
@@ -152,7 +152,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s01-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S01 Consumer. Whether a fix worked is decided by the size of the queue `s01-backlog`. The fix we grade as correct is setting the concurrent tasks on S01 Consumer to 4 or more. We also accept setting the run schedule of S01 Consumer to 250 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s01-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S01 Consumer. Whether a fix worked is decided by the size of the queue `s01-backlog`. The fix we grade as correct is setting the concurrent tasks on S01 Consumer to 4 or more. We also accept setting the run schedule of S01 Consumer to 300 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 2 processors, 1 connection</summary>
@@ -174,7 +174,7 @@ flowchart LR
 
 Here the drain already has four concurrent tasks, which looks like plenty, but it's scheduled to run only every ten seconds. Each task wakes up, takes one FlowFile and goes back to sleep, so the drain manages four FlowFiles every ten seconds, 0.4 a second, against one a second arriving.
 
-Concurrency can't fix this one. Even at eight tasks, the most the agent is allowed to set, the drain would reach 0.8 a second and the queue would still grow. The setting that's actually wrong is the run schedule. Changing it to 1 sec gives four a second, and 0 sec is accepted too.
+Concurrency can't fix this one. Even at eight tasks, the most the agent is allowed to set, the drain would reach 0.8 a second and the queue would still grow. The setting that's actually wrong is the run schedule. Changing it to 1 sec gives four a second. We accept 3 sec too, 1.3 a second, the slowest schedule that kept up in every test round (3.6 sec didn't), though it takes longer to drain.
 
 ```mermaid
 flowchart LR
@@ -187,7 +187,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s02-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S02 Drain. Whether a fix worked is decided by the size of the queue `s02-backlog`. The fix we grade as correct is setting the run schedule of S02 Drain to 1 sec or shorter. We also accept setting the run schedule of S02 Drain to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s02-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S02 Drain. Whether a fix worked is decided by the size of the queue `s02-backlog`. The fix we grade as correct is setting the run schedule of S02 Drain to 1 sec or shorter. We also accept setting the run schedule of S02 Drain to 3 sec or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 2 processors, 1 connection</summary>
@@ -367,7 +367,7 @@ A source sends one FlowFile every ten seconds to S07 Fan Out, a DuplicateFlowFil
 
 It's tempting to treat the fan-out as the problem and lower Number of Copies, but in this flow the copies are the business logic, and changing them changes what the flow produces. Raising the threshold on `s07-fanout` just stores the flood. The design fix is to let the sink run as fast as it can, with a 0 sec schedule.
 
-A 100 ms schedule and four concurrent tasks are also on the accepted list. On paper neither quite keeps up (10 a second and 4 a second against 10.1), so those two entries probably deserve a second look.
+A 20 ms schedule, 50 a second, is accepted too. Settings that only just keep up, like 50 or 100 ms or more tasks, don't help: the FlowFiles waiting behind the fan-out keep `s07-fanout` at its limit until they're through, and only a sink well ahead of 10.1 a second clears them in time.
 
 ```mermaid
 flowchart LR
@@ -382,7 +382,7 @@ flowchart LR
     class p2 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s07-fanout` holds more than 1,000 FlowFiles for a minute. We also chart the size of the queue `s07-to-fanout`. Whether a fix worked is decided by the size of the queue `s07-fanout`. The fix we grade as correct is setting the run schedule of S07 Sink to 0 sec. We also accept setting the run schedule of S07 Sink to 100 ms or shorter or setting the concurrent tasks on S07 Sink to 4 or more. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s07-fanout` holds more than 1,000 FlowFiles for a minute. We also chart the size of the queue `s07-to-fanout`. Whether a fix worked is decided by the size of the queue `s07-fanout`. The fix we grade as correct is setting the run schedule of S07 Sink to 0 sec. We also accept setting the run schedule of S07 Sink to 20 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 3 processors, 2 connections</summary>
@@ -1259,7 +1259,7 @@ Page views arrive at 20 a second. They're parsed, filtered for bots, have their 
 
 The buffer's alert at 5,000 is never reached. What gives it away is that S25 Score Engagement, the stage after the sessionizer, takes in half as many FlowFiles as the source sends out, and Score Engagement's input is what decides the outcome.
 
-The fix is to give the sessionizer four tasks, or a 0 sec schedule, so it keeps up and nothing waits long enough to expire. Removing the expiration on its own isn't enough. It just turns the silent loss into a backlog growing by ten a second.
+The fix is to give the sessionizer four tasks, three, or a schedule of 40 ms or shorter, so it keeps up and nothing waits long enough to expire. Removing the expiration on its own isn't enough. It just turns the silent loss into a backlog growing by ten a second.
 
 ```mermaid
 flowchart TD
@@ -1288,7 +1288,7 @@ flowchart TD
     class p5 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s25-session-buffer` holds more than 5,000 FlowFiles for a minute. We also chart FlowFiles out of S25 Page Views and FlowFiles into S25 Score Engagement. Whether a fix worked is decided by FlowFiles into S25 Score Engagement. The fix we grade as correct is setting the concurrent tasks on S25 Sessionize to 4 or more. We also accept setting the concurrent tasks on S25 Sessionize to 3 or more or setting the run schedule of S25 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s25-session-buffer` holds more than 5,000 FlowFiles for a minute. We also chart FlowFiles out of S25 Page Views and FlowFiles into S25 Score Engagement. Whether a fix worked is decided by FlowFiles into S25 Score Engagement. The fix we grade as correct is setting the concurrent tasks on S25 Sessionize to 4 or more. We also accept setting the concurrent tasks on S25 Sessionize to 3 or more or setting the run schedule of S25 Sessionize to 40 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>
@@ -1671,7 +1671,7 @@ p12 starts the compound scenarios, which have more than one fault and aren't fix
 
 A warehouse order flow with 20 orders a second coming in and two stages that are too slow. S30 Pick Items runs one task every 125 ms, which is eight a second, and S30 Label Parcel, three stages later, runs one task every 200 ms, five a second. The queue in front of picking fills at twelve a second and reaches its limit of 2,000 in under three minutes. The labeller only receives eight a second from picking, so its queue fills more slowly, at three a second, and is full in about eleven minutes.
 
-Fixing one stage only moves the problem. If picking runs at full speed, the labeller gets all 20 orders a second and falls further behind. If labelling is fixed first, picking is still as slow as it was. Both run schedules have to change before the KPIs clear, and the replay checks that the agent gets there over two rounds.
+Fixing one stage only moves the problem. If picking runs at full speed, the labeller gets all 20 orders a second and falls further behind. If labelling is fixed first, picking is still as slow as it was. Both stages have to speed up before the KPIs clear, and the replay checks that the agent gets there over two rounds. Three tasks on picking and five on labelling, or 40 ms on either, are accepted too.
 
 The stages in between are back-pressured, not slow, and a bigger queue in front of picking only holds a bigger backlog.
 
@@ -1704,7 +1704,7 @@ flowchart TD
     class p3,p6 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s30-to-pick` holds more than 1,500 FlowFiles for a minute or when the queue `s30-to-label` holds more than 1,500 FlowFiles for a minute. We also chart FlowFiles into S30 Ship Parcels. Whether a fix worked is decided by the size of the queue `s30-to-pick` and the size of the queue `s30-to-label`. Its KPIs only clear once both fixes are in, setting the run schedule of S30 Pick Items to 0 sec and setting the run schedule of S30 Label Parcel to 0 sec. For the first proposal we grade setting the run schedule of S30 Pick Items to 0 sec as the design fix. We also accept setting the run schedule of S30 Label Parcel to 0 sec, setting the concurrent tasks on S30 Pick Items to 4 or more or setting the concurrent tasks on S30 Label Parcel to 8 or more. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s30-to-pick` holds more than 1,500 FlowFiles for a minute or when the queue `s30-to-label` holds more than 1,500 FlowFiles for a minute. We also chart FlowFiles into S30 Ship Parcels. Whether a fix worked is decided by the size of the queue `s30-to-pick` and the size of the queue `s30-to-label`. Its KPIs only clear once both fixes are in, setting the run schedule of S30 Pick Items to 0 sec and setting the run schedule of S30 Label Parcel to 0 sec. For the first proposal we grade setting the run schedule of S30 Pick Items to 0 sec as the design fix. We also accept setting the run schedule of S30 Label Parcel to 0 sec, setting the run schedule of S30 Pick Items to 40 ms or shorter, setting the run schedule of S30 Label Parcel to 40 ms or shorter, setting the concurrent tasks on S30 Pick Items to 3 or more or setting the concurrent tasks on S30 Label Parcel to 5 or more. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 11 processors, 10 connections</summary>

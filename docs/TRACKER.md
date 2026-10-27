@@ -110,8 +110,9 @@ them.
 | NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
 | NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
-| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646 |
-| NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732 |
+| NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646, 3ade318 |
+| NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732, 3ade318 |
+| NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | |
 
 ## Open tickets
 
@@ -122,6 +123,8 @@ timeout, which the same fix shortens. S13's is sent back as "none of the process
 it". `test_no_design_fix_is_sent_back` covers p1, p2 and p8–p13 only, so neither showed. The oracle's third try
 passes as a warning, so both still work; the agent's first try isn't valid.
 - 2026-10-26: found on the NFH-84 A/A. Open.
+- 2026-10-27: NFH-90's probe found a third: S07 at 20 ms (50/s) is sent back on the first try, though it worked and
+  cleared in 3 of 3 rounds.
 
 ### NFH-50 · Ops · Phase 4 M6: live rollout and the review pass
 p1–p13 are deployed on pdf1019-cdp-env, each EXTRA_SMALL ×1. Every pack's first incidents are being reviewed against
@@ -235,6 +238,25 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 - 2026-10-22: re-graded with NFH-75, after-3 → after-4: design fix 25% → 50%, right value 50% → 67%, right lever
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
+
+### NFH-90 · Fix · S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round
+Several labels were picked from arithmetic, and some were off: S07 accepted 100 ms and 4 tasks, which can't keep up
+with 10.1/s, and S30's 4 and 8 tasks were more than it needs. Each candidate was replayed on the local mock with an
+oracle proposing it (3 rounds, two fixes for S30, `~/.cache/cai_deploy/label_probe.py`). The user's rule: a label is
+the smallest value, with the prompt's 10% headroom, that worked in 3 of 3 rounds; clearing can't be the rule, as S01
+clears in none even at 4 tasks.
+- 2026-10-27: worked (cleared) of 3 rounds:
+  - S01: 4 tasks 3 (0), 300 ms 3 (0), 3 tasks 0. 300 ms accepted, for 250 ms.
+  - S02: 1 sec 3 (3), 2 sec 3 (0), 3 sec 3 (0), 3600 ms 0. 3 sec accepted; 1 sec stays the design fix, as the oracle
+    proposes it and 3 sec doesn't clear in the replay. 0 sec, which 3 sec covers, is no longer listed.
+  - S03: 3 tasks 3, 450 ms 3, 2 tasks 0 (made it worse). Unchanged.
+  - S04: 2 tasks 2 (1), 4 tasks 2 (3), 6 and 8 tasks 3 (3). Unchanged at 4: 2 tasks don't keep up after all.
+  - S07: 0 sec and 20 ms 3 (3); 100 ms, 90 ms, 50 ms, 4 and 8 tasks 0. The FlowFiles behind the fan-out hold the
+    queue at its limit until they're through. 20 ms accepted; 100 ms and 4 tasks dropped.
+  - S25: 40 ms, 2, 3 and 4 tasks 3 (3). 40 ms accepted, for 0 sec; 2 tasks have no headroom.
+  - S30: Pick 3 + Label 5 3 (3), Pick 40 ms + Label 40 ms 3 (3), Pick 2 + Label 5 0, Pick 3 + Label 4 0. 3 and 5
+    tasks and 40 ms on either accepted, for 4 and 8 tasks. The first fix alone never helps, even at 0 sec.
+  The Scorecard re-grades stored steps, so earlier runs read on the new labels. The agent is never shown them.
 
 ## Closed tickets
 

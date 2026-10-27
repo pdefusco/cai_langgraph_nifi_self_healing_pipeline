@@ -29,7 +29,7 @@ S01 = Scenario(
     ),
     family="FLOW_EDIT",
     expected=(action("SET_CONCURRENT_TASKS", "S01 Consumer", value=4),),
-    acceptable=(action("SET_RUN_SCHEDULE", "S01 Consumer", value="250 ms"),),
+    acceptable=(action("SET_RUN_SCHEDULE", "S01 Consumer", value="300 ms"),),
     traps=(
         "Raising the back-pressure threshold on s01-backlog only lets the backlog grow larger.",
         "Restarting the deployment does not drain a backlog; it pauses the consumer.",
@@ -57,7 +57,9 @@ S02 = Scenario(
     ),
     family="FLOW_EDIT",
     expected=(action("SET_RUN_SCHEDULE", "S02 Drain", value="1 sec"),),
-    acceptable=(action("SET_RUN_SCHEDULE", "S02 Drain", value="0 sec"),),
+    # 4 tasks every 3 sec do 1.33/s against 1/s: the least that worked in every oracle round (3.6 s didn't), though
+    # unlike 1 sec it doesn't clear the backlog within the replay.
+    acceptable=(action("SET_RUN_SCHEDULE", "S02 Drain", value="3 sec"),),
     traps=("SET_CONCURRENT_TASKS to the maximum of 8 still leaves the drain at 0.8/s against 1/s in.",),
 )
 

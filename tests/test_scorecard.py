@@ -19,6 +19,8 @@ FIRST, SECOND, LAST = config.VERIFY_WINDOWS
 def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 4}], S01) == sc.EXPECTED
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 8}], S01) == sc.EXPECTED
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S01 Consumer", "value": "300 ms"}], S01) == \
+        sc.ACCEPTABLE
     assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S01 Consumer", "value": "250 ms"}], S01) == \
         sc.ACCEPTABLE
     # The right levers, short: 1 sec is the schedule it already runs, 2 tasks half the 4 it needs.
@@ -26,14 +28,18 @@ def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 2}], S01) == sc.SHORT
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S01 Source", "value": 4}], S01) == sc.OTHER
     assert sc.match([], S01) == sc.OTHER
-    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S07 Sink", "value": 4}], S07) == sc.ACCEPTABLE
-    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S07 Sink", "value": "50 ms"}], S07) == sc.ACCEPTABLE
+    # S07: the FlowFiles behind the fan-out need 20 ms or shorter; no number of tasks helped (NFH-90).
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S07 Sink", "value": "20 ms"}], S07) == sc.ACCEPTABLE
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S07 Sink", "value": "50 ms"}], S07) == sc.SHORT
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S07 Sink", "value": 4}], S07) == sc.OTHER
 
     # S30: 2 tasks on Pick is the right processor, still below the 20/s intake.
     s30 = packs.SCENARIOS["S30"]
     assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S30 Pick Items", "value": 2}], s30) == sc.SHORT
-    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S30 Pick Items", "value": 4},
-                     {"action": "SET_CONCURRENT_TASKS", "target": "S30 Label Parcel", "value": 8}], s30) == \
+    assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": "S30 Pick Items", "value": 3},
+                     {"action": "SET_CONCURRENT_TASKS", "target": "S30 Label Parcel", "value": 5}], s30) == \
+        sc.ACCEPTABLE
+    assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": "S30 Pick Items", "value": "40 ms"}], s30) == \
         sc.ACCEPTABLE
 
     # S25: 3 tasks on Sessionize clear its 20/s (it worked in after-4); 2 tasks only match it.

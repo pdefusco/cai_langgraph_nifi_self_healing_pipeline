@@ -83,10 +83,9 @@ S07 = Scenario(
     ),
     family="FLOW_EDIT",
     expected=(action("SET_RUN_SCHEDULE", "S07 Sink", value="0 sec"),),
-    acceptable=(
-        action("SET_RUN_SCHEDULE", "S07 Sink", value="100 ms"),
-        action("SET_CONCURRENT_TASKS", "S07 Sink", value=4),
-    ),
+    # The FlowFiles waiting behind the fan-out hold its queue at the limit: 100 ms, 90 ms, 50 ms (20/s), 4 tasks and
+    # 8 tasks didn't help in any oracle round, 20 ms (50/s) did in every one.
+    acceptable=(action("SET_RUN_SCHEDULE", "S07 Sink", value="20 ms"),),
     traps=(
         "Lowering Number of Copies changes what the flow produces; the fan-out is the business logic.",
         "A larger threshold on s07-fanout just stores the flood.",

@@ -69,10 +69,14 @@ S30 = Scenario(
     kind="compound",
     faults=(PICK, LABEL),
     expected=(PICK,),
+    # 3 tasks pick 24/s and 5 label 25/s, as does a 40 ms schedule on either: the least that cleared both in
+    # every oracle round (2 picking or 4 labelling didn't).
     acceptable=(
         LABEL,
-        action("SET_CONCURRENT_TASKS", "S30 Pick Items", value=4),
-        action("SET_CONCURRENT_TASKS", "S30 Label Parcel", value=8),
+        action("SET_RUN_SCHEDULE", "S30 Pick Items", value="40 ms"),
+        action("SET_RUN_SCHEDULE", "S30 Label Parcel", value="40 ms"),
+        action("SET_CONCURRENT_TASKS", "S30 Pick Items", value=3),
+        action("SET_CONCURRENT_TASKS", "S30 Label Parcel", value=5),
     ),
     traps=(
         "Two queues are full: a fix for one slow stage only moves the backlog to the other.",
