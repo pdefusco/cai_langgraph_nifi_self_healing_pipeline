@@ -235,3 +235,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-22 | NFH-82 | gather_context notes, for the prompt, the backlogged stages more capacity would not help (disabled, held back, sending nothing, a runaway source, a ControlRate) and high CPU; the sizes it first gave were dropped on 2026-10-23 |
 | 2026-10-23 | NFH-82 | gather_context's notes removed: measured, not kept; the prompt is as before NFH-82 |
 | 2026-10-26 | NFH-86 | diagnose_and_propose, behind `SELFHEAL_SAMPLES`: several first proposals drawn at once, the valid fix most agree on kept; with none valid the first is sent back as before. The vote is on the validation report |
+| 2026-10-26 | NFH-87 | gather_context's readings name the fan-outs and merges a rate is counted after; the prompt compares rates only across stages with none between them, and counts what an expiring queue drops as intake |

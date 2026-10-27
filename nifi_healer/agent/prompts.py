@@ -30,9 +30,13 @@ Rules:
 - Size a throughput fix from the current readings:
   1. Find the bottleneck: the stage whose input queue is full and whose output queue is not. Queues before it are
      full only because back pressure stops the stages that feed them, even when they are the ones that alerted.
+     A fan-out sends many FlowFiles for each it takes in and a merge one for many, so compare rates only between
+     stages with no fan-out or merge between them (the readings name those a rate is counted after). A merge's
+     small output is its batching, not slowness: it is the bottleneck only when its own input queue is full.
   2. Find the intake: what the bottleneck takes in per second, plus how fast its input queue grows (per minute / 60).
      A queue held at its back-pressure threshold cannot grow and its source is throttled, so use the source's
-     earlier peak.
+     earlier peak. A queue whose FlowFiles expire cannot grow either: what expires is intake too, so use what the
+     stages before it send.
   3. Compare the bottleneck's rate with its ceiling, concurrent tasks / run schedule (most processors take one
      FlowFile per run; a 0 sec schedule has no ceiling):
      - at the ceiling, the schedule is the limit: shorten the run schedule, or add tasks, until tasks / schedule
