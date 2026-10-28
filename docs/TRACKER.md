@@ -113,9 +113,24 @@ them.
 | NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646, 3ade318 |
 | NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732, 3ade318 |
 | NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | 0eed9a1 |
-| NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38 |
+| NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38, 4bd7ba4 |
+| NFH-92 | Ops | Replay every scenario: the oracle's ceiling on all 45, then an LLM baseline | In progress | |
 
 ## Open tickets
+
+### NFH-92 · Ops · Replay every scenario
+Since NFH-84 the LLM replays have run 14 fault scenarios and S19, and each change's oracle check the same set or the 20
+of p1, p2 and p8–p13. On that set the agent works in 79–86% of cases against the design fixes' 90%, and NFH-87, 88,
+89, 65 and 91 all measured within luck: the set is near its ceiling and too small (±10 pts) to show a smaller change.
+The repo has 45 scenarios in 20 packs: 38 faults and 7 healthy controls (S19, S40–S45). From here the oracle runs on
+all of them, and an LLM baseline on all of them is what the next changes are measured against.
+- 2026-10-27: oracle on all 45, 3 rounds (`~/.cache/cai_deploy/oracle-all-1027`, 16 min): 114 of 114 faults
+  detected, the controls quiet in 21 of 21; valid on the first try 95%, design fix 100%, worked 91%. Short of 100%,
+  all known: S10 and S13 not valid on the first try (NFH-85); S30 and S32 0%, two faults where one fix can't clear
+  (with `--fixes 2` on p12 and p13 all 12 faults clear, the second fix working); S18 33%, diagnosed only once the
+  round's last fault opens, S39's nightly batch hours later, when its backlog takes over 60 min to drain (NFH-84);
+  S36 33%, judged at 15 min against the phase of its hourly batch (NFH-84). Nothing new broken in the sim or the
+  labels. Next: the user's CAI LLM baseline on all 45.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
@@ -259,7 +274,7 @@ tools off the prompt is as it was. Judged on right value and worked: valid on th
   the send-back had already refused) and kpi_history, then proposed 0 sec. S30 still sized Label Parcel from its
   throttled 5/s and S07 from 1.4/s, and were sent back as before. Making the check compulsory would be the send-back
   loop without counting the attempt, so it would move valid 1st only. The code stays, off (SELFHEAL_TOOLS), like
-  the critic; live never had it.
+  the critic; live never had it. Over the whole run the agent made 22 tool calls in about 130 proposals.
 
 ### NFH-65 · Ops · Uniform watch-only KPIs
 The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
