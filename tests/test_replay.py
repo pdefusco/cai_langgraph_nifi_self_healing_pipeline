@@ -353,6 +353,23 @@ def test_it_waits_as_long_as_the_slowest_fault_takes_to_show():
     assert replay.window(["S01", "S39"]) == packs.SCENARIOS["S39"].detect_within == 86400
 
 
+def test_a_quick_fault_is_not_kept_waiting_for_a_slow_one(replayed):
+    assert replay.stages(["S01", "S19", "S39", "S22", "S36"]) == [["S01", "S22"], ["S36"], ["S39"]]
+    assert replay.stages(["S19", "S40"]) == [["S19", "S40"]]       # controls alone: watched together
+
+    # S01 is diagnosed when its incident opens, not an hour on with S36's hourly batch.
+    replay.run(["S01", "S36"], oracle=True)
+    snapshot = replay.load()
+    record = snapshot["record"]
+    trials = {t["scenario"]: t for t in snapshot["runs"][0]["trials"]}
+    opened = {i["id"]: i["opened_at"] for i in record["incidents"]}
+    proposed = {p["incident_id"]: p["created_at"] for p in record["proposals"]}
+
+    s01, s36 = trials["S01"]["incident"], trials["S36"]["incident"]
+    assert proposed[s01] - opened[s01] < replay.DETECT_STEP and proposed[s01] < opened[s36]
+    assert all(c["applied"] for c in replay.cases(snapshot))
+
+
 def test_the_critic_lets_the_design_fixes_through(replayed):
     oracle = PromptKeepingOracle()
     llm.set_chat_model(oracle)

@@ -23,9 +23,13 @@ Each trial round, over the packs the chosen scenarios are in:
      hashes in the record show whether the agent read the same thing
   2. the poller backfills that history from the charts, as the app does,
      then opens an incident per fault, polling and moving the clock
-     on for up to DETECT_SECONDS, or the longest detect_within of the
-     scenarios (a slow burn shows after hours, a nightly batch once a
-     day); the healthy control should open none
+     on for up to DETECT_SECONDS, or the scenario's detect_within (a
+     slow burn shows after hours, a nightly batch once a day); the
+     healthy control should open none. The faults are watched in
+     stages, the soonest due first (stages()), and steps 3 to 6 run on
+     a stage's incidents once they are in, with any others in by then:
+     a fault that shows in minutes is not left to back up for hours
+     until the nightly batch's incident opens
   3. the agent diagnoses each chosen scenario's incident, AGENT_WORKERS
      at a time, the clock stopped throughout (World.held), so it reads
      the KPIs as they were when the incident opened; one the LLM didn't
@@ -249,15 +253,34 @@ def window(ids: list, seconds: float = DETECT_SECONDS) -> float:
     return max([seconds] + [packs.SCENARIOS[s].detect_within for s in ids])
 
 
-def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS) -> dict:
+def stages(ids: list, seconds: float = DETECT_SECONDS) -> list:
+    """
+    The faults of `ids` grouped by window(), soonest first; all of `ids`
+    when none is a fault. A round diagnoses each group once its incidents
+    are in, so a fault that shows in minutes is not kept waiting hours
+    for a nightly batch, its backlog growing all the while.
+    """
+
+    by_window = {}
+
+    for s in ids:
+        if packs.SCENARIOS[s].family != "NONE":
+            by_window.setdefault(window([s], seconds), []).append(s)
+
+    return [by_window[w] for w in sorted(by_window)] or [list(ids)]
+
+
+def detect(world, client, store, ids: list, seconds: float = DETECT_SECONDS, heard: list | None = None) -> dict:
     """
     {scenario id: its incident}, polling until every fault has one or
-    window(ids, seconds) of sim time pass.
+    window(ids, seconds) of sim time pass. `heard` gets every incident
+    opened meanwhile, of any scenario.
     """
 
     opened = {}
+    heard = [] if heard is None else heard
     faults = {s for s in ids if packs.SCENARIOS[s].family != "NONE"}
-    poller = Poller(client, store, on_incident=lambda i: opened.setdefault(i.get("scenario"), i))
+    poller = Poller(client, store, on_incident=lambda i: (heard.append(i), opened.setdefault(i.get("scenario"), i)))
     deadline = client.now() + window(ids, seconds)
 
     # The app fills its store from the longer chart periods once it starts; without it every
@@ -391,7 +414,7 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
     was watched after the fix), and for a missed fault or a control.
     `world` is where in the day the round started, and its history: two
     trials with the same one, on the same flows and code, saw the same
-    tenant.
+    tenant. The faults are diagnosed and fixed a stage at a time (stages()).
     """
 
     if not _on_mock():
@@ -400,13 +423,43 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
     start, history = setting(number, day)
     bootstrap.build(history, list(dict.fromkeys(packs.pack_of(s).name for s in ids)), reset=True, epoch=start)
     at = client.now()
-    found = detect(world, client, store, ids, detect_seconds)
-    missed = [s for s in ids if s not in found and packs.SCENARIOS[s].family != "NONE"]
-    log(f"round {number}: {len(found)} incident(s)" + (f"; no incident for {', '.join(missed)}" if missed else ""))
-    trials = {s: {"round": number, "scenario": s, "incident": (found.get(s) or {}).get("id"), "incidents": [],
+    trials = {s: {"round": number, "scenario": s, "incident": None, "incidents": [],
                   "prompts": [], "fixes": 0, "cleared": None, "control": packs.SCENARIOS[s].family == "NONE",
                   "at": at, "world": [(start - EPOCH) % DAY, history]}
               for s in ids}
+    heard, waiting = [], list(ids)       # every incident the round's pollers opened; the scenarios with none yet
+
+    # A stage's faults are waited for from when it starts; any other incident in by then is diagnosed with them.
+    for stage in stages(ids, detect_seconds):
+        unheard = [s for s in stage if s not in {i.get("scenario") for i in heard}]
+
+        if unheard:     # an open incident's group opens no other, so only these are waited for
+            detect(world, client, store, unheard, detect_seconds, heard)
+
+        first = {}
+
+        for incident in heard:
+            first.setdefault(incident.get("scenario"), incident)
+
+        found = {s: first[s] for s in waiting if s in first}
+        waiting = [s for s in waiting if s not in found and s not in stage]
+
+        for scenario, incident in found.items():
+            trials[scenario]["incident"] = incident["id"]
+
+        missed = [s for s in stage if not trials[s]["incident"]]
+        log(f"round {number}, by {(client.now() - at) / 60:.0f} min: {len(found)} incident(s)"
+            + (f"; no incident for {', '.join(missed)}" if missed else ""))
+
+        if found:
+            fix_each(number, found, trials, world, client, store, detect_seconds, fixes, heard)
+
+    return [trials[s] for s in ids]
+
+
+def fix_each(number: int, found: dict, trials: dict, world, client, store, detect_seconds: float, fixes: int,
+             heard: list) -> None:
+    """Up to `fixes` fixes each of {scenario id: incident}, noted in their `trials`."""
 
     for fix in range(1, fixes + 1):
         applied, shown = attempt(number, fix, found, world, client, store)
@@ -424,15 +477,13 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
 
         # A closed incident's group opens no new one within the cooldown.
         found = detect(world, client, store, applied,
-                       window(applied, detect_seconds) + config.INCIDENT_COOLDOWN_SECONDS)
+                       window(applied, detect_seconds) + config.INCIDENT_COOLDOWN_SECONDS, heard)
 
         for scenario in applied:
             trials[scenario]["cleared"] = scenario not in found
 
         log(f"round {number}, after fix {fix}: " + ", ".join(
             f"{s} {'cleared' if s not in found else 'open again ' + found[s]['id']}" for s in applied))
-
-    return [trials[s] for s in ids]
 
 
 # ---------------------------------------------------------------------

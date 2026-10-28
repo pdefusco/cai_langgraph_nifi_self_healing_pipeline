@@ -131,6 +131,14 @@ all of them, and an LLM baseline on all of them is what the next changes are mea
   round's last fault opens, S39's nightly batch hours later, when its backlog takes over 60 min to drain (NFH-84);
   S36 33%, judged at 15 min against the phase of its hourly batch (NFH-84). Nothing new broken in the sim or the
   labels. Next: the user's CAI LLM baseline on all 45.
+- 2026-10-28: S18 fixed in the harness. A round now watches its faults in stages by detect_within, the soonest first
+  (`replay.stages`), and diagnoses a stage's incidents, with any others in by then, once they are in; it no longer
+  waits for S39's nightly batch before diagnosing anything. A run whose faults all have the 30 min window (the
+  14-scenario LLM set) is one stage, as before. Oracle on all 45 again (`~/.cache/cai_deploy/oracle-all-1028`):
+  114 of 114 detected, controls quiet 21 of 21, valid 1st 95%, design 100%, worked 92%; S18 33% → 100%. S36 33% → 0%:
+  it is now diagnosed as its hourly batch lands, as on live, and every round's 15 min window reads the batch's end
+  as the group's intake falling 15/s → 5/s, WORSENED; the 1 h window is IMPROVED each time. A verdict problem, not a
+  harness one; for a ticket of its own.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
