@@ -206,6 +206,13 @@ TREND_HORIZON_SECONDS = _int("SELFHEAL_TREND_HORIZON", 900)
 # simulator per second. Divided out wherever a rate per second is shown.
 COUNT_WINDOW_SECONDS = max(1, _int("SELFHEAL_COUNT_WINDOW_SECONDS", 1 if MOCK else 300))
 
+# A watch-only KPI on every connection and processor of a group that the
+# scenario doesn't chart (flows/scenarios/base.py watch_kpis), so the
+# agent's readings cover the whole group (NFH-65). Read when the KPIs are
+# provisioned: on live it takes the 04 KPI step to add them. Off until the
+# replay shows it helps (eval/replay.py --watch-all).
+WATCH_ALL = _bool("SELFHEAL_WATCH_ALL", False)
+
 # Conservation check (S13, S14): downstream FlowFiles per second below
 # this fraction of upstream, with no queue growing to explain the gap,
 # means data is being dropped.

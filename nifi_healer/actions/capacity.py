@@ -16,7 +16,8 @@ Capacity after the change, in FlowFiles per second across the nodes:
     take per run if that is more);
   - a processor below its ceiling with a backlog in front is limited by
     its work per FlowFile: its measured rate per task, times the tasks.
-    Without its own rate KPI that is unknown.
+    Without its own rate KPI that is unknown, and so it is when a queue
+    after it is measured full: the stage after it is the limit (S30).
 
 Intake, the highest of what is measured:
   - its own rate in, plus the growth of the queue in front of it;
@@ -263,7 +264,13 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
     return max(estimates) if estimates else None
 
 
-def _capacity(before: dict, after: dict, rows: dict, backlog: bool, nodes: int) -> tuple:
+def _blocked(inv: dict, rows: dict, name: str) -> bool:
+    """Whether a queue it sends to is measured at back pressure: then it does what the stage after it lets through."""
+
+    return any(readings.full(rows.get(("connection", c["name"], "queued_count")), c) for c in _onward(inv, name))
+
+
+def _capacity(inv: dict, before: dict, after: dict, rows: dict, backlog: bool, nodes: int) -> tuple:
     """(FlowFiles per second after the change or None, how it was worked out)."""
 
     tasks = _int(after.get("concurrent_tasks"))
@@ -272,7 +279,10 @@ def _capacity(before: dict, after: dict, rows: dict, backlog: bool, nodes: int) 
     per_run = max(1.0, rate / was) if rate is not None and was else 1.0
     found = (ceiling * per_run, f"{tasks} task(s) every {after.get('run_schedule')}") if ceiling else (None, "")
 
-    if rate is not None and rate > 0 and backlog and (was is None or rate < AT_CEILING * was):
+    # Held back by a full queue after it (S30's picking, behind labelling), it is not busy: its rate per task
+    # is not its work per FlowFile (NFH-65 measures that queue).
+    if rate is not None and rate > 0 and backlog and (was is None or rate < AT_CEILING * was) \
+            and not _blocked(inv, rows, before["name"]):
         # Busy, not waiting between runs: each task does what it does now.
         per_task = rate / _int(before.get("concurrent_tasks"))
         worked = per_task * tasks
@@ -329,7 +339,7 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
 
         backlog = any(queues)
         backed += backlog
-        capacity, how = _capacity(was, now_is, rows, backlog, nodes)
+        capacity, how = _capacity(new, was, now_is, rows, backlog, nodes)
         intake = _intake(new, rows, name, nodes)
         behind = _behind(new, rows, name)
 

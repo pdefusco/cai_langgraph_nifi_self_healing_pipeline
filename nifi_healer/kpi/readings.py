@@ -18,7 +18,8 @@ split (a fan-out), whose output is the intake of the stages after it.
 Where nothing holds the sender back, a peak far above the average is a
 burst (S04), so the average shows too.
 
-Only the KPIs the pack defines; NFH-65 makes the coverage uniform. Given
+Only the KPIs the pack defines; with config.WATCH_ALL (replay --watch-all)
+those cover every connection and processor of the group (NFH-65). Given
 the group's inventory, render() lists every connection in flow order,
 each against its back-pressure limit and with its expiration, and says
 so of one no KPI measures: in a cascade the full queue nobody watches

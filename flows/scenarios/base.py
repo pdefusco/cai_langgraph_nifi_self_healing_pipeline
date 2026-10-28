@@ -38,6 +38,8 @@ be corrected in one place (provision/out/metric_overrides.json).
 from dataclasses import dataclass, field
 from typing import Callable
 
+import config
+
 
 @dataclass(frozen=True)
 class Kpi:
@@ -117,7 +119,9 @@ class Scenario:
     def flow_edges(self) -> dict:
         """
         {"in": entry processor names, "out": exit processor names, "split":
-        the processors that send on more FlowFiles than they take in}.
+        the processors that send on more FlowFiles than they take in,
+        "processors": every processor, "connections": every named
+        connection, both in the group's order}.
 
         An entry takes nothing from another processor and sends to one; an
         exit sends to no other processor (a self-loop is not a way out),
@@ -140,6 +144,8 @@ class Scenario:
                 "in": [n for i, n in names.items() if i in feeding and i not in fed],
                 "out": [n for i, n in names.items() if i not in feeding],
                 "split": [p["name"] for p in group.processors.values() if kind_of(p) in SPLITTING],
+                "processors": list(names.values()),
+                "connections": [c["name"] for c in group.connections if c["name"]],
             }
 
         found = {side: list(names) for side, names in _EDGES[self.id].items()}
@@ -163,6 +169,26 @@ class Scenario:
                       primary=False, rollup=True) for name in edges["in"] + edges["split"]]
         wanted += [Kpi(self.id, "processor", name, "flowfiles_in", alert=False, good="up",
                        primary=False, rollup=True) for name in edges["out"]]
+
+        return tuple(k for k in wanted if k.key not in have)
+
+    def watch_kpis(self) -> tuple:
+        """
+        Watch-only KPIs for the rest of the group (NFH-65): the queue of
+        every named connection and what every processor sends on, where no
+        KPI already charts them, so the readings show a full queue nobody
+        designed a KPI for (S24's after Sessionize). An exit's FlowFiles In
+        is already charted by edge_kpis. Like those they neither alert,
+        decide nor pair, so they change what the agent reads, not what it
+        is judged on.
+        """
+
+        edges = self.flow_edges()
+        have = {k.key for k in self.kpis + self.edge_kpis()}
+        wanted = [Kpi(self.id, "connection", name, "queued_count", alert=False, primary=False, rollup=True)
+                  for name in edges["connections"]]
+        wanted += [Kpi(self.id, "processor", name, "flowfiles_out", alert=False, good="up", primary=False,
+                       rollup=True) for name in edges["processors"] if name not in edges["out"]]
 
         return tuple(k for k in wanted if k.key not in have)
 
@@ -191,9 +217,13 @@ class Pack:
 
     @property
     def kpis(self) -> list:
-        """Every scenario's own KPIs, then the chart-only ones its in/out roll-up needs."""
+        """
+        Every scenario's own KPIs, then the chart-only ones its in/out
+        roll-up needs, and with config.WATCH_ALL the watch-only ones.
+        """
 
-        return [k for s in self.scenarios for k in s.kpis + s.edge_kpis()]
+        return [k for s in self.scenarios
+                for k in s.kpis + s.edge_kpis() + (s.watch_kpis() if config.WATCH_ALL else ())]
 
     @property
     def parameters(self) -> dict:

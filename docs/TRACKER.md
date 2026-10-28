@@ -87,7 +87,7 @@ them.
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Done | f4a3eb3 |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | 1db88f2 |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
-| NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Planned | |
+| NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | In progress | |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
 | NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
@@ -112,7 +112,7 @@ them.
 | NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
 | NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646, 3ade318 |
 | NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732, 3ade318 |
-| NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | |
+| NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | 0eed9a1 |
 
 ## Open tickets
 
@@ -197,6 +197,15 @@ The KPIs a pack defines were placed by the scenario's designer, often right at t
 the answer once NFH-54 shows them. Give every connection and processor of a group a watch-only KPI, so the agent's
 view is the same everywhere. A tenant write (re-running the 04 KPI step).
 - 2026-10-21: planned for before p14–p20.
+- 2026-10-27: replay side built. `Scenario.watch_kpis()` adds a queued-count KPI on every named connection and a
+  FlowFiles Out KPI on every processor but the exits (whose FlowFiles In edge_kpis already charts), where the
+  scenario has none. Like the roll-up KPIs they don't alert, decide or pair, so detection and outcomes don't move.
+  `Pack.kpis` includes them only with SELFHEAL_WATCH_ALL (default off), so live is unchanged and a 04 KPI step
+  re-run doesn't write them; `replay --watch-all` turns it on. S24's readings now show s24-sessions at 750 queued
+  (8% full) after Sessionize's 93%. With more rates measured the capacity check read S30's Pick Items, held back by
+  the full queue after it, as busy at 5/s per task and sent back its design fix; a stage whose way on is measured
+  full has no work-per-FlowFile estimate now. The oracle replay of the 14 scenarios is identical with and without it
+  (valid 1st 100%, worked 90%, lift +54%). Next: the user's LLM run with `--watch-all` against replay-86-after.
 
 ### NFH-66 · Feature · Environment promotion
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
@@ -239,6 +248,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-90 · Fix · S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round
 Several labels were picked from arithmetic, and some were off: S07 accepted 100 ms and 4 tasks, which can't keep up
 with 10.1/s, and S30's 4 and 8 tasks were more than it needs. Each candidate was replayed on the local mock with an
@@ -257,10 +270,6 @@ clears in none even at 4 tasks.
   - S30: Pick 3 + Label 5 3 (3), Pick 40 ms + Label 40 ms 3 (3), Pick 2 + Label 5 0, Pick 3 + Label 4 0. 3 and 5
     tasks and 40 ms on either accepted, for 4 and 8 tasks. The first fix alone never helps, even at 0 sec.
   The Scorecard re-grades stored steps, so earlier runs read on the new labels. The agent is never shown them.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-89 · Fix · The vote throws out the right stage's draws when all are short (S24)
 With NFH-88's check, replay-88-s24-after2 drew two short Sessionize fixes (2 tasks, 10 ms: about 100/s against

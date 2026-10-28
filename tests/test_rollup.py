@@ -2,6 +2,7 @@
 
 import pytest
 
+import config
 from flows import packs
 from flows.scenarios.base import Kpi
 from nifi_healer import fleet
@@ -11,16 +12,22 @@ from nifi_healer.runtime.poller import Poller
 from test_detectors_outcomes import around_change, kpi, windows  # noqa: F401 (windows is a fixture)
 
 
+def _edges(scenario_id: str) -> dict:
+    found = packs.SCENARIOS[scenario_id].flow_edges()
+
+    return {side: found[side] for side in ("in", "out", "split")}
+
+
 def test_edges_are_inferred_from_the_topology():
-    assert packs.SCENARIOS["S01"].flow_edges() == {"in": ["S01 Source"], "out": ["S01 Consumer"],
+    assert _edges("S01") == {"in": ["S01 Source"], "out": ["S01 Consumer"],
                                                    "split": []}
 
     # A failure loop is not a way out; a DLQ nothing is routed to yet is.
-    assert packs.SCENARIOS["S10"].flow_edges() == {"in": ["S10 Source"],
+    assert _edges("S10") == {"in": ["S10 Source"],
                                                    "out": ["S10 Partner Call", "S10 DLQ"], "split": []}
 
     # Declared where the topology misleads: S17's stub and receiver form a second chain.
-    assert packs.SCENARIOS["S17"].flow_edges() == {"in": ["S17 Source"], "out": ["S17 Received"],
+    assert _edges("S17") == {"in": ["S17 Source"], "out": ["S17 Received"],
                                                    "split": []}
 
     # A split sends on more than it takes in: what it sends is the intake of the stages after it.
@@ -42,6 +49,27 @@ def test_edge_kpis_are_chart_only_and_not_duplicated():
 
     with pytest.raises(ValueError, match="roll-up"):
         Kpi("S01", "processor", "S01 Source", "flowfiles_out", alert=True, above=1, rollup=True)
+
+
+def test_watch_kpis_cover_the_rest_of_the_group(monkeypatch):
+    s24 = packs.SCENARIOS["S24"]
+    watched = {k.key for k in s24.kpis + s24.edge_kpis() + s24.watch_kpis()}
+
+    # Every queue and every stage's rate, the scenario's own KPIs not repeated (NFH-65).
+    assert {f"S24:connection:{c}:queued_count" for c in s24.flow_edges()["connections"]} <= watched
+    assert "S24:connection:s24-sessions:queued_count" in watched
+    assert {f"S24:processor:{p}:flowfiles_out" for p in s24.flow_edges()["processors"]
+            if p != "S24 Publish Sessions"} <= watched
+    assert "S24:processor:S24 Publish Sessions:flowfiles_in" in watched
+    assert "S24:connection:s24-to-sessionize:queued_count" not in [k.key for k in s24.watch_kpis()]
+    assert all(k.rollup and not k.alert and not k.primary for k in s24.watch_kpis())
+
+    # Only with config.WATCH_ALL, and still one KPI per key.
+    pack = packs.PACKS["p9-clickstream"]
+    assert not set(k.key for k in s24.watch_kpis()) & {k.key for k in pack.kpis}
+    monkeypatch.setattr(config, "WATCH_ALL", True)
+    keys = [k.key for p in packs.PACKS.values() for k in p.kpis]
+    assert set(k.key for k in s24.watch_kpis()) <= set(keys) and len(keys) == len(set(keys))
 
 
 def test_sums_use_only_the_buckets_every_edge_has():

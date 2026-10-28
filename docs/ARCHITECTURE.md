@@ -240,3 +240,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-10-27 | NFH-88 | validate_proposal's capacity check reads the intake through a split back pressure holds back too, the higher estimate counting |
 | 2026-10-27 | NFH-89 | diagnose_and_propose's vote counts stages first, a draw short of the intake as well as a valid one; with none valid on the winning stage, its short draw goes on and validate_proposal sends it back |
 | 2026-10-27 | NFH-88, NFH-89 | The stage vote and the read through a held-back split removed: measured, not kept; diagnose_and_propose's vote and validate_proposal's capacity check are as before NFH-88 |
+| 2026-10-27 | NFH-65 | Behind `SELFHEAL_WATCH_ALL`, gather_context's readings and validate_proposal's capacity check read a watch-only KPI on every connection and processor of the group; a stage whose queue after it is measured full gets no per-task estimate |

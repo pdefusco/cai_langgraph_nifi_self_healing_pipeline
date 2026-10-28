@@ -263,6 +263,20 @@ def test_the_agent_reads_the_history_the_app_backfills(replayed):
     assert "S01 Source (a source): 1/s out, up to" in prompt and "in the last 2 h" in prompt
 
 
+def test_watch_all_measures_every_queue(replayed):
+    # S24's KPIs stop at the sessionizer; with --watch-all its empty output queue shows (NFH-65).
+    oracle = PromptKeepingOracle()
+    llm.set_chat_model(oracle)
+    replay.run(["S24"], watch_all=True)
+
+    [prompt] = oracle.prompts
+    assert "connection s24-sessions (S24 Sessionize -> S24 Score Session): " in prompt
+    assert "s24-sessions (S24 Sessionize -> S24 Score Session): not measured" not in prompt
+    assert "- S24 Score Session: " in prompt
+    [run] = replay.load()["runs"]
+    assert run["watch_all"] and config.WATCH_ALL
+
+
 class SlowOracle(PromptKeepingOracle):
     """Takes wall time to answer, as an LLM does, and notes the mock's clock either side."""
 

@@ -1,5 +1,8 @@
 """A throughput fix too small for the intake goes back to the agent (actions/capacity.py, NFH-61)."""
 
+import pytest
+
+import config
 from flows import packs
 from nifi_healer import fleet
 from nifi_healer.actions import capacity, executor
@@ -61,7 +64,10 @@ def test_an_expiring_queue_hides_its_backlog(agent):
     assert "20/s, within 10% of the intake of about 20/s" in short
 
 
-def test_no_design_fix_is_sent_back(agent):
+@pytest.mark.parametrize("watch_all", [False, True])
+def test_no_design_fix_is_sent_back(agent, monkeypatch, watch_all):
+    # With every queue and rate measured (NFH-65) the check knows more, and still passes them.
+    monkeypatch.setattr(config, "WATCH_ALL", watch_all)
     names = ("p1-throughput", "p2-backpressure", "p8-orders", "p9-clickstream", "p10-iot", "p11-payments",
              "p12-warehouse", "p13-billing")
     _, client, store, incidents, _ = agent(*names)

@@ -72,6 +72,11 @@ the valid fix most of them agree on (agent/nodes.diagnose_and_propose);
 its agent version ends /samples:N. Without it one is drawn, whatever
 SELFHEAL_SAMPLES says.
 
+`--watch-all` gives every connection and processor of a group a
+watch-only KPI (flows/scenarios/base.py watch_kpis, NFH-65), so the
+readings cover the whole group. Without it a group has the KPIs its
+scenario defines, whatever SELFHEAL_WATCH_ALL says.
+
 The pacing guards (cooldown, actions per window) are off: every round is
 a fresh tenant, and a pack's faults are fixed one after another, which on
 a live tenant would take a day.
@@ -126,7 +131,7 @@ PHASE_STEP = 37
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
             "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
-            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS", "CRITIC", "SAMPLES")
+            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS", "CRITIC", "SAMPLES", "WATCH_ALL")
 
 
 def log(msg: str) -> None:
@@ -453,7 +458,8 @@ def _trials(snapshot: dict, since: float = 0.0) -> list:
     def name(run):
         return f"{run['id']} · {run.get('model') or '?'}" + (" · no memory" if run.get("memory") is False else "") \
             + (" · no priors" if run.get("priors") is False else "") + (" · critic" if run.get("critic") else "") \
-            + (f" · {run['samples']} samples" if (run.get("samples") or 1) > 1 else "")
+            + (f" · {run['samples']} samples" if (run.get("samples") or 1) > 1 else "") \
+            + (" · watch all" if run.get("watch_all") else "")
 
     # A stepped run's sim clock is on EPOCH's day, so it counts from when it ran.
     return [dict(t, run=name(run)) for run in snapshot.get("runs") or []
@@ -830,13 +836,14 @@ def live_edits(path: str) -> list:
 
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True,
-        fixes: int = 1, critic: bool = False, samples: int = 1) -> str:
+        fixes: int = 1, critic: bool = False, samples: int = 1, watch_all: bool = False) -> str:
     """
     `trials` rounds of `ids` in an isolated mock tenant, with up to `fixes`
     fixes a fault; returns the run's id. Calls isolate().
     The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`,
     with `critic` a second reading checks each valid fix (config.CRITIC; off unless asked for), and with
-    `samples` above 1 that many first proposals are drawn and voted on (config.SAMPLES).
+    `samples` above 1 that many first proposals are drawn and voted on (config.SAMPLES), and with `watch_all`
+    every connection and processor has a KPI (config.WATCH_ALL).
     """
 
     edits = live_edits(config.DB_PATH) if playbook_edits else []
@@ -845,6 +852,7 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
     config.MEMORY = memory
     config.CRITIC = critic
     config.SAMPLES = max(1, samples)
+    config.WATCH_ALL = watch_all
     client, store = clients.get_client(), db.get_store()
     ingest.use_edits(edits)
 
@@ -859,12 +867,13 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         day = len(runs)
         entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
                  "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
-                 "critic": critic, "samples": config.SAMPLES, "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
+                 "critic": critic, "samples": config.SAMPLES, "watch_all": watch_all, "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
         runs.append(entry)
         log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
             + (f", up to {fixes} fixes each" if fixes > 1 else "") + ("" if memory else ", no memory")
             + (", with the critic" if critic else "")
             + (f", {config.SAMPLES} samples on the first attempt" if config.SAMPLES > 1 else "")
+            + (", a KPI on every connection and processor" if watch_all else "")
             + (f", {len(edits)} approved playbook edit(s)" if edits else "") + f" in {directory}")
         now = previous.get("now") or 0.0
 
@@ -896,6 +905,8 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=1,
                         help="proposals drawn at once on the first attempt, the valid one most agree on kept "
                              "(SELFHEAL_SAMPLES)")
+    parser.add_argument("--watch-all", action="store_true",
+                        help="a watch-only KPI on every connection and processor of a group (SELFHEAL_WATCH_ALL)")
     parser.add_argument("--no-playbook-edits", action="store_true",
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
@@ -933,7 +944,8 @@ def main() -> int:
 
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
-                 not args.no_playbook_edits, max(1, args.fixes), args.critic, max(1, args.samples))
+                 not args.no_playbook_edits, max(1, args.fixes), args.critic, max(1, args.samples),
+                 args.watch_all)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0
