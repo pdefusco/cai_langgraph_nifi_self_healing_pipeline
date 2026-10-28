@@ -327,6 +327,14 @@ CRITIC = _bool("SELFHEAL_CRITIC", False)
 # helps (eval/replay.py --samples).
 SAMPLES = max(1, _int("SELFHEAL_SAMPLES", 1))
 
+# Read-only tools the agent may call before it proposes (agent/tools.py):
+# check_fix runs a fix through validation and the capacity check, and
+# kpi_history reads one KPI's last 2 h from the store. Up to TOOL_CALLS a
+# proposal, each one more LLM call. Off until the replay shows it helps
+# (eval/replay.py --tools).
+TOOLS = _bool("SELFHEAL_TOOLS", False)
+TOOL_CALLS = max(1, _int("SELFHEAL_TOOL_CALLS", 3))
+
 # A rejection, or a WRONG_FIX label, has the LLM draft an edit of the
 # playbook section the agent relied on (rag/drafter.py), for a person to
 # approve on the Playbooks tab. Off: nothing is drafted.

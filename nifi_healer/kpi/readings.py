@@ -6,6 +6,7 @@ and rates that have not breached.
 
     rows = for_incident(incident, store, now)
     text = render(rows, inv)        # inv: flow/inventory.py's inventory of the group
+    text = history(incident, store, now, component, metric)    # one KPI's last 2 h (agent/tools.py)
 
 From the samples the poller stored, over the last WINDOW_SECONDS (no CDF
 call). Each row has the latest value, its alert threshold, a state (over,
@@ -65,12 +66,19 @@ def _mean(series: list) -> float | None:
     return sum(gap * v for gap, v in spans) / total if total else None
 
 
+def _kpis(incident: dict) -> tuple:
+    """(the incident's scenario or None, its KPIs in the pack's order)."""
+
+    scenario = packs.SCENARIOS.get(incident.get("scenario") or "")
+
+    return scenario, [k for k in fleet.pack(incident.get("pack") or "").get("kpis") or []
+                      if scenario and k.get("scenario") == scenario.id]
+
+
 def for_incident(incident: dict, store, now: float) -> list:
     """One row per KPI of the incident's scenario, in the pack's order."""
 
-    scenario = packs.SCENARIOS.get(incident.get("scenario") or "")
-    kpis = [k for k in fleet.pack(incident.get("pack") or "").get("kpis") or []
-            if scenario and k.get("scenario") == scenario.id]
+    scenario, kpis = _kpis(incident)
     edges = scenario.flow_edges() if scenario else {"in": [], "split": []}
     crn = incident.get("deployment_crn") or ""
     rows = []
@@ -124,6 +132,39 @@ _SHOWN = {
     "bytes_out": (_bytes, "sent"),
     "cpu": (lambda v: f"{_number(v)}%", "CPU"),
 }
+
+
+def history(incident: dict, store, now: float, component: str, metric: str, buckets: int = 12) -> str:
+    """
+    One KPI of the incident's group over the last PEAK_SECONDS, as
+    `buckets` steps, oldest first, each its average and its highest, for
+    the agent's kpi_history tool (agent/tools.py).
+    """
+
+    wanted = (" ".join(str(component or "").lower().split()), str(metric or "").strip().lower())
+    _, kpis = _kpis(incident)
+    kpi = next((k for k in kpis if (" ".join((k.get("component") or "").lower().split()), k.get("metric")) == wanted),
+               None)
+
+    if kpi is None:
+        watched = sorted({f"{k.get('component')} {k.get('metric')}" for k in kpis})
+        return (f"{component} {metric} is not measured. Measured: " + "; ".join(watched)) if watched \
+            else f"{component} {metric} is not measured"
+
+    series = _per_second(kpi, store.samples(incident.get("deployment_crn") or "", kpi["key"], now - PEAK_SECONDS))
+    shown, word = _SHOWN.get(kpi["metric"], (_number, kpi["metric"]))
+    step = PEAK_SECONDS / buckets
+    lines = [f"{kpi['component']} {kpi['metric']}, the last {PEAK_SECONDS // 3600} h in {step / 60:.0f} min steps, "
+             "oldest first:"]
+
+    for n in range(buckets):
+        start = now - PEAK_SECONDS + n * step
+        values = [v for t, v in series if start <= t < start + step or n == buckets - 1 and t == now]
+        ago = f"{(PEAK_SECONDS - n * step) / 60:.0f} to {(PEAK_SECONDS - (n + 1) * step) / 60:.0f} min ago"
+        lines.append(f"- {ago}: " + (f"{shown(sum(values) / len(values))} {word} on average, "
+                                     f"{shown(max(values))} at most" if values else "no data"))
+
+    return "\n".join(lines)
 
 
 def _connection(connection: dict) -> str:

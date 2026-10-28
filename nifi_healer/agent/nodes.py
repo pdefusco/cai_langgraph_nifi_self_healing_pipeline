@@ -9,7 +9,8 @@ The graph's nodes. Each takes the state and returns the fields it changed.
                           the reviewer only, the fixes' track records (rag/priors.py)
     diagnose_and_propose  the LLM: evidence -> Proposal (one repair retry); with
                           SELFHEAL_SAMPLES, several drawn at once on the first attempt
-                          and the valid fix most of them agree on kept
+                          and the valid fix most of them agree on kept; with
+                          SELFHEAL_TOOLS, read-only tools it may call first (agent/tools.py)
     validate_proposal     executor.plan: catalog, bounds, targets, diff, argv; capacity
                           against the intake (actions/capacity.py)
     critique_proposal     with SELFHEAL_CRITIC, the LLM again: objections to a valid fix,
@@ -36,7 +37,7 @@ from pydantic import ValidationError
 import config
 from nifi_healer import llm
 from nifi_healer.actions import capacity, catalog, executor, rollback
-from nifi_healer.agent import prompts
+from nifi_healer.agent import prompts, tools
 from nifi_healer.agent.schemas import Critique, Proposal
 from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
@@ -177,25 +178,41 @@ def retrieve_playbooks(state: dict) -> dict:
 # ---------------------------------------------------------------------
 
 
-def _ask(model, messages: list, schema=Proposal) -> tuple:
-    """(a `schema` | None, raw text, error). One repair turn on a bad reply."""
+def _ask(model, messages: list, schema=Proposal, tools=None) -> tuple:
+    """
+    (a `schema` | None, raw text, error). One repair turn on a bad reply.
+    With `tools` (a tools.Calls), a reply that asks for a tool is answered
+    and the model asked again, until it proposes or is out of calls.
+    """
 
-    raw, error = "", ""
+    raw, error, repaired = "", "", False
 
-    for turn in range(2):
+    while True:
         reply = llm.invoke(model, messages)
         raw = prompts.text_of(reply)
 
         try:
-            return schema.model_validate(prompts.extract_json(raw)), raw, ""
+            found = prompts.extract_json(raw)
+            answer = tools.run(found) if tools is not None and "tool" in found else None
+
+            if answer is not None:
+                # The request, not the thinking before it: each call would add minutes of it.
+                messages = messages + [AIMessage(content=raw.rsplit("</think>", 1)[-1].strip()),
+                                       HumanMessage(content=answer)]
+                continue
+
+            return schema.model_validate(found), raw, ""
 
         except (ValueError, ValidationError) as exc:
             error = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, ValidationError) else \
                 "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors())
+
+            if repaired:
+                return None, raw, error
+
+            repaired = True
             messages = messages + [AIMessage(content=raw),
                                    HumanMessage(content=prompts.REPAIR.format(error=error))]
-
-    return None, raw, error
 
 
 def _fix(steps: list, values: bool = True) -> frozenset:
@@ -214,11 +231,11 @@ def _fix(steps: list, values: bool = True) -> frozenset:
     return frozenset(found)
 
 
-def _problems(proposal, incident: dict, state: dict) -> list:
-    """What the validators and the capacity check would send this proposal back for on a first attempt; [] if none."""
+def _problems(steps: list, incident: dict, state: dict, client=None) -> list:
+    """What the validators and the capacity check would send these steps back for on a first attempt; [] if none."""
 
     try:
-        full = executor.plan(get_client(), incident, proposal.as_dict()["steps"], get_store())
+        full = executor.plan(client or get_client(), incident, steps, get_store())
 
         return list(full["problems"]) if not full["ok"] else _capacity(full, incident, state)
 
@@ -228,25 +245,36 @@ def _problems(proposal, incident: dict, state: dict) -> list:
         return [f"could not be checked: {exc}"]
 
 
-def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> tuple:
+def _tools(incident: dict, state: dict, reads) -> tools.Calls | None:
+    """One proposal's tool calls with SELFHEAL_TOOLS (agent/tools.py), checking fixes on `reads`; None without."""
+
+    if not config.TOOLS:
+        return None
+
+    return tools.Calls(lambda steps: _problems(steps, incident, state, reads), incident, get_store(), _now())
+
+
+def _draw(model, messages: list, incident: dict, state: dict, samples: int, reads) -> tuple:
     """
-    (a Proposal | None, raw text, error, vote) from `samples` proposals
-    drawn at once (NFH-86). Of those that pass validation and the capacity
-    check, the most of them that change the same things, then the most of
-    those that set the same values; the first drawn on a tie. With none
-    valid, the first usable reply goes on, to be sent back as one draw
-    would be. The vote keeps every usable draw's steps and what it would
-    have been sent back for, to read in `replay --show`. Raises only if
-    every call raised.
+    (a Proposal | None, raw text, error, vote, its tool calls) from
+    `samples` proposals drawn at once (NFH-86). Of those that pass
+    validation and the capacity check, the most of them that change the
+    same things, then the most of those that set the same values; the
+    first drawn on a tie. With none valid, the first usable reply goes on,
+    to be sent back as one draw would be. The vote keeps every usable
+    draw's steps, what it would have been sent back for and the tools it
+    called, to read in `replay --show`. Raises only if every call raised.
     """
+
+    calls = [_tools(incident, state, reads) for _ in range(samples)]
 
     with ThreadPoolExecutor(max_workers=samples) as pool:
-        futures = [pool.submit(_ask, model, messages) for _ in range(samples)]
+        futures = [pool.submit(_ask, model, messages, Proposal, c) for c in calls]
         drawn, failed = [], None
 
-        for future in futures:
+        for future, called in zip(futures, calls):
             try:
-                drawn.append(future.result())
+                drawn.append(future.result() + (called.trace if called else [],))
 
             except Exception as exc:  # the endpoint, for this draw
                 failed = failed or exc
@@ -255,13 +283,16 @@ def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> t
         raise failed
 
     usable = [d for d in drawn if d[0] is not None]
-    checked = [(d, _problems(d[0], incident, state)) for d in usable]
+    checked = [(d, _problems(d[0].as_dict()["steps"], incident, state, reads)) for d in usable]
     valid = [d for d, problems in checked if not problems]
     vote = {"samples": samples, "replies": len(usable), "valid": len(valid), "same_lever": 0, "agreeing": 0,
-            "drawn": [{"steps": d[0].as_dict()["steps"], "problems": problems} for d, problems in checked]}
+            "drawn": [dict({"steps": d[0].as_dict()["steps"], "problems": problems}, **({"tools": d[3]} if d[3] else {}))
+                      for d, problems in checked]}
 
     if not valid:
-        return (usable or drawn)[0] + (vote,)
+        found = (usable or drawn)[0]
+
+        return found[:3] + (vote, found[3])
 
     steps = [d[0].as_dict()["steps"] for d in valid]
     levers = collections.Counter(_fix(s, values=False) for s in steps)
@@ -269,8 +300,9 @@ def _draw(model, messages: list, incident: dict, state: dict, samples: int) -> t
     fixes = collections.Counter(_fix(s) for s in steps if _fix(s, values=False) == lever)
     fix = max(fixes, key=fixes.get)
     vote.update(same_lever=levers[lever], agreeing=fixes[fix])
+    found = next(d for d, s in zip(valid, steps) if _fix(s) == fix)
 
-    return next(d for d, s in zip(valid, steps) if _fix(s) == fix) + (vote,)
+    return found[:3] + (vote, found[3])
 
 
 def diagnose_and_propose(state: dict) -> dict:
@@ -291,16 +323,22 @@ def diagnose_and_propose(state: dict) -> dict:
                                                          state.get("proposal")))]
 
     attempts = state.get("attempts", 0) + 1
-    vote = {}
+    vote, called = {}, []
+    reads = tools.Reads(get_client())
 
     try:
         if attempts == 1 and config.SAMPLES > 1:
-            proposal, raw, error, vote = _draw(model, messages, incident, state, config.SAMPLES)
+            proposal, raw, error, vote, called = _draw(model, messages, incident, state, config.SAMPLES, reads)
             log(f"{incident['id']}: {vote['valid']} of {vote['samples']} drawn proposals valid, "
                 f"{vote['agreeing']} agreeing")
 
         else:
-            proposal, raw, error = _ask(model, messages)
+            calls = _tools(incident, state, reads)
+            proposal, raw, error = _ask(model, messages, Proposal, calls)
+            called = calls.trace if calls else []
+
+        if called:
+            log(f"{incident['id']}: attempt {attempts}: {len(called)} tool call(s)")
 
     except Exception as exc:  # the endpoint, not the reply
         log(f"{incident['id']}: LLM call failed: {exc}")
@@ -313,10 +351,11 @@ def diagnose_and_propose(state: dict) -> dict:
 
         return {"proposal": {"diagnosis": "", "steps": [], "rationale": raw[:2000], "citations": [],
                              "confidence": 0.0, "parse_error": error},
-                "attempts": attempts, "agent_version": version, "source": "agent", "vote": vote}
+                "attempts": attempts, "agent_version": version, "source": "agent", "vote": vote,
+                "tool_calls": called}
 
     return {"proposal": proposal.as_dict(), "attempts": attempts, "agent_version": version,
-            "source": "agent", "vote": vote}
+            "source": "agent", "vote": vote, "tool_calls": called}
 
 
 def after_diagnosis(state: dict) -> str:
@@ -343,6 +382,9 @@ def validate_proposal(state: dict) -> dict:
 
     if state.get("source") == "agent" and state.get("vote"):
         report["vote"] = state["vote"]
+
+    if state.get("source") == "agent" and state.get("tool_calls"):
+        report["tool_calls"] = state["tool_calls"]
 
     known = {h["id"] for h in (state.get("playbooks") or []) + (state.get("memory") or [])}
     cited = list(proposal.get("citations") or [])

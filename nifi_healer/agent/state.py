@@ -20,10 +20,11 @@ class AgentState(TypedDict, total=False):
     proposal: dict           # schemas.Proposal as a dict; steps may be a reviewer's edit
     proposal_id: int
     plan: dict               # executor.public(executor.plan(...)): ok, problems, diff, commands, risk;
-                             # warnings, capacity, the vote when several were drawn, and the
-                             # critic's critique when it read the fix
+                             # warnings, capacity, the vote when several were drawn, the tool
+                             # calls when it made any, and the critic's critique when it read the fix
     attempts: int            # LLM proposals made so far in this run
     vote: dict               # with SELFHEAL_SAMPLES, how the drawn proposals agreed; {} for one draw
+    tool_calls: list         # with SELFHEAL_TOOLS, the proposal's tool calls: {tool, args, result}
     feedback: list           # problems with the last proposal, for the next attempt
     source: str              # "agent" | "review" | "rollback": who wrote the steps being validated
     review: dict             # {decision, reason, reviewer, steps}

@@ -365,3 +365,39 @@ def test_the_critic_lets_the_design_fixes_through(replayed):
     assert case["match"] == sc.EXPECTED and case["applied"]
     assert sum(prompts.CRITIC_SYSTEM in p for p in oracle.prompts) == 1
     assert "    second reading:\n      no objections" in replay.show(snapshot)
+
+
+class CheckingOracle(replay.OracleLLM):
+    """Checks the design fix with check_fix first, then proposes it."""
+
+    def invoke(self, messages):
+        reply = super().invoke(messages)
+
+        if len(messages) > 2:
+            return reply
+
+        return type("Reply", (), {"content": json.dumps({"tool": "check_fix",
+                                                         "steps": json.loads(reply.content)["steps"]})})()
+
+
+def test_tools_leave_the_oracle_as_it_was(replayed):
+    replay.run(["S01"], oracle=True, tools=True)
+    snapshot = replay.load()
+    [run] = snapshot["runs"]
+    [case] = replay.cases(snapshot)
+
+    assert run["tools"] and run["agent_version"].endswith(f"/tools:{prompts.TOOLS_VERSION}x{config.TOOL_CALLS}")
+    assert case["match"] == sc.EXPECTED and case["result"] == sc.WORKED
+    assert "tool:" not in replay.show(snapshot) and "· tools" in replay.cases(snapshot)[0]["run"]
+
+
+def test_what_the_agent_asked_its_tools(replayed):
+    llm.set_chat_model(CheckingOracle())
+    replay.run(["S01"], tools=True)
+    snapshot = replay.load()
+    [case] = replay.cases(snapshot)
+    shown = replay.show(snapshot)
+
+    assert case["match"] == sc.EXPECTED and case["applied"]
+    assert '    tool: check_fix {"steps": [{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer"' in shown
+    assert "      answer:\n      No problems: validation and the capacity check would pass these steps." in shown

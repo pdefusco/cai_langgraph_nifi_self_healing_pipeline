@@ -108,6 +108,37 @@ REPAIR = ("Your reply could not be used: {error}\n"
 PROMPT_VERSION = hashlib.sha256(
     (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
+# With SELFHEAL_TOOLS, after SYSTEM (agent/tools.py).
+TOOLS = """
+
+Before you reply with the proposal you may call a tool, at most {calls} times in all, by replying with only one of
+these JSON objects instead:
+- {{"tool": "check_fix", "steps": [<the steps you would propose>]}}: what validation and the capacity check would
+  send these steps back for, or that they pass. It reads the same readings you do, and passes what it cannot
+  measure. Check the value of a throughput fix before you propose it.
+- {{"tool": "kpi_history", "component": "<a processor or connection name>", "metric": "<queued_count for a queue,
+  flowfiles_in or flowfiles_out for a processor>"}}: one of the group's KPIs over the last 2 h, in 10 minute steps,
+  oldest first, rates per second.
+The answer comes in the next message. Then call another tool, or reply with the proposal as described above."""
+
+TOOL_RESULT = """{tool} answered:
+{result}
+
+{left}"""
+
+TOOL_LEFT = "You may call {left} more tool(s), or reply with the proposal."
+
+TOOL_LAST = "That was the last tool call: reply with the proposal."
+
+TOOL_NONE_LEFT = "No tool calls are left. Reply with the proposal, the JSON object described in the instructions."
+
+TOOLS_VERSION = hashlib.sha256(
+    (TOOLS + TOOL_RESULT + TOOL_LEFT + TOOL_LAST + TOOL_NONE_LEFT).encode()).hexdigest()[:10]
+
+
+def tool_calls_left(left: int) -> str:
+    return TOOL_LEFT.format(left=left) if left > 0 else TOOL_LAST
+
 
 CRITIC_SYSTEM = """You check a remediation proposal for an Apache NiFi 2.6 flow in Cloudera DataFlow (CDF) before a
 person reviews it. Another planner read the evidence below and proposed the fix. Find where the evidence contradicts
@@ -161,11 +192,12 @@ CRITIC_VERSION = hashlib.sha256((CRITIC_SYSTEM + CRITIC_USER + REPAIR).encode())
 
 def agent_version(model_id: str, playbooks: str = "") -> str:
     # Without its past cases the same prompt is a different agent (the replay's baseline), and so it is
-    # with approved playbook edits (`playbooks`, their rag/overlay.edition), or with the critic checking
-    # its proposals; none leaves the name as it was.
+    # with approved playbook edits (`playbooks`, their rag/overlay.edition), with the critic checking
+    # its proposals, or with tools to call; none leaves the name as it was.
     return f"prompt:{PROMPT_VERSION}/model:{model_id or 'unknown'}" + ("" if config.MEMORY else "/no-memory") \
         + (f"/playbooks:{playbooks}" if playbooks else "") + (f"/critic:{CRITIC_VERSION}" if config.CRITIC else "") \
-        + (f"/samples:{config.SAMPLES}" if config.SAMPLES > 1 else "")
+        + (f"/samples:{config.SAMPLES}" if config.SAMPLES > 1 else "") \
+        + (f"/tools:{TOOLS_VERSION}x{config.TOOL_CALLS}" if config.TOOLS else "")
 
 
 # ---------------------------------------------------------------------
@@ -219,7 +251,8 @@ DRAFT_VERSION = hashlib.sha256((DRAFT_SYSTEM + DRAFT_USER + DRAFT_FEEDBACK + REP
 
 
 def system_prompt() -> str:
-    return SYSTEM.format(catalog=catalog.describe_for_prompt(), max_steps=catalog.MAX_STEPS)
+    return SYSTEM.format(catalog=catalog.describe_for_prompt(), max_steps=catalog.MAX_STEPS) \
+        + (TOOLS.format(calls=config.TOOL_CALLS) if config.TOOLS else "")
 
 
 def _signal_line(signal: dict) -> str:

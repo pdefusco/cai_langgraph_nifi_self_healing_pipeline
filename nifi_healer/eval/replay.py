@@ -8,6 +8,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
     python -m nifi_healer.eval.replay --trials 3 --critic      # a second reading of every valid fix
     python -m nifi_healer.eval.replay --trials 3 --samples 3   # 3 first proposals, the valid one most agree on
+    python -m nifi_healer.eval.replay --trials 3 --tools       # the agent may check a fix before it proposes it
     python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
     python -m nifi_healer.eval.replay --compare BEFORE_DIR AFTER_DIR   # two records side by side
     python -m nifi_healer.eval.replay --show DIR --pack p8-orders     # what the agent proposed, and why
@@ -72,6 +73,11 @@ the valid fix most of them agree on (agent/nodes.diagnose_and_propose);
 its agent version ends /samples:N. Without it one is drawn, whatever
 SELFHEAL_SAMPLES says.
 
+`--tools` lets the agent call read-only tools before it proposes: check
+a fix against validation and the capacity check, or read one KPI's last
+2 h (agent/tools.py, NFH-91); its agent version ends /tools:<hash>xN.
+Without it there are none, whatever SELFHEAL_TOOLS says.
+
 `--watch-all` gives every connection and processor of a group a
 watch-only KPI (flows/scenarios/base.py watch_kpis, NFH-65), so the
 readings cover the whole group. Without it a group has the KPIs its
@@ -131,7 +137,8 @@ PHASE_STEP = 37
 ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEET_FILE", "MOCK_WORLD_FILE", "EDITS_DIR",
             "CHROMA_DIR", "SERVICE_CRN", "ENVIRONMENT_CRN", "ARMED", "COOLDOWN_SECONDS",
             "MAX_ACTIONS_PER_WINDOW", "VERIFY_WINDOWS", "PROPOSE_ROLLBACKS", "AUTO_DIAGNOSE", "MEMORY",
-            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS", "CRITIC", "SAMPLES", "WATCH_ALL")
+            "DRAFT_PLAYBOOK_EDITS", "AUTONOMY", "COUNT_WINDOW_SECONDS", "CRITIC", "SAMPLES", "WATCH_ALL",
+            "TOOLS")
 
 
 def log(msg: str) -> None:
@@ -459,7 +466,7 @@ def _trials(snapshot: dict, since: float = 0.0) -> list:
         return f"{run['id']} · {run.get('model') or '?'}" + (" · no memory" if run.get("memory") is False else "") \
             + (" · no priors" if run.get("priors") is False else "") + (" · critic" if run.get("critic") else "") \
             + (f" · {run['samples']} samples" if (run.get("samples") or 1) > 1 else "") \
-            + (" · watch all" if run.get("watch_all") else "")
+            + (" · watch all" if run.get("watch_all") else "") + (" · tools" if run.get("tools") else "")
 
     # A stepped run's sim clock is on EPOCH's day, so it counts from when it ran.
     return [dict(t, run=name(run)) for run in snapshot.get("runs") or []
@@ -754,8 +761,9 @@ def show(snapshot: dict, ids=()) -> str:
     What the agent proposed in a replay record, case by case: the design
     fix, then each attempt's steps, diagnosis and rationale, and the
     validation problems that sent it back, what the critic said of it
-    (--critic), and how the drawn proposals voted (--samples), each draw
-    with what it would have been sent back for. Only the scenarios in ids, if any.
+    (--critic), how the drawn proposals voted (--samples), each draw
+    with what it would have been sent back for, and the tools the agent
+    called (--tools). Only the scenarios in ids, if any.
     """
 
     proposals = {}
@@ -783,9 +791,13 @@ def show(snapshot: dict, ids=()) -> str:
             for d in (vote or {}).get("drawn") or []:
                 rows.append("    drawn: " + ("; ".join(_step(s) for s in d["steps"]) or "none")
                             + (" · valid" if not d["problems"] else ""))
+                rows += _tool_rows(d.get("tools"), "  ")
 
                 if d["problems"]:
                     rows.append(_wrapped("  would be sent back", " | ".join(d["problems"]), 600))
+
+            if not vote:
+                rows += _tool_rows((p.get("validation") or {}).get("tool_calls"))
 
             rows.append(_wrapped("diagnosis", p.get("diagnosis"), 600))
             rows.append(_wrapped("rationale", p.get("rationale"), 900))
@@ -798,6 +810,16 @@ def show(snapshot: dict, ids=()) -> str:
                 rows.append(_wrapped("second reading", _critique(p["validation"]["critique"]), 900))
 
     return "\n".join(rows).lstrip("\n")
+
+
+def _tool_rows(calls, indent: str = "") -> list:
+    rows = []
+
+    for call in calls or []:
+        rows.append(f"    {indent}tool: {call.get('tool')} {json.dumps(call.get('args') or {}, default=str)[:300]}")
+        rows.append(_wrapped(indent + "  answer", call.get("result"), 600))
+
+    return rows
 
 
 def _critique(critique: dict) -> str:
@@ -836,14 +858,16 @@ def live_edits(path: str) -> list:
 
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True,
-        fixes: int = 1, critic: bool = False, samples: int = 1, watch_all: bool = False) -> str:
+        fixes: int = 1, critic: bool = False, samples: int = 1, watch_all: bool = False,
+        tools: bool = False) -> str:
     """
     `trials` rounds of `ids` in an isolated mock tenant, with up to `fixes`
     fixes a fault; returns the run's id. Calls isolate().
     The agent reads the playbooks with the app's approved edits, or the files alone without `playbook_edits`,
     with `critic` a second reading checks each valid fix (config.CRITIC; off unless asked for), and with
-    `samples` above 1 that many first proposals are drawn and voted on (config.SAMPLES), and with `watch_all`
-    every connection and processor has a KPI (config.WATCH_ALL).
+    `samples` above 1 that many first proposals are drawn and voted on (config.SAMPLES), with `watch_all`
+    every connection and processor has a KPI (config.WATCH_ALL), and with `tools` the agent may call
+    read-only tools before it proposes (config.TOOLS).
     """
 
     edits = live_edits(config.DB_PATH) if playbook_edits else []
@@ -853,6 +877,7 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
     config.CRITIC = critic
     config.SAMPLES = max(1, samples)
     config.WATCH_ALL = watch_all
+    config.TOOLS = tools
     client, store = clients.get_client(), db.get_store()
     ingest.use_edits(edits)
 
@@ -867,13 +892,15 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         day = len(runs)
         entry = {"id": time.strftime("replay-%Y%m%d-%H%M%S", time.gmtime()), "model": model,
                  "agent_version": prompts.agent_version(model, retriever.edition()), "memory": memory,
-                 "critic": critic, "samples": config.SAMPLES, "watch_all": watch_all, "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
+                 "critic": critic, "samples": config.SAMPLES, "watch_all": watch_all, "tools": tools,
+                 "scenarios": ids, "fixes": fixes, "trials": [], "started_at": time.time(), "finished_at": None}
         runs.append(entry)
         log(f"{entry['id']}: {trials} round(s) of {len(ids)} scenario(s) with {model}"
             + (f", up to {fixes} fixes each" if fixes > 1 else "") + ("" if memory else ", no memory")
             + (", with the critic" if critic else "")
             + (f", {config.SAMPLES} samples on the first attempt" if config.SAMPLES > 1 else "")
             + (", a KPI on every connection and processor" if watch_all else "")
+            + (f", up to {config.TOOL_CALLS} tool calls a proposal" if tools else "")
             + (f", {len(edits)} approved playbook edit(s)" if edits else "") + f" in {directory}")
         now = previous.get("now") or 0.0
 
@@ -907,6 +934,9 @@ def main() -> int:
                              "(SELFHEAL_SAMPLES)")
     parser.add_argument("--watch-all", action="store_true",
                         help="a watch-only KPI on every connection and processor of a group (SELFHEAL_WATCH_ALL)")
+    parser.add_argument("--tools", action="store_true",
+                        help="let the agent check a fix and read a KPI's history before it proposes "
+                             "(SELFHEAL_TOOLS)")
     parser.add_argument("--no-playbook-edits", action="store_true",
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
@@ -945,7 +975,7 @@ def main() -> int:
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
                  not args.no_playbook_edits, max(1, args.fixes), args.critic, max(1, args.samples),
-                 args.watch_all)
+                 args.watch_all, args.tools)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0
