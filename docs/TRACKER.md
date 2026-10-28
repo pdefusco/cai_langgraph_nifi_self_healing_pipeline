@@ -113,24 +113,9 @@ them.
 | NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646, 3ade318 |
 | NFH-89 | Fix | The vote throws out the right stage's draws when all are short, and a lone valid draw elsewhere wins (S24) | Dropped | c5fa239, 4c49732, 3ade318 |
 | NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | 0eed9a1 |
-| NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | In progress | |
+| NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38 |
 
 ## Open tickets
-
-### NFH-91 · Feature · Read-only tools the agent may call before it proposes
-In NFH-65's rounds nearly every first-try miss had one cause: the agent took a rate back pressure held down as the
-intake (S30 5/s against 20/s, S07 1.4/s against 10/s). The capacity check knows the right number, but the agent
-hears it only from a send-back, and S07 round 2 spent all three attempts that way. With `SELFHEAL_TOOLS` the agent
-may call a tool before it answers, by replying with a JSON object with a "tool" key instead of the proposal:
-`check_fix` runs its steps through validation and the capacity check (the vote's check, on a cached client, so
-nothing is written and the flow is read once a diagnosis), and `kpi_history` reads one KPI's last 2 h from the store
-in 10 minute steps. Up to `SELFHEAL_TOOL_CALLS` (3) a proposal, each one more LLM call; with samples each draw has
-its own. No function calling: the endpoint may not have it, and the reply parsing already reads past the thinking.
-The calls are on the validation report and in `replay --show`; the agent version ends /tools:<hash>x3, and with
-tools off the prompt is as it was. Judged on right value and worked: valid on the first try rises by construction.
-- 2026-10-27: built, off by default. A scripted S30 agent checks 2 pickers, hears "about 16/s, below the intake of
-  about 20/s", checks 0 sec, and proposes it, valid on the first attempt. The oracle replay is the same with
-  `--tools`. Next: the user's LLM run with `--tools` against replay-86-after.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4
@@ -252,6 +237,29 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-91 · Feature · Read-only tools the agent may call before it proposes
+In NFH-65's rounds nearly every first-try miss had one cause: the agent took a rate back pressure held down as the
+intake (S30 5/s against 20/s, S07 1.4/s against 10/s). The capacity check knows the right number, but the agent
+hears it only from a send-back, and S07 round 2 spent all three attempts that way. With `SELFHEAL_TOOLS` the agent
+may call a tool before it answers, by replying with a JSON object with a "tool" key instead of the proposal:
+`check_fix` runs its steps through validation and the capacity check (the vote's check, on a cached client, so
+nothing is written and the flow is read once a diagnosis), and `kpi_history` reads one KPI's last 2 h from the store
+in 10 minute steps. Up to `SELFHEAL_TOOL_CALLS` (3) a proposal, each one more LLM call; with samples each draw has
+its own. No function calling: the endpoint may not have it, and the reply parsing already reads past the thinking.
+The calls are on the validation report and in `replay --show`; the agent version ends /tools:<hash>x3, and with
+tools off the prompt is as it was. Judged on right value and worked: valid on the first try rises by construction.
+- 2026-10-27: built, off by default. A scripted S30 agent checks 2 pickers, hears "about 16/s, below the intake of
+  about 20/s", checks 0 sec, and proposes it, valid on the first attempt. The oracle replay is the same with
+  `--tools`. Next: the user's LLM run with `--tools` against replay-86-after.
+- 2026-10-27: measured, not kept. replay-86-after → replay-91-after, 14 scenarios, 3 rounds, 3 samples: right value
+  81% → 76% (−5, luck ±10), valid 1st 93% → 86% (−7, ±12), worked 83% → 79% (−5, ±10), none beyond luck. S24 went
+  0% → 33% on value and worked; S23 and S25 lost, S25 67% → 0%. The agent hardly called the tools: in S07 and S30's
+  6 rounds none of the 18 first-attempt draws did, and only S07 round 2's retry called check_fix (on 500 ms, which
+  the send-back had already refused) and kpi_history, then proposed 0 sec. S30 still sized Label Parcel from its
+  throttled 5/s and S07 from 1.4/s, and were sent back as before. Making the check compulsory would be the send-back
+  loop without counting the attempt, so it would move valid 1st only. The code stays, off (SELFHEAL_TOOLS), like
+  the critic; live never had it.
 
 ### NFH-65 · Ops · Uniform watch-only KPIs
 The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
