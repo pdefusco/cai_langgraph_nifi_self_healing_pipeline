@@ -87,7 +87,7 @@ them.
 | NFH-62 | Ops | Offline before-and-after measurement of NFH-53, 54, 60 and 61 | Done | f4a3eb3 |
 | NFH-63 | Fix | Import picks the oldest catalog version as baseline; p3 and p5 run the broken v1 | Done | 1db88f2 |
 | NFH-64 | Fix | Scenario design: S06 alerts on the wrong measure, S21's threshold is unreachable, S09 can't drain, S20 stalls | Parked | |
-| NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | In progress | |
+| NFH-65 | Ops | Uniform watch-only KPIs on every connection and processor of a group | Dropped | 065290d |
 | NFH-66 | Feature | Environment promotion (Phase 5) | Parked | |
 | NFH-67 | Docs | This tracker, and the architecture guide | Done | 5191d36 |
 | NFH-68 | Fix | A diagnosis the LLM didn't answer is tried again by itself; the LLM timeout is a setting | Done | a4b5b5c |
@@ -192,21 +192,6 @@ report the KPIs still breached as "still open: likely another fault", with no ro
 - 2026-10-21: found in the review pass. Parked.
 - 2026-10-21: the processor-count units found while building NFH-54.
 
-### NFH-65 · Ops · Uniform watch-only KPIs
-The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
-the answer once NFH-54 shows them. Give every connection and processor of a group a watch-only KPI, so the agent's
-view is the same everywhere. A tenant write (re-running the 04 KPI step).
-- 2026-10-21: planned for before p14–p20.
-- 2026-10-27: replay side built. `Scenario.watch_kpis()` adds a queued-count KPI on every named connection and a
-  FlowFiles Out KPI on every processor but the exits (whose FlowFiles In edge_kpis already charts), where the
-  scenario has none. Like the roll-up KPIs they don't alert, decide or pair, so detection and outcomes don't move.
-  `Pack.kpis` includes them only with SELFHEAL_WATCH_ALL (default off), so live is unchanged and a 04 KPI step
-  re-run doesn't write them; `replay --watch-all` turns it on. S24's readings now show s24-sessions at 750 queued
-  (8% full) after Sessionize's 93%. With more rates measured the capacity check read S30's Pick Items, held back by
-  the full queue after it, as busy at 5/s per task and sent back its design fix; a stage whose way on is measured
-  full has no work-per-FlowFile estimate now. The oracle replay of the 14 scenarios is identical with and without it
-  (valid 1st 100%, worked 90%, lift +54%). Next: the user's LLM run with `--watch-all` against replay-86-after.
-
 ### NFH-66 · Feature · Environment promotion
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
 only exists in production.
@@ -251,6 +236,29 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-65 · Ops · Uniform watch-only KPIs
+The KPIs a pack defines were placed by the scenario's designer, often right at the cause, which half-hands the agent
+the answer once NFH-54 shows them. Give every connection and processor of a group a watch-only KPI, so the agent's
+view is the same everywhere. A tenant write (re-running the 04 KPI step).
+- 2026-10-21: planned for before p14–p20.
+- 2026-10-27: replay side built. `Scenario.watch_kpis()` adds a queued-count KPI on every named connection and a
+  FlowFiles Out KPI on every processor but the exits (whose FlowFiles In edge_kpis already charts), where the
+  scenario has none. Like the roll-up KPIs they don't alert, decide or pair, so detection and outcomes don't move.
+  `Pack.kpis` includes them only with SELFHEAL_WATCH_ALL (default off), so live is unchanged and a 04 KPI step
+  re-run doesn't write them; `replay --watch-all` turns it on. S24's readings now show s24-sessions at 750 queued
+  (8% full) after Sessionize's 93%. With more rates measured the capacity check read S30's Pick Items, held back by
+  the full queue after it, as busy at 5/s per task and sent back its design fix; a stage whose way on is measured
+  full has no work-per-FlowFile estimate now. The oracle replay of the 14 scenarios is identical with and without it
+  (valid 1st 100%, worked 90%, lift +54%). Next: the user's LLM run with `--watch-all` against replay-86-after.
+- 2026-10-27: measured, not kept. replay-86-after → replay-65-after, 14 scenarios, 3 rounds, 3 samples: right value
+  81% → 81% (+0, luck ±10), valid 1st 93% → 86% (−7, ±12), worked 83% → 86% (+2, ±12), none beyond luck. S24 went
+  0% → 33% on value and worked, S25 67% → 100%; S05 and S07 lost a round each. S30's valid 1st fell 100% → 0%: seeing
+  every queue, the agent picked Label Parcel, the last stage with a full queue in front, in every round, sized it
+  from its throttled 5/s rather than the source's 20/s, and was rightly sent back (8/s, 10/s against 20/s), then
+  proposed 40 ms, which worked. S07's send-backs were the NFH-83 drain rule on a queue already measured, the agent
+  again taking the held-back 1.4/s as the intake. The check was right in each. The code stays, off
+  (SELFHEAL_WATCH_ALL), like the critic; live never had it, and the 04 KPI step isn't needed.
 
 ### NFH-90 · Fix · S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round
 Several labels were picked from arithmetic, and some were off: S07 accepted 100 ms and 4 tasks, which can't keep up
