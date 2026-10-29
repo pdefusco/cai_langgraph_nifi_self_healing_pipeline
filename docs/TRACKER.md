@@ -139,6 +139,11 @@ all of them, and an LLM baseline on all of them is what the next changes are mea
   it is now diagnosed as its hourly batch lands, as on live, and every round's 15 min window reads the batch's end
   as the group's intake falling 15/s → 5/s, WORSENED; the 1 h window is IMPROVED each time. A verdict problem, not a
   harness one; for a ticket of its own.
+- 2026-10-29: the CAI LLM baseline on all 45 failed twice, hours in, with "database is locked" (once in round 1, once
+  in round 2 at `add_samples`), with no other replay running. The replay holds one connection to its store, so the
+  likely cause is SQLite's file locks on /home/cdsw, a network filesystem. New `--scratch DIR`: the store, the
+  checkpoints and Chroma are kept in DIR, on local disk, and the store is copied back to `--dir` after every round
+  (`Store.copy_to`), so a later run in the same directory starts from it as before. record.json is unchanged.
 
 ### NFH-85 · Fix · The capacity check sends back the design fixes of S10 and S13
 On the oracle replay of all 38 scenarios, S10's design fix (route the failures to the DLQ, a 5 s connection timeout, 4

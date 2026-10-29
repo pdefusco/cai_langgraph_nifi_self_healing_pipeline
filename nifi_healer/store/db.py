@@ -148,6 +148,20 @@ class Store:
             self.conn.execute("ROLLBACK")
             raise
 
+    def copy_to(self, path: str) -> None:
+        """A consistent copy of the whole store at `path`, which is replaced at once."""
+
+        with self.lock:
+            target = sqlite3.connect(path + ".tmp")
+
+            try:
+                self.conn.backup(target)
+
+            finally:
+                target.close()
+
+        os.replace(path + ".tmp", path)
+
     # -- plumbing -------------------------------------------------------
 
     def _all(self, sql: str, params=()) -> list:

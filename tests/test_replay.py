@@ -208,6 +208,25 @@ def test_every_run_sees_the_same_rounds(replayed, tmp_path):
     assert again[1]["trials"][0]["world"] == again[0]["trials"][0]["world"]
 
 
+def test_a_scratch_directory_holds_the_sqlite_files_and_the_store_comes_back(replayed, tmp_path):
+    directory, scratch = tmp_path / "replay", tmp_path / "local"
+    replay.run(["S01"], 1, str(directory), oracle=True, scratch=str(scratch / "a"))
+
+    assert config.DB_PATH == str(scratch / "a" / "healer.db") and config.CHECKPOINT_PATH.startswith(str(scratch))
+    assert (directory / "healer.db").exists() and not (directory / "checkpoints.sqlite").exists()
+    kept = replay.load(str(directory))["record"]["incidents"]
+    assert kept
+
+    # The next run, from another scratch directory, starts from the store kept in the replay's.
+    replay.run(["S01"], 1, str(directory), oracle=True, scratch=str(scratch / "b"))
+    again = replay.load(str(directory))
+    assert len(again["record"]["incidents"]) > len(kept)
+    assert again["runs"][1]["trials"][0]["at"] - again["runs"][0]["trials"][0]["at"] == replay.DAY
+
+    with pytest.raises(ValueError, match="fresh scratch"):     # it holds a store, and the new directory none
+        replay.isolate(str(tmp_path / "other"), str(scratch / "b"))
+
+
 class TooManyTasksLLM(OutOfBoundsLLM):
     """Always proposes 99 concurrent tasks, as a well-formed step that validation sends back."""
 

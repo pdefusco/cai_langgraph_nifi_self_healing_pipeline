@@ -87,6 +87,11 @@ watch-only KPI (flows/scenarios/base.py watch_kpis, NFH-65), so the
 readings cover the whole group. Without it a group has the KPIs its
 scenario defines, whatever SELFHEAL_WATCH_ALL says.
 
+`--scratch DIR` keeps the SQLite files (store, checkpoints, Chroma) in
+DIR, on local disk, and copies the store back to REPLAY_DIR after every
+round: on CAI's /home/cdsw, a network filesystem, long runs failed with
+"database is locked".
+
 The pacing guards (cooldown, actions per window) are off: every round is
 a fresh tenant, and a pack's faults are fixed one after another, which on
 a live tenant would take a day.
@@ -98,6 +103,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sqlite3
 import statistics
 import sys
@@ -122,6 +128,7 @@ HISTORY_SECONDS = 3 * 3600      # the 1 h window reads 1.5 h before the fix
 DETECT_SECONDS = 1800
 DETECT_STEP = 120
 RECORD = "record.json"
+STORE = "healer.db"             # in the directory, also when a scratch directory holds the live one
 LLM_TRIES = 3                   # diagnoses of an incident the LLM didn't answer, in a round
 LLM_PAUSE_SECONDS = 30          # wall seconds before asking again
 LUCK_DRAWS = 2000               # shuffles behind compare()'s luck band
@@ -194,18 +201,33 @@ class OracleLLM:
         return type("Reply", (), {"content": json.dumps(reply)})()
 
 
-def isolate(directory: str):
-    """Point this process at its own mock tenant under `directory`; returns its world."""
+def isolate(directory: str, scratch: str = ""):
+    """
+    Point this process at its own mock tenant under `directory`; returns its world.
+    With `scratch`, its SQLite files (store, checkpoints, Chroma) are kept there instead: SQLite's
+    locks are not to be trusted on a network filesystem, where long runs on CAI's /home/cdsw failed
+    with "database is locked". The store starts from `directory`'s copy and is copied back by save().
+    """
 
+    base = scratch or directory
     os.makedirs(directory, exist_ok=True)
+    os.makedirs(base, exist_ok=True)
     config.DF_CLIENT, config.MOCK = "mock", True     # whatever the project environment says
     config.DATA_DIR = directory
-    config.DB_PATH = os.path.join(directory, "healer.db")
-    config.CHECKPOINT_PATH = os.path.join(directory, "checkpoints.sqlite")
+    config.DB_PATH = os.path.join(base, STORE)
+    config.CHECKPOINT_PATH = os.path.join(base, "checkpoints.sqlite")
     config.FLEET_FILE = os.path.join(directory, "fleet.json")
     config.MOCK_WORLD_FILE = os.path.join(directory, "mock_world.json")
     config.EDITS_DIR = os.path.join(directory, "edits")
-    config.CHROMA_DIR = os.path.join(directory, "chroma")
+    config.CHROMA_DIR = os.path.join(base, "chroma")
+
+    kept = os.path.join(directory, STORE)
+
+    if scratch and os.path.exists(kept):
+        shutil.copyfile(kept, config.DB_PATH)
+
+    elif scratch and os.path.exists(config.DB_PATH):
+        raise ValueError(f"{scratch} holds another replay's store; give a fresh scratch directory")
     config.SERVICE_CRN, config.ENVIRONMENT_CRN = config.MOCK_SERVICE_CRN, config.MOCK_ENVIRONMENT_CRN
     config.ARMED = True                      # a write changes only the mock's own file
     config.COOLDOWN_SECONDS = 0
@@ -510,6 +532,15 @@ def save(directory: str, runs: list, now: float) -> None:
         json.dump(body, handle, default=str)
 
     os.replace(path + ".tmp", path)
+
+    kept = os.path.join(directory, STORE)
+
+    if os.path.abspath(config.DB_PATH) != os.path.abspath(kept):     # the store is in isolate()'s scratch
+        try:
+            db.get_store().copy_to(kept)
+
+        except (OSError, sqlite3.Error) as exc:     # the record is written; the next round copies it again
+            log(f"store not copied to {kept}: {exc}")
 
 
 def _trials(snapshot: dict, since: float = 0.0) -> list:
@@ -910,7 +941,7 @@ def live_edits(path: str) -> list:
 def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
         detect_seconds: float = DETECT_SECONDS, memory: bool = True, playbook_edits: bool = True,
         fixes: int = 1, critic: bool = False, samples: int = 1, watch_all: bool = False,
-        tools: bool = False) -> str:
+        tools: bool = False, scratch: str = "") -> str:
     """
     `trials` rounds of `ids` in an isolated mock tenant, with up to `fixes`
     fixes a fault; returns the run's id. Calls isolate().
@@ -918,12 +949,12 @@ def run(ids: list, trials: int = 1, directory: str = "", oracle: bool = False,
     with `critic` a second reading checks each valid fix (config.CRITIC; off unless asked for), and with
     `samples` above 1 that many first proposals are drawn and voted on (config.SAMPLES), with `watch_all`
     every connection and processor has a KPI (config.WATCH_ALL), and with `tools` the agent may call
-    read-only tools before it proposes (config.TOOLS).
+    read-only tools before it proposes (config.TOOLS). With `scratch` its SQLite files are kept there (isolate()).
     """
 
     edits = live_edits(config.DB_PATH) if playbook_edits else []
     directory = directory or config.REPLAY_DIR
-    world = isolate(directory)
+    world = isolate(directory, scratch)
     config.MEMORY = memory
     config.CRITIC = critic
     config.SAMPLES = max(1, samples)
@@ -988,6 +1019,10 @@ def main() -> int:
     parser.add_argument("--tools", action="store_true",
                         help="let the agent check a fix and read a KPI's history before it proposes "
                              "(SELFHEAL_TOOLS)")
+    parser.add_argument("--scratch", default="",
+                        help="a fresh directory on local disk for the replay's SQLite files, which a network "
+                             "filesystem can fail with 'database is locked'; the store is copied back to --dir "
+                             "after every round")
     parser.add_argument("--no-playbook-edits", action="store_true",
                         help="read the playbook files alone, without the app's approved edits")
     parser.add_argument("--detect-minutes", type=float, default=DETECT_SECONDS / 60,
@@ -1026,7 +1061,7 @@ def main() -> int:
     ids = chosen(args.scenario, args.pack)
     run_id = run(ids, max(1, args.trials), args.dir, args.oracle, args.detect_minutes * 60, not args.no_memory,
                  not args.no_playbook_edits, max(1, args.fixes), args.critic, max(1, args.samples),
-                 args.watch_all, args.tools)
+                 args.watch_all, args.tools, args.scratch)
     print(report(load(args.dir), run_id), flush=True)
 
     return 0
