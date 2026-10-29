@@ -153,7 +153,7 @@ ISOLATED = ("DF_CLIENT", "MOCK", "DATA_DIR", "DB_PATH", "CHECKPOINT_PATH", "FLEE
 
 
 def log(msg: str) -> None:
-    print(f"[replay] {msg}", flush=True)
+    print(f"[replay {time.strftime('%H:%M:%S')}] {msg}", flush=True)     # wall time; the messages give sim time
 
 
 class OracleLLM:
