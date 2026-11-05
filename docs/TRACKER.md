@@ -78,7 +78,7 @@ them.
 | NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
 | NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | e93d361 |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
-| NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Blocked | |
+| NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | In progress | |
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
 | NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Parked | |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
@@ -161,6 +161,8 @@ the scenario guide, and what the review shows becomes tickets. p14–p20 wait fo
 - 2026-10-20: p1–p13 provisioned. Review pass started.
 - 2026-10-21: S01, S05, S08, S13 and S30 fixed live. S02 and S07 approved and draining. Review paused to build
   NFH-53, 54, 55, 60, 61 and 62, so the waiting reviews are re-drafted by the improved agent.
+- 2026-11-05: NFH-56 built, so p11 reviews get an inventory and p14–p20 are unblocked. pdf1019-cdp-env is gone;
+  NFH-56 was verified on se-sandbox-aws.
 
 ### NFH-51 · Feature · Review Queue change table in plain sentences
 The change table shows raw diff paths, including canvas-only fields such as connection bends and positions. Show the
@@ -191,6 +193,18 @@ of re-drafted. The old proposal shows as superseded in History.
 and no p11 fix can be validated. Almost certainly server-side: cdpcli only base64-decodes the API's answer.
 p20-big-healthy will hit it too.
 - 2026-10-20: found on S28. Asked the CDF product team. Blocks p14–p20.
+- 2026-11-05: probed on se-sandbox-aws, read-only. The cut is getFlowVersion's: its decoded `flowDefinition` is
+  65,536 bytes of p11's 71,377, and cdpcli's json.loads fails on it ("Unterminated string ... (char 65535)"). The
+  stored flow is whole: the console UI's Download serves it. A console session cookie can't be minted without the
+  interactive SSO login, but the console's UI backend accepts a request signed with the CDP API key (cdpcli's own
+  signer, `Content-Type` required even on a GET). `GET <console>/dfx/api/v1/catalog/flows/versions/<id>` returns the
+  full definition, where `<id>` is the last segment of the version's `bucketIdentifier` in
+  `list-flow-definition-versions`. The DF workload token is refused there (401 "Missing scope definition").
+- 2026-11-05: built. `flow_definition` still calls `get-flow-version` first and downloads from the console only when
+  the answer was cut short or doesn't parse (`SELFHEAL_CDP_CONSOLE_URL`). The mock cuts at 64 KiB too, so p11 and
+  p20 take the fallback in tests. Live, p11 v1 reads in full, identical to `flows/out/p11-payments.json`; p9 still
+  reads through the CLI. p14–p20 no longer wait on this. The console path is the UI's backend, not a documented API,
+  so the limit stays reported to the CDF team.
 
 ### NFH-57 · Feature · Dismiss a review for a platform problem
 A review that failed for a platform reason (NFH-56) can only be rejected, which counts against the fix, becomes a past

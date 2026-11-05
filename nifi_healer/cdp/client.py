@@ -25,6 +25,11 @@ Two DataFlow CLI services, not interchangeable:
                 Served by a private load balancer: only reachable from
                 inside the environment's VPC.
 
+One read goes around the CLI: getFlowVersion cuts a flow definition at
+64 KiB (NFH-56), so a longer one is downloaded from the console's flow
+catalog instead, the request the UI's Download button makes, signed with
+the same API key (`console_get`).
+
 Ported from agentstudio_nifi_monitoring_and_self_healing_pipelines
 (self_healing/df_api.py), where these behaviours were verified live.
 """
@@ -32,6 +37,7 @@ Ported from agentstudio_nifi_monitoring_and_self_healing_pipelines
 import base64
 import json
 import os
+import re
 import select
 import shlex
 import socket
@@ -39,7 +45,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 import config
 from nifi_healer.runtime import telemetry
@@ -66,6 +74,49 @@ READ_PREFIXES = ("describe-", "list-", "get-")
 
 # Calls before a worker is replaced, so nothing cdpcli accumulates grows for ever.
 WORKER_CALLS = 500
+
+# The console's catalog download of one flow version, by the version's
+# id (the last segment of its `bucketIdentifier`). The UI's backend, not
+# a documented API, so only a fallback for what getFlowVersion cuts short.
+CONSOLE_FLOW_VERSION_PATH = "/dfx/api/v1/catalog/flows/versions/{version_id}"
+
+# How a cut definition shows: cdpcli's own json.loads fails on it, and
+# a JSON decode error's message ends "(char N)".
+JSON_DECODE_ERROR = re.compile(r"\(char \d+\)")
+
+
+def is_cut_short(result: dict) -> bool:
+    """Whether a failed get-flow-version is getFlowVersion's 64 KiB cut (NFH-56)."""
+
+    return bool(JSON_DECODE_ERROR.search(result.get("stderr") or ""))
+
+
+def parse_flow_definition(result: dict, flow_version_crn: str) -> dict:
+    """
+    The flow definition in a get-flow-version or console download
+    response: the flow JSON itself (`flowContents` at the top level), or a
+    JSON or base64 JSON string under `flowDefinition`. Else an error dict.
+    """
+
+    definition = result if "flowContents" in result else result.get("flowDefinition")
+
+    if isinstance(definition, str):
+        try:
+            definition = json.loads(definition)
+
+        except ValueError:
+            try:
+                definition = json.loads(base64.b64decode(definition, validate=True))
+
+            except ValueError:
+                return {"error": "flowDefinition is neither JSON nor base64 JSON.",
+                        "command": flow_version_crn}
+
+    if not isinstance(definition, dict) or "flowContents" not in definition:
+        return {"error": "the response carries no flow definition with flowContents.",
+                "command": flow_version_crn}
+
+    return definition
 
 
 def command_line(args: list, prefix: str = "cdp") -> str:
@@ -402,32 +453,77 @@ class Client:
         API's `flowDefinition` and prints the flow JSON itself, so
         `flowContents` is at the top level. The raw API shape (a base64 or
         JSON string under `flowDefinition`) is accepted too.
+
+        getFlowVersion cuts a definition at 64 KiB (NFH-56), and cdpcli's
+        json.loads then fails on it. Then, or if the response does not
+        parse, the definition is downloaded from the console's catalog.
+        getFlowVersion stays first because it is the documented API.
         """
 
         result = self.get_flow_version(flow_version_crn)
 
         if "error" in result:
-            return result
+            if not is_cut_short(result):
+                return result
 
-        definition = result if "flowContents" in result else result.get("flowDefinition")
+            definition = result
 
-        if isinstance(definition, str):
-            try:
-                definition = json.loads(definition)
+        else:
+            definition = parse_flow_definition(result, flow_version_crn)
 
-            except ValueError:
-                try:
-                    definition = json.loads(base64.b64decode(definition, validate=True))
+            if "error" not in definition:
+                return definition
 
-                except ValueError:
-                    return {"error": "flowDefinition is neither JSON nor base64 JSON.",
-                            "command": flow_version_crn}
+        downloaded = self.download_flow_version(flow_version_crn)
 
-        if not isinstance(definition, dict) or "flowContents" not in definition:
-            return {"error": "the response carries no flow definition with flowContents.",
+        if "error" not in downloaded:
+            return downloaded
+
+        return dict(
+            definition,
+            hint=("getFlowVersion cuts flow definitions at 64 KiB (NFH-56), and the "
+                  "console catalog download, the fallback, failed too."),
+            detail=f"{downloaded['error']} {downloaded.get('detail', '')}".strip(),
+        )
+
+    def flow_version_id(self, flow_version_crn: str) -> str:
+        """
+        The id the console's catalog knows a flow version by: the last
+        segment of its `bucketIdentifier`. "" if the version is not listed.
+        """
+
+        # crn:cdp:df:<region>:<tenant>:flow:<name>/v.<n>
+        flow_crn = flow_version_crn.rpartition("/")[0]
+        result = self.list_flow_versions(flow_crn)
+
+        for version in result.get("flowVersions") or []:
+            if isinstance(version, dict) and version.get("crn") == flow_version_crn:
+                return (version.get("bucketIdentifier") or "").rstrip("/").rpartition("/")[2]
+
+        return ""
+
+    def download_flow_version(self, flow_version_crn: str) -> dict:
+        """A flow version's definition from the console's catalog, in full; or an error dict."""
+
+        version_id = self.flow_version_id(flow_version_crn)
+
+        if not version_id:
+            return {"error": "list-flow-definition-versions gives no bucketIdentifier for the version.",
                     "command": flow_version_crn}
 
-        return definition
+        result = self.console_get(
+            CONSOLE_FLOW_VERSION_PATH.format(version_id=urllib.parse.quote(version_id, safe=""))
+        )
+
+        if "error" in result:
+            return result
+
+        return parse_flow_definition(result, flow_version_crn)
+
+    def console_get(self, path: str) -> dict:
+        """A GET on the CDP console's UI backend, parsed; or an error dict."""
+
+        return {"error": f"{self.kind} client: no console to GET {path} from."}
 
     def list_flow_definitions(self, search_term: str) -> list:
         # Bounded: the CLI's default page is 20, and auto-pagination emits
@@ -784,6 +880,13 @@ def is_read(args: list) -> bool:
     return len(args) > 1 and str(args[1]).startswith(READ_PREFIXES)
 
 
+class _SignedRequest:
+    """The three fields cdpcli's signer reads and writes."""
+
+    def __init__(self, method: str, url: str, headers: dict):
+        self.method, self.url, self.headers = method, url, headers
+
+
 class LiveClient(Client):
     """
     Runs the CDP CLI: reads on a pool of long-lived workers
@@ -820,6 +923,88 @@ class LiveClient(Client):
         started = time.monotonic()
         result = self._run(args)
         telemetry.record("cdp", time.monotonic() - started, not (isinstance(result, dict) and "error" in result))
+
+        return result
+
+    def console_get(self, path: str) -> dict:
+        started = time.monotonic()
+        result = self._console_get(path)
+        telemetry.record("cdp", time.monotonic() - started, "error" not in result)
+
+        return result
+
+    @staticmethod
+    def _signer():
+        """
+        cdpcli's request signer for this process's API key, found as
+        `_environment()` finds it: environment variables, else the
+        credentials file. None if there is no key.
+        """
+
+        from cdpcli.auth import ECDSAv1Auth, Ed25519v1Auth, RSAv1Auth
+        from cdpcli.credentials import EnvProvider, SharedCredentialProvider
+
+        if os.environ.get("CDP_ACCESS_KEY_ID") and os.environ.get("CDP_PRIVATE_KEY"):
+            provider = EnvProvider()
+
+        else:
+            profile = os.environ.get("CDP_DEFAULT_PROFILE") or os.environ.get("CDP_PROFILE") or "default"
+            provider = SharedCredentialProvider(CDP_CREDENTIALS_FILE, profile)
+
+        credentials = provider.load()
+
+        if credentials is None:
+            return None
+
+        credentials = credentials.get_frozen_credentials()
+
+        # cdpcli's own order of key detection (cdpcli/client.py).
+        for auth in (Ed25519v1Auth, ECDSAv1Auth):
+            if auth.detect_private_key(credentials.private_key):
+                return auth(credentials)
+
+        return RSAv1Auth(credentials)
+
+    def _console_get(self, path: str) -> dict:
+        url = config.CDP_CONSOLE_URL + path
+        command = f"GET {url}"
+
+        try:
+            signer = self._signer()
+
+        except Exception as exc:     # cdpcli's key errors name the source, never the key
+            return {"error": "The CDP API key could not sign the request.", "command": command,
+                    "detail": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+        if signer is None:
+            return {"error": "No CDP credentials found.", "command": command}
+
+        # The console checks content-type in the signature, even on a GET.
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        signer.add_auth(_SignedRequest("GET", url, headers))
+
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                        timeout=config.CDP_TIMEOUT_SECONDS) as response:
+                body = response.read().decode("utf-8", errors="replace")
+
+        except urllib.error.HTTPError as exc:
+            return {"error": f"The CDP console answered {exc.code}.", "command": command,
+                    "detail": exc.read().decode("utf-8", errors="replace")[:MAX_RAW_OUTPUT_CHARS]}
+
+        except (OSError, ValueError) as exc:     # URLError and timeouts are OSErrors
+            return {"error": "The CDP console could not be reached.", "command": command,
+                    "detail": f"{type(exc).__name__}: {exc}"}
+
+        try:
+            result = json.loads(body)
+
+        except ValueError:
+            result = None
+
+        if not isinstance(result, dict):
+            return {"error": "The CDP console returned output that was not a JSON object.",
+                    "command": command, "raw_output": body[:MAX_RAW_OUTPUT_CHARS]}
 
         return result
 

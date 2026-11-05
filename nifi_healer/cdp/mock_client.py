@@ -26,11 +26,12 @@ Time is simulated: `now()` is the world clock and `sleep()` waits
 
 import json
 import time
+import uuid
 from datetime import datetime, timezone
 
 import config
 from nifi_healer.cdp import cli_spec
-from nifi_healer.cdp.client import Client, command_line
+from nifi_healer.cdp.client import CONSOLE_FLOW_VERSION_PATH, Client, command_line
 from nifi_healer.kpi import metrics
 from nifi_healer.runtime import telemetry
 from nifi_healer.sim import world as worlds
@@ -38,6 +39,11 @@ from nifi_healer.sim.world import MockError
 
 CHART_TYPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTEM"}
 CORES_PER_NODE = {"EXTRA_SMALL": 2, "SMALL": 3, "MEDIUM": 6, "LARGE": 12}
+
+# getFlowVersion returns at most this many bytes of a flow definition,
+# as stored (flows/build_all.py's layout); cdpcli's json.loads then fails
+# on the rest (NFH-56). The console's catalog download is not cut.
+GET_FLOW_VERSION_BYTES = 65536
 
 # The JVM's share of a node's memory, and how much more each CPU percent takes.
 _MEMORY_BASE, _MEMORY_PER_CPU = 9.0, 0.05
@@ -85,6 +91,12 @@ def parse_options(tokens: list) -> dict:
         index += 2
 
     return options
+
+
+def _version_id(flow_version_crn: str) -> str:
+    """The id the console's catalog knows a version by; a UUID, as live."""
+
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, flow_version_crn))
 
 
 def _ms(seconds: float) -> int:
@@ -200,7 +212,7 @@ class MockClient(Client):
     def _flow_version(self, version: dict) -> dict:
         return {
             "crn": version["crn"],
-            "bucketIdentifier": "mock-bucket",
+            "bucketIdentifier": f"https://s3.mock/dfx-flow-artifacts/mock/{_version_id(version['crn'])}",
             "author": version["author"],
             "version": version["version"],
             "timestamp": _ms(version["timestamp"]),
@@ -401,7 +413,36 @@ class MockClient(Client):
         # What cdpcli prints, not what the API returns: the CLI decodes the
         # base64 `flowDefinition` and prints the flow JSON itself.
         with self.world.reading():
-            return json.loads(json.dumps(self.world.version(crn)["definition"]))
+            stored = (json.dumps(self.world.version(crn)["definition"], indent=2, sort_keys=True)
+                      + "\n").encode()
+
+        try:
+            return json.loads(stored[:GET_FLOW_VERSION_BYTES])
+
+        except ValueError as exc:     # the API cut it short, as live
+            return {"error": "The CDP CLI returned an error.",
+                    "command": command_line(["df", "get-flow-version", "--flow-version-crn", crn]),
+                    "return_code": 255, "stderr": str(exc), "hint": ""}
+
+    def console_get(self, path: str) -> dict:
+        started = time.monotonic()
+        result = self._console_get(path)
+        telemetry.record("cdp", time.monotonic() - started, "error" not in result)
+
+        return result
+
+    def _console_get(self, path: str) -> dict:
+        prefix = CONSOLE_FLOW_VERSION_PATH.format(version_id="")
+        version_id = path[len(prefix):] if path.startswith(prefix) else ""
+
+        with self.world.reading():
+            for flow in self.world.flows():
+                for version in flow["versions"]:
+                    if version_id and _version_id(version["crn"]) == version_id:
+                        return json.loads(json.dumps(version["definition"]))
+
+        return {"error": "The CDP console answered 404.", "command": f"GET mock-console{path}",
+                "detail": "mock tenant: no catalog flow version at this path."}
 
     def _definition_file(self, options: dict) -> dict:
         (path,) = self._required(options, "file")

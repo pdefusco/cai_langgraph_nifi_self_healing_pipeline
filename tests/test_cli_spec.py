@@ -67,6 +67,75 @@ def test_flow_definition_shapes(response):
     assert Canned(response).flow_definition("crn:fv") == DEFINITION
 
 
+VERSION_CRN = "crn:cdp:df:us-west-1:tenant:flow:nfh-x/v.1"
+VERSION_ID = "f049af2a-5e87-44c0-a7d1-2d08efd87d4e"
+
+# What a live get-flow-version printed for p11's 71 KB definition (NFH-56).
+CUT = {"error": "The CDP CLI returned an error.", "return_code": 255,
+       "stderr": "Unterminated string starting at: line 1718 column 25 (char 65535)"}
+
+
+class Catalog(Client):
+    """get-flow-version answers `flow_version`; the console download answers `console`."""
+
+    def __init__(self, flow_version, console=DEFINITION):
+        self.flow_version, self.console, self.calls = flow_version, console, []
+
+    def run(self, args):
+        self.calls.append(args)
+
+        if args[1] == "get-flow-version":
+            return self.flow_version
+
+        return {"flowVersions": [{"crn": VERSION_CRN, "bucketIdentifier":
+                                  f"https://s3.us-west-2.amazonaws.com/dfx-flow-artifacts/tenant/{VERSION_ID}"}]}
+
+    def console_get(self, path):
+        self.calls.append(path)
+        return self.console
+
+
+@pytest.mark.parametrize("flow_version", [CUT, {"flowDefinition": "eyJmbG93Q29udGVudHMiOiB7"}])
+def test_a_definition_cut_short_is_downloaded_from_the_console(flow_version):
+    client = Catalog(flow_version)
+
+    assert client.flow_definition(VERSION_CRN) == DEFINITION
+    assert client.calls[1] == ["df", "list-flow-definition-versions", "--flow-crn",
+                               "crn:cdp:df:us-west-1:tenant:flow:nfh-x"]
+    assert client.calls[2] == f"/dfx/api/v1/catalog/flows/versions/{VERSION_ID}"
+
+
+def test_the_console_is_only_a_fallback():
+    client = Catalog(DEFINITION)
+    assert client.flow_definition(VERSION_CRN) == DEFINITION
+    assert len(client.calls) == 1
+
+    # Any other failure is the answer: no second read can fix a missing version.
+    missing = {"error": "The CDP CLI returned an error.", "return_code": 254,
+               "stderr": "An error occurred: Flow version not found. (Status Code: 404; Error Code: NOT_FOUND)"}
+    client = Catalog(missing)
+    assert client.flow_definition(VERSION_CRN) == missing
+    assert len(client.calls) == 1
+
+
+def test_a_failed_fallback_says_why():
+    found = Catalog(CUT, console={"error": "The CDP console answered 403.", "detail": "Forbidden"})
+    found = found.flow_definition(VERSION_CRN)
+
+    assert found["error"] == CUT["error"] and found["stderr"] == CUT["stderr"]
+    assert "NFH-56" in found["hint"] and found["detail"] == "The CDP console answered 403. Forbidden"
+
+
+def test_the_mock_cuts_and_downloads_as_live(tenant):
+    _, client, _ = tenant("p11-payments", "p9-clickstream")
+    large = provisioning.fleet.pack("p11-payments")["baseline_flow_version_crn"]
+    small = provisioning.fleet.pack("p9-clickstream")["baseline_flow_version_crn"]
+
+    assert "(char 65535)" in client.get_flow_version(large)["stderr"]
+    assert "flowContents" in client.get_flow_version(small)
+    assert client.flow_definition(large) == client.world.version(large)["definition"]
+
+
 def test_cdpcli_prints_the_decoded_flow_definition():
     # flow_definition and the mock assume the installed cdpcli decodes
     # getFlowVersion's base64 field client-side and prints the flow JSON.

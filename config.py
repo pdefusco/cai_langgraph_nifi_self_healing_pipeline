@@ -127,6 +127,12 @@ DENYLIST_DEPLOYMENT_CRNS = _list("SELFHEAL_DENYLIST")
 
 CDP_TIMEOUT_SECONDS = _int("SELFHEAL_CDP_TIMEOUT", 120)
 
+# The tenant's CDP console, for the one read the public API cuts short:
+# flow definitions over 64 KiB, downloaded from its catalog (NFH-56).
+CDP_CONSOLE_URL = os.environ.get(
+    "SELFHEAL_CDP_CONSOLE_URL", "https://console.us-west-1.cdp.cloudera.com"
+).rstrip("/")
+
 # Long-lived CLI processes for reads (cdp/worker.py), so a read stops
 # paying cdpcli's ~1 s of imports each time; started as needed. 0 runs
 # every call in its own process, as before.

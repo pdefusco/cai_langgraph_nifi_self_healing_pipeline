@@ -203,6 +203,9 @@ version in between:
 
 ```bash
 cdp df get-flow-version --flow-version-crn $CURRENT_FV > current.json   # the flow JSON itself
+# over 64 KiB the API cuts it short and the CLI fails "... (char 65535)"; the
+# app then GETs <console>/dfx/api/v1/catalog/flows/versions/<id>, signed with
+# the API key, where <id> ends the version's bucketIdentifier (NFH-56)
 # edit the JSON
 cdp df import-flow-definition-version --flow-crn $FLOW --file edited.json --comments "..."
 cdp df change-flow-version-in-deployment ... --flow-version-crn $NEW_FV \
