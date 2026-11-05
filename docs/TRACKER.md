@@ -205,6 +205,16 @@ p20-big-healthy will hit it too.
   p20 take the fallback in tests. Live, p11 v1 reads in full, identical to `flows/out/p11-payments.json`; p9 still
   reads through the CLI. p14–p20 no longer wait on this. The console path is the UI's backend, not a documented API,
   so the limit stays reported to the CDF team.
+- 2026-11-05: tested at scale on se-sandbox-aws (`provision/probe_large_flows.py`; Ed25519 key, from a laptop).
+  11 versions read back exactly as imported: 60,000–65,537 bytes through the CLI, 100 KB, 500 KB, 2 MB, p11 and p20
+  through the console; a flow's v1 and v2 each read as itself. The cut is exactly the first 65,536 bytes of the file
+  as imported: a cut-off flow whose byte 65,536 is the second byte of an "é" fails with "'utf-8' codec can't decode
+  byte 0xc3 in position 65535", which the first build did not take for a cut and now does; the 65,537-byte flow lost
+  only its final newline and still parses. A cut that drops anything but trailing whitespace cannot parse, so a parse
+  failure catches every cut. A console read takes ~1 s for 500 KB (one 10 s outlier); 50 downloads each at 1, 6 and
+  12 at once ran with no errors and no throttling, 7.4/s at 12. A cut read costs 1.7–4.6 s, against ~0.9 s for one
+  that isn't. A wrong version id answers 500 "Failed to Read Vault Key", not 404. Not yet tried: from CAI (egress to
+  the console host), RSA and ECDSA keys, a least-privilege role.
 
 ### NFH-57 · Feature · Dismiss a review for a platform problem
 A review that failed for a platform reason (NFH-56) can only be rejected, which counts against the fix, becomes a past

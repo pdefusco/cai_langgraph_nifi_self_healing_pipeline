@@ -81,8 +81,9 @@ WORKER_CALLS = 500
 CONSOLE_FLOW_VERSION_PATH = "/dfx/api/v1/catalog/flows/versions/{version_id}"
 
 # How a cut definition shows: cdpcli's own json.loads fails on it, and
-# a JSON decode error's message ends "(char N)".
-JSON_DECODE_ERROR = re.compile(r"\(char \d+\)")
+# a JSON decode error's message ends "(char N)"; or, cut inside a
+# multi-byte character, the UTF-8 decode before it fails.
+JSON_DECODE_ERROR = re.compile(r"\(char \d+\)|codec can't decode byte")
 
 
 def is_cut_short(result: dict) -> bool:

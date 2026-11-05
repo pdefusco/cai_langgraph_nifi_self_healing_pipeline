@@ -95,7 +95,11 @@ class Catalog(Client):
         return self.console
 
 
-@pytest.mark.parametrize("flow_version", [CUT, {"flowDefinition": "eyJmbG93Q29udGVudHMiOiB7"}])
+CUT_MID_CHARACTER = dict(CUT, stderr="'utf-8' codec can't decode byte 0xc3 in position 65535: "
+                                     "unexpected end of data")
+
+
+@pytest.mark.parametrize("flow_version", [CUT, CUT_MID_CHARACTER, {"flowDefinition": "eyJmbG93Q29udGVudHMiOiB7"}])
 def test_a_definition_cut_short_is_downloaded_from_the_console(flow_version):
     client = Catalog(flow_version)
 
