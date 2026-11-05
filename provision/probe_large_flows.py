@@ -31,8 +31,12 @@ and then tests:
 The report goes to stdout and to provision/out/probe_large_flows_<time>.json.
 Credentials are whatever the app would use: CDP_ACCESS_KEY_ID and
 CDP_PRIVATE_KEY, else ~/.cdp/credentials (CDP_PROFILE picks the profile).
-Rerun with another key or from a CAI session to test those. Writes only
-its own probe flows, and deletes them unless --keep.
+Rerun with another key or on CAI to test those: from a session terminal,
+or as a job (script cai_job.py, arguments provision/probe_large_flows.py,
+SELFHEAL_DF_CLIENT=live), where the project's CDP_* settings are the key.
+It first checks the console takes a signed request, and stops before
+importing anything if not. Writes only its own probe flows, and deletes
+them unless --keep.
 """
 
 import argparse
@@ -265,6 +269,7 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="leave the probe flows in the catalog")
     parser.add_argument("--reuse", action="store_true", help="test the probe flows already in the catalog")
     parser.add_argument("--cleanup", action="store_true", help="only delete the probe flows")
+    parser.add_argument("--out", help="where the JSON report goes (default provision/out/probe_large_flows_<time>.json)")
     args = parser.parse_args()
 
     if not config.PREFIX:
@@ -281,11 +286,25 @@ def main() -> int:
         "on_cai": bool(os.environ.get("CDSW_PROJECT")),
         "host": platform.node(),
         "python": platform.python_version(),
+        # urllib, unlike cdpcli, takes its proxy from these and its CAs from the system store.
+        "proxy": [k for k in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy") if os.environ.get(k)],
+        "ca_bundle": [k for k in ("REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "AWS_CA_BUNDLE") if os.environ.get(k)],
     }
     print("NFH-56 large-flow probe\n" + "".join(f"  {k}: {v}\n" for k, v in report.items()), flush=True)
 
     if args.cleanup:
         return 1 if cleanup(client) else 0
+
+    # A signed GET of no version: the console answers 500 "Failed to Read
+    # Vault Key" once it is reachable and has taken the key. Anything else
+    # (unreachable, a TLS error, 401) fails every fallback, so stop here.
+    check = client.console_get(CONSOLE_FLOW_VERSION_PATH.format(version_id=MISSING_ID))
+    report["console_check"] = {k: str(check.get(k))[:300] for k in ("error", "detail") if k in check}
+    print(f"console check: {report['console_check']}\n", flush=True)
+
+    if not config.MOCK and "Vault Key" not in (check.get("detail") or ""):
+        raise SystemExit("error: the console did not answer a signed request as expected; see the console "
+                         "check above. Nothing was imported.")
 
     sizes = [int(s) for s in args.sizes.split(",") if s.strip()]
     built = cases(sizes)
@@ -415,8 +434,8 @@ def main() -> int:
         print("cleanup")
         report["undeleted"] = cleanup(client)
 
-    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out",
-                       f"probe_large_flows_{time.strftime('%Y%m%d-%H%M%S')}.json")
+    out = args.out or os.path.join(os.path.dirname(os.path.abspath(__file__)), "out",
+                                   f"probe_large_flows_{time.strftime('%Y%m%d-%H%M%S')}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
     with open(out, "w") as handle:
