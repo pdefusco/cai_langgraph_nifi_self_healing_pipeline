@@ -119,6 +119,7 @@ them.
 | NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
 | NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
+| NFH-97 | Feature | A prompt budget: show a large group only around the fault | In progress | |
 
 ## Open tickets
 
@@ -324,6 +325,27 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   which is not editable), so the fault's, not the size's. Diagnose time 72 s at 4.5k prompt tokens, 24 s at 6.5k,
   57 s at 32.6k: the shared endpoint's queue sets it, not the prompt. At 250 processors size does not measurably
   hurt the diagnosis; NFH-97 is for the tokens, and for the 500-processor groups still to come.
+
+### NFH-97 · Feature · A prompt budget for large groups
+The prompt shows the whole incident's group: every processor with every property, and a reading for every
+connection and roll-up KPI. At 250 processors that is ~32k tokens (NFH-95), almost all of it filler that has nothing
+to do with the fault, seven times the tokens of a small group on every call, and 60k at 500. Three rounds of p22–p23
+found no loss of quality at 250 (NFH-95), so this is for the cost and the headroom. A group of more than 60
+processors is now shown only around the fault.
+- 2026-11-06: `inventory.scope(inv, seeds)`: the processors joined to the seeds by connections, either way, but not
+  through a DLQ (flows share them), hop by hop while that stays within 60 processors; a processor nothing connects
+  to stays too (a DLQ nothing routes to yet is a fix's target). The seeds (`readings.seeds`) are what the incident's
+  own KPIs read and its signals name, not the roll-ups; none when a signal is on the deployment's nodes, which any
+  processor may load. The inventory says what it leaves out ("Also in this group, not shown: 236 processor(s) and
+  213 connection(s), in 42 flow(s) not connected to the ones above."), the readings keep only the rows of what it
+  shows, and the prompt says "every queue of the inventory below" (a new PROMPT_VERSION). Validation, capacity and
+  the tools still plan on the whole flow. A group of 60 or fewer is shown as before. In p21 and p22 each twin's
+  scoped inventory is its small twin's, renamed, with its decoy beside it. The bench records the tokens unscoped
+  too. Oracle on waves 1–2 as before (38/38 detected, controls 7/7, worked 92%, the same S30/S32/S36 as
+  oracle-all-1028); on p21–p24 8/8 worked, controls 44/44, prompt tokens at 51–100 processors 14.7k → 3.7k and at
+  101–250 32k → 4.4k, as at 1–20. Bench at 100/250/500: inventory and readings 11.6k/29.6k/59.6k → 0.47k tokens
+  (S03's fault is 4 processors); scoping adds nothing measurable. 660 pass. Next: an LLM replay of p21–p22 with
+  their twins, which should match the twins as llm-wave3-x3 did unscoped.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the

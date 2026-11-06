@@ -21,8 +21,10 @@ run again without changing what it measures:
   poll backfill     a new Poller filling the store from the charts
   poll              Poller.poll_now on the deployment, a minute apart
   read flow         MockClient.flow_definition of the deployed version
-  inventory         flow/inventory.py, then its render for the prompt
-  readings          kpi/readings.py for the incident, then its render
+  readings          kpi/readings.py for the incident
+  inventory         flow/inventory.py, scoped to the fault as the prompt
+                    has it (NFH-97), then its render, and the readings'
+
   plan              executor.plan of the design fix: validate_proposal
                     but the capacity check, the definition read again
   edit, validate    edits.apply and edits.validate_edit, inside plan
@@ -33,7 +35,8 @@ run again without changing what it measures:
 
 and the sizes: processors, connections, KPIs, definition and world file
 bytes, and the prompt's two big parts, inventory and readings, in
-characters and tokens at four characters each. Prints a table and writes
+characters and tokens at four characters each, and the tokens they would
+be unscoped. Prints a table and writes
 provision/out/bench_<time>.json.
 """
 
@@ -57,7 +60,7 @@ from nifi_healer.actions import capacity, catalog, executor
 from nifi_healer.cdp.client import get_client
 from nifi_healer.eval import replay
 from nifi_healer.flow import edits
-from nifi_healer.flow.inventory import inventory, render
+from nifi_healer.flow.inventory import inventory, render, scope
 from nifi_healer.kpi import readings
 from nifi_healer.runtime.poller import Poller
 from nifi_healer.sim import bootstrap, engine
@@ -71,7 +74,7 @@ SIM_SECONDS = 3600          # the sim step's sample: an hour of steps
 POLL_GAP = 60               # sim seconds between timed polls
 
 STAGES = ("build", "provision", "backfill 3 h", "sim step", "world save", "world load", "detect",
-          "poll backfill", "poll", "read flow", "inventory", "inventory render", "readings",
+          "poll backfill", "poll", "read flow", "readings", "inventory", "inventory render",
           "readings render", "plan", "edit", "validate", "capacity", "fleet tables", "monitor",
           "fleet monitor")
 
@@ -192,13 +195,16 @@ def _agent(t: dict, sizes: dict, client, store, incident: dict, steps: list, rep
     groups = client.flow_configuration(deployment, flow).get("parameterGroups") \
         or groups_from_definition(definition)
 
-    t["inventory"], found = _timed(lambda: inventory(definition, group, groups), repeats)
-    t["inventory render"], inventory_text = _timed(lambda: render(found), repeats)
     now = client.now()
     t["readings"], rows = _timed(lambda: readings.for_incident(incident, store, now), repeats)
+    seeds = readings.seeds(incident, rows)
+    t["inventory"], found = _timed(lambda: scope(inventory(definition, group, groups), seeds), repeats)
+    t["inventory render"], inventory_text = _timed(lambda: render(found), repeats)
     t["readings render"], readings_text = _timed(lambda: readings.render(rows, found), repeats)
+    whole = inventory(definition, group, groups)
     sizes.update(inventory_chars=len(inventory_text), readings_chars=len(readings_text),
-                 prompt_tokens=round((len(inventory_text) + len(readings_text)) / 4))
+                 prompt_tokens=round((len(inventory_text) + len(readings_text)) / 4),
+                 unscoped_tokens=round((len(render(whole)) + len(readings.render(rows, whole))) / 4))
 
     t["plan"], full = _timed(lambda: executor.plan(client, incident, steps, store), repeats)
     sizes["plan_ok"] = full["ok"]

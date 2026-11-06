@@ -24,7 +24,8 @@ those cover every connection and processor of the group (NFH-65). Given
 the group's inventory, render() lists every connection in flow order,
 each against its back-pressure limit and with its expiration, and says
 so of one no KPI measures: in a cascade the full queue nobody watches
-would otherwise read as empty.
+would otherwise read as empty. A large group's inventory is cut to the
+fault's flows (flow/inventory.scope, from seeds()), and so are its rows.
 """
 
 import config
@@ -103,11 +104,29 @@ def for_incident(incident: dict, store, now: float) -> list:
             "trend": _trend(recent) if recent else "",
             "per_minute": metrics.trend(shown),
             "source": source,
+            "rollup": bool(kpi.get("rollup")),
             "peak": max(v for _, v in rates) if rates else None,
             "mean": _mean(rates),
         })
 
     return rows
+
+
+def seeds(incident: dict, rows: list) -> list:
+    """
+    What the incident's own KPIs read and its signals name, not the
+    roll-ups' and watch-only KPIs, for flow/inventory.scope(). None when a
+    signal is on the deployment's nodes: any processor of the group may
+    be what loads them.
+    """
+
+    signals = incident.get("signals") or []
+
+    if any(not s.get("component") for s in signals):
+        return []
+
+    return [r["component"] for r in rows if r["component"] and not r.get("rollup")] + \
+        [s["component"] for s in signals]
 
 
 def _number(value) -> str:
@@ -292,10 +311,15 @@ def render(rows: list, inv: dict | None = None) -> str:
     """
     One line per row; with the group's inventory, every connection first,
     in flow order, measured or not, then the other rows in flow order.
+    With an inventory scope() cut, only the rows of what it kept.
     """
 
     if not inv or "error" in inv:
         return "\n".join(_line(r) for r in rows)
+
+    if inv.get("outside"):
+        kept = {p["name"] for p in inv["processors"]} | {c["name"] for c in inv["connections"]}
+        rows = [r for r in rows if r["kind"] == "system" or r["component"] in kept]
 
     depth, connections = flow_order(inv)
     measured = {}

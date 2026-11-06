@@ -3,11 +3,17 @@ A flow definition as the LLM sees it: one process group, compact.
 
     inv = inventory(definition, "S01 Slow Consumer", parameter_groups)
     text = render(inv)
+    text = render(scope(inv, seeds))     # a large group, around what the incident's KPIs read
 
 The LLM never sees or writes flow JSON. It sees the processors and
 connections of the incident's process group by name, with the settings
 the action catalog can change, and names targets from this list.
 Sensitive parameter values are masked.
+
+A group of more than SCOPE_PROCESSORS processors is shown only around
+the fault (NFH-97): the flows its KPIs read, and a line saying what else
+the group holds. At 250 processors the whole group is about 30k tokens,
+almost all of it flows that have nothing to do with the incident.
 """
 
 import re
@@ -136,13 +142,124 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
     }
 
 
+# A group up to this many processors is shown whole; a larger one only around the fault.
+SCOPE_PROCESSORS = 60
+
+
+def _neighbours(inv: dict) -> dict:
+    """{processor: the processors a connection joins it to, either way}; a self-loop joins nothing."""
+
+    near = {p["name"]: set() for p in inv["processors"]}
+
+    for c in inv["connections"]:
+        if not c["self_loop"] and c["source"] in near and c["destination"] in near:
+            near[c["source"]].add(c["destination"])
+            near[c["destination"]].add(c["source"])
+
+    return near
+
+
+def _flows(names: set, near: dict, dlqs: set) -> list:
+    """`names` without their DLQs, in separate flows: a DLQ two flows share does not make them one."""
+
+    left, found = set(names) - dlqs, []
+
+    while left:
+        flow, frontier = set(), {left.pop()}
+
+        while frontier:
+            flow |= frontier
+            frontier = {m for n in frontier for m in near[n] if m in left and m not in flow}
+            left -= frontier
+
+        found.append(flow)
+
+    return found
+
+
+def scope(inv: dict, seeds, budget: int = SCOPE_PROCESSORS) -> dict:
+    """
+    `inv` with only the fault's neighbourhood, when its group has more than
+    `budget` processors: what joins to the `seeds` (the processor and
+    connection names the incident's KPIs read) through any number of
+    connections, either way, but not through a DLQ, which flows share.
+    Hop by hop while that stays within `budget`. A processor nothing
+    connects to stays, such as a DLQ nothing is routed to yet: a fix may
+    route to it. "outside" counts what is left out. Unchanged without a
+    seed in the group.
+    """
+
+    if "error" in inv or len(inv["processors"]) <= budget:
+        return inv
+
+    near, dlqs, seeds = _neighbours(inv), set(inv["dlqs"]), set(seeds)
+    start = {s for s in seeds if s in near}
+    start |= {end for c in inv["connections"] if c["name"] in seeds
+              for end in (c["source"], c["destination"]) if end in near}
+
+    if not start:
+        return inv
+
+    kept, frontier, hops = set(start), set(start), 0
+
+    while frontier:
+        reached = {m for n in frontier if n not in dlqs for m in near[n]} - kept
+
+        if not reached or len(kept) + len(reached) > budget:
+            break
+
+        kept |= reached
+        frontier = reached
+        hops += 1
+
+    kept |= {n for n, joined in near.items() if not joined}
+    left = set(near) - kept
+    flows = _flows(left, near, dlqs)
+    shown = set(kept) - dlqs
+    farther = [f for f in flows if any(near[n] & shown for n in f)]
+    processors = [p for p in inv["processors"] if p["name"] in kept]
+    connections = [c for c in inv["connections"] if c["source"] in kept and c["destination"] in kept]
+    used = {name for p in processors for value in p["properties"].values()
+            for name in _REFERENCE.findall(str(value or ""))}
+
+    return dict(
+        inv,
+        processors=processors,
+        connections=connections,
+        dlqs=[n for n in inv["dlqs"] if n in kept],
+        parameters=[p for p in inv["parameters"] if p["name"] in used],
+        outside={"processors": len(left), "connections": len(inv["connections"]) - len(connections),
+                 "flows": len(flows) - len(farther), "farther": len(farther), "hops": hops},
+    )
+
+
+def outside(inv: dict) -> str:
+    """What scope() left out of the group, in a sentence; "" when it is whole."""
+
+    out = inv.get("outside")
+
+    if not out:
+        return ""
+
+    where = []
+
+    if out["flows"]:
+        where.append(f"{out['flows']} flow(s) not connected to the ones above")
+
+    if out["farther"]:
+        where.append(f"what lies more than {out['hops']} connection(s) from the components the incident's KPIs read")
+
+    return (f"Also in this group, not shown: {out['processors']} processor(s) and {out['connections']} "
+            "connection(s)" + (", in " + " and ".join(where) if where else "") + ".")
+
+
 def render(inv: dict) -> str:
     """The inventory as plain text, one line per component."""
 
     if inv.get("error"):
         return inv["error"]
 
-    lines = [f"Process group: {inv['group']}", "", "Processors:"]
+    lines = [f"Process group: {inv['group']}"] + ([outside(inv)] if inv.get("outside") else []) + ["", "Processors:"]
 
     for p in inv["processors"]:
         retry = (f" retry {','.join(p['retried'])} x{p['retry_count']} backoff={p['backoff']}"

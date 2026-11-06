@@ -74,8 +74,8 @@ Summary: {summary}
 Signals:
 {signals}
 
-Current readings (the last 15 minutes; rates per second). Every queue of the group, in flow order; one that is not
-measured may still be full. Then every rate watched:
+Current readings (the last 15 minutes; rates per second). Every queue of the inventory below, in flow order; one that
+is not measured may still be full. Then every rate watched:
 {readings}
 
 Deployment: {sizing}. Deployed flow version: {flow_version} ({state}).
@@ -172,8 +172,8 @@ Summary: {summary}
 Signals:
 {signals}
 
-Current readings (the last 15 minutes; rates per second). Every queue of the group, in flow order; one that is not
-measured may still be full. Then every rate watched:
+Current readings (the last 15 minutes; rates per second). Every queue of the inventory below, in flow order; one that
+is not measured may still be full. Then every rate watched:
 {readings}
 
 Deployment: {sizing}.

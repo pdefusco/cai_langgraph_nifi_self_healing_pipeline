@@ -46,7 +46,7 @@ from nifi_healer.actions import capacity, catalog, executor, rollback
 from nifi_healer.agent import prompts, tools
 from nifi_healer.agent.schemas import Critique, Proposal
 from nifi_healer.cdp.client import get_client
-from nifi_healer.flow.inventory import inventory, render
+from nifi_healer.flow.inventory import inventory, render, scope
 from nifi_healer.kpi import readings
 from nifi_healer.rag import drafter, memory, priors, retriever
 from nifi_healer.runtime import telemetry
@@ -147,6 +147,7 @@ def gather_context(state: dict) -> dict:
     deployment, flow = incident["deployment_crn"], incident["deployed_flow_crn"]
     context = {"inventory": "", "parameters": [], "sizing": {}, "error": ""}
     found = None
+    rows = readings.for_incident(incident, store, client.now())
 
     facts = client.flow_facts(deployment, flow)
     context.update(flow_version=facts.get("flow_version"), flow_version_crn=facts.get("flow_version_crn"),
@@ -166,7 +167,8 @@ def gather_context(state: dict) -> dict:
         configuration = client.flow_configuration(deployment, flow)
         groups = (configuration.get("parameterGroups") if "error" not in configuration else None) \
             or groups_from_definition(definition)
-        found = inventory(definition, incident["process_group"], groups)
+        # A large group only around the fault (NFH-97); validation still plans on the whole flow.
+        found = scope(inventory(definition, incident["process_group"], groups), readings.seeds(incident, rows))
         context.update(inventory=render(found), parameters=found.get("parameters") or [])
 
     sizing = client.deployment_configuration(deployment)
@@ -175,7 +177,7 @@ def gather_context(state: dict) -> dict:
         context["sizing"] = {"cluster_size": (sizing.get("clusterSize") or {}).get("name"),
                              "nodes": sizing.get("staticNodeCount")}
 
-    context["readings"] = readings.render(readings.for_incident(incident, store, client.now()), found)
+    context["readings"] = readings.render(rows, found)
 
     return {"incident": incident, "context": context, "attempts": 0, "feedback": [],
             "source": "agent", "error": "", "review_error": ""}
