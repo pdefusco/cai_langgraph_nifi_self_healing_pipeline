@@ -583,10 +583,15 @@ def scenario(s) -> list:
         out += [f"Size twin of [{packs.SCENARIOS[s.twin].group_name}](#{anchor(packs.SCENARIOS[s.twin])}). "
                 + scale.summary(s) + " The diagram and tables show the fault's part only.", ""]
 
-    out += diagram(s, group) + ["", f"**How it's graded.** {grading(s)}", "",
-                                "<details>",
-                                f"<summary>Settings: {plural(len(group.processors), 'processor')}, "
-                                f"{plural(len(group.connections), 'connection')}</summary>", ""]
+    out += diagram(s, group) + ["", f"**How it's graded.** {grading(s)}", ""]
+
+    # A generated control's settings are the filler's, the same in every one: scale.py has them.
+    if isinstance(s.build, scale.Filled):
+        return out
+
+    out += ["<details>",
+            f"<summary>Settings: {plural(len(group.processors), 'processor')}, "
+            f"{plural(len(group.connections), 'connection')}</summary>", ""]
 
     if s.parameters:
         out += ["Parameters as deployed: " + ", ".join(f"`{k}` = `{v}`" for k, v in s.parameters.items()) + ".", ""]

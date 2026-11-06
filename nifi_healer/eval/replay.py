@@ -1,8 +1,10 @@
 """
 Offline replay: every scenario, N times, on a fresh mock tenant, against
 the configured LLM, scored the way the Scorecard scores the live agent.
+The third wave's customer-sized packs are replayed only by name.
 
-    python -m nifi_healer.eval.replay                          # every scenario, once
+    python -m nifi_healer.eval.replay                          # every scenario of waves 1 and 2, once
+    python -m nifi_healer.eval.replay --oracle --pack p22-wide-250 --pack p23-siblings
     python -m nifi_healer.eval.replay --trials 3 --pack p1-throughput
     python -m nifi_healer.eval.replay --scenario S17 --oracle  # the design fix, no LLM
     python -m nifi_healer.eval.replay --trials 3 --no-memory   # the baseline: no past cases
@@ -257,7 +259,12 @@ def _on_mock() -> bool:
 
 
 def chosen(scenarios=(), pack_names=()) -> list:
-    """The scenario ids to replay, in pack order: the named ones and those of the named packs, else all."""
+    """
+    The scenario ids to replay, in pack order: the named ones and those of
+    the named packs, else all but the third wave's. Its packs are hundreds
+    of processors and dozens of controls apiece, so, as with provisioning,
+    they are replayed by name.
+    """
 
     unknown = sorted(set(scenarios) - set(packs.SCENARIOS)) + sorted(set(pack_names) - set(packs.PACKS))
 
@@ -267,7 +274,10 @@ def chosen(scenarios=(), pack_names=()) -> list:
     every = [s.id for p in packs.PACKS.values() for s in p.scenarios]
     wanted = set(scenarios) | {s.id for name in pack_names for s in packs.PACKS[name].scenarios}
 
-    return [s for s in every if s in wanted] if wanted else every
+    if wanted:
+        return [s for s in every if s in wanted]
+
+    return [s.id for p in packs.PACKS.values() if p.wave < 3 for s in p.scenarios]
 
 
 def window(ids: list, seconds: float = DETECT_SECONDS) -> float:

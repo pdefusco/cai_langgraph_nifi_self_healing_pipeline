@@ -22,13 +22,25 @@ other packs:
 Each source makes one to three 1 KB FlowFiles a second, far inside the
 simulator's throughput cap per connection and its CPU per FlowFile, so
 100 processors of filler cost the node about a tenth of a core.
+
+A twin can also have a *decoy*: one more healthy flow, beside the fault,
+that looks like it. Its queue has a chart-only KPI so the agent reads it,
+a trap says why it is not the fault, and a wrong fix changes it:
+
+  batch     a merge whose bin fills to 5,000 FlowFiles every 500 s and
+            empties: a backlog that is only batching
+  retry     a validator whose failures loop back into it, one in 20,
+            with room for both: a self-loop that stays near empty
+
+A *control* (`control()`) is a group of filler and nothing else, family
+NONE: it must stay quiet however large the pack around it.
 """
 
 import dataclasses
 import random
 
-from flows.builder.lib import COLUMN_SPACING, ROW_SPACING
-from flows.scenarios.base import Scenario
+from flows.builder.lib import COLUMN_SPACING, ROW_SPACING, ProcessGroup
+from flows.scenarios.base import Kpi, Scenario, action
 from flows.scenarios.common import debug_flow, dlq, generator, sink, stage
 
 DOMAINS = (
@@ -76,10 +88,10 @@ def renamer(old: str, new: str):
 
 
 class Twinned:
-    """The build of a size twin: its twin's build, renamed, then filler up to `processors`."""
+    """The build of a size twin: its twin's build, renamed, then its decoy, then filler up to `processors`."""
 
-    def __init__(self, small: Scenario, scenario_id: str, processors: int):
-        self.small, self.id, self.processors = small, scenario_id, processors
+    def __init__(self, small: Scenario, scenario_id: str, processors: int, decoy: str = ""):
+        self.small, self.id, self.processors, self.decoy = small, scenario_id, processors, decoy
         self.rename = renamer(small.id, scenario_id)
         self.shapes = []
 
@@ -88,53 +100,115 @@ class Twinned:
 
     def __call__(self, pg) -> None:
         self.core(pg)
-        self.shapes = filler(pg, self.id, self.processors - len(pg.processors))
+
+        if self.decoy:
+            DECOYS[self.decoy].build(_Flow(pg, "decoy", f"{self.id} {DECOY}", _slug(self.id, DECOY), column=1))
+
+        self.shapes = filler(pg, self.id, self.processors - len(pg.processors), column=2 if self.decoy else 1)
 
 
-def twin(small: Scenario, scenario_id: str, *, processors: int, title: str = "") -> Scenario:
-    """`small`'s fault as scenario `scenario_id`, in a group of about `processors` processors."""
+def twin(small: Scenario, scenario_id: str, *, processors: int, title: str = "", decoy: str = "") -> Scenario:
+    """
+    `small`'s fault as scenario `scenario_id`, in a group of about
+    `processors` processors; with `decoy` (DECOYS), beside a healthy flow
+    that looks like it, whose KPI, trap and wrong fix follow the twin's.
+    """
 
     rename = renamer(small.id, scenario_id)
     kpis = tuple(dataclasses.replace(k, scenario=scenario_id, component=rename(k.component)) for k in small.kpis)
+    traps, wrong = rename(small.traps), rename(small.wrong)
+
+    if decoy:
+        made = DECOYS[decoy]
+        name, slug = f"{scenario_id} {DECOY}", _slug(scenario_id, DECOY)
+        kpis += (Kpi(scenario_id, "connection", f"{slug}-{made.queue}", "queued_count", alert=False, primary=False),)
+        traps += (made.trap.format(name=name, slug=slug),)
+        wrong += (made.wrong(name, rename(small.expected)),)
 
     return dataclasses.replace(
         small,
         id=scenario_id,
         title=title or f"{small.title} in {processors} Processors",
-        build=Twinned(small, scenario_id, processors),
+        build=Twinned(small, scenario_id, processors, decoy),
         kpis=kpis,
         expected=rename(small.expected),
         acceptable=rename(small.acceptable),
-        traps=rename(small.traps),
-        wrong=rename(small.wrong),
+        traps=traps,
+        wrong=wrong,
         faults=rename(small.faults),
         edges=rename(small.edges),
         twin=small.id,
     )
 
 
-def filler(pg, scenario_id: str, count: int) -> list:
+class Filled:
+    """The build of a control: `processors` of filler and nothing else, its domains from DOMAINS[offset] on."""
+
+    def __init__(self, scenario_id: str, processors: int, offset: int):
+        self.id, self.processors, self.offset = scenario_id, processors, offset
+        self.shapes = []
+
+    def __call__(self, pg) -> None:
+        self.shapes = filler(pg, self.id, self.processors, offset=self.offset)
+
+
+ALERT = 2000        # a control's alert, on its first flow's first queue: near empty when healthy
+
+
+def control(scenario_id: str, *, processors: int, offset: int = 0, title: str = "") -> Scenario:
+    """A healthy group of about `processors` processors of filler, as control `scenario_id`."""
+
+    build = Filled(scenario_id, processors, offset)
+    group = ProcessGroup(scenario_id, scenario_id)
+    build(group)
+    domain = _domain(offset)
+    traps = ["Every queue here is near empty and every rate limit far above its load: nothing needs changing."]
+
+    if "validate" in build.shapes:
+        traps.insert(0, "The DLQs take one FlowFile in 20 from their validations by design: that is not data loss.")
+
+    return Scenario(
+        id=scenario_id,
+        title=title or f"Healthy {domain} Group",
+        symptom="healthy",
+        fault=f"None. {len(group.processors)} processors in {_flows(build.shapes)}, each far inside its capacity.",
+        build=build,
+        kpis=(Kpi(scenario_id, "connection", f"{_slug(scenario_id, domain)}-1", "queued_count", above=ALERT),),
+        family="NONE",
+        detect_within=7200,
+        expected=(action("NO_ACTION"),),
+        traps=tuple(traps),
+    )
+
+
+def _domain(n: int) -> str:
+    return DOMAINS[n % len(DOMAINS)] + (f" {n // len(DOMAINS) + 1}" if n >= len(DOMAINS) else "")
+
+
+def _slug(scenario_id: str, domain: str) -> str:
+    return f"{scenario_id.lower()}-{domain.lower().replace(' ', '-')}"
+
+
+def filler(pg, scenario_id: str, count: int, *, offset: int = 0, column: int = 1) -> list:
     """
     About `count` healthy processors in small flows of their own, each in
-    its own column right of what `pg` already holds. Returns the shapes
-    built, in order.
+    its own column from `column` on, its names and shapes from DOMAINS
+    and SHAPES at `offset` on. Returns the shapes built, in order.
     """
 
     rng = random.Random(f"filler:{scenario_id}")
-    prefix, slug = scenario_id, scenario_id.lower()
     built = []
 
     while count >= 3:
-        shape = SHAPES[len(built) % len(SHAPES)]
+        shape = SHAPES[(len(built) + offset) % len(SHAPES)]
         size = {"chain": 2 + rng.randint(2, 6), "lanes": 4 + rng.randint(2, 4), "validate": 6, "rate": 4}[shape]
 
         if count - size < 3:
             shape, size = "chain", count
 
         index = len(built)
-        domain = DOMAINS[index % len(DOMAINS)] + (f" {index // len(DOMAINS) + 1}" if index >= len(DOMAINS) else "")
-        flow = _Flow(pg, f"f{index}", f"{prefix} {domain}", f"{slug}-{domain.lower().replace(' ', '-')}",
-                     column=index + 1)
+        domain = _domain(index + offset)
+        flow = _Flow(pg, f"f{index}", f"{scenario_id} {domain}", _slug(scenario_id, domain), column=index + column)
         BUILDERS[shape](flow, size, rng)
         built.append(shape)
         count -= size
@@ -231,19 +305,106 @@ def _rate(flow, size, rng) -> None:
 BUILDERS = {"chain": _chain, "lanes": _lanes, "validate": _validate, "rate": _rate}
 
 
+def _batch(flow) -> None:
+    # 10/s into a bin of 5,000 to 6,000: the bin fills in 500 s and goes,
+    # so its input connection climbs to 5,000 and drops, well inside its
+    # 10,000 threshold.
+    gen = flow.source(None, batch=10)
+    fmt = flow.place(stage, "format", "Format", period="0 sec")
+    merge = flow.place(lambda pg, key, name: pg.processor(key, name, "MergeContent", {
+        "Merge Strategy": "Bin-Packing Algorithm",
+        "Merge Format": "Binary Concatenation",
+        "Minimum Number of Entries": "5000",
+        "Maximum Number of Entries": "6000",
+        "Max Bin Age": "15 min",
+        "Maximum number of Bins": "5",
+    }, period="0 sec", tasks=1, auto_terminate=("original", "failure")), "batch", "Batch")
+    flow.connect(gen, fmt)
+    flow.connect(fmt, merge)
+    flow.connect(merge, flow.place(sink, "upload", "Upload", period="0 sec"), ("merged",))
+
+
+def _retry(flow) -> None:
+    # 2/s into a validator that fails one in 20 back into itself, at a
+    # 0 sec schedule: it has room for the retries, so its loop stays near
+    # empty.
+    gen = flow.source(None, batch=2)
+    send = flow.place(debug_flow, "send", "Send", successes=19, failures=1, period="0 sec", tasks=1)
+    flow.connect(gen, send)
+    flow.connect(send, send, ("failure",))
+    flow.connect(send, flow.place(sink, "archive", "Archive", period="0 sec"))
+
+
+@dataclasses.dataclass(frozen=True)
+class Decoy:
+    build: object           # (a _Flow) -> None
+    queue: int              # its KPI's connection, by number within the flow
+    trap: str               # formatted with the flow's name and slug
+    wrong: object           # (the flow's name, the twin's expected fixes) -> the fix that changes the decoy
+
+
+DECOY = "Exports"
+DECOYS = {
+    "batch": Decoy(
+        _batch, 2,
+        "{name} Batch holds up to 5,000 FlowFiles in `{slug}-2` while its bin fills, then sends them on "
+        "every 500 s: that queue is batching, not a backlog.",
+        lambda name, expected: action("SET_PROCESSOR_PROPERTY", f"{name} Batch",
+                                      property="Minimum Number of Entries", value="1000"),
+    ),
+    "retry": Decoy(
+        _retry, 2,
+        "{name} Send loops its failures back into itself too, but one in 20 fails and it has room for the "
+        "retries: `{slug}-2` stays near empty, and it is not the fault.",
+        lambda name, expected: action("ROUTE_RELATIONSHIP_TO_DLQ", f"{name} Send", relationship="failure",
+                                      dlq=next(a["dlq"] for a in expected if a.get("dlq"))),
+    ),
+}
+
+
+SHAPE_NAMES = {"chain": ("chain", "chains"), "lanes": ("lane fan-out", "lane fan-outs"),
+               "validate": ("validation into a DLQ", "validations into a DLQ"), "rate": ("rate limit", "rate limits")}
+DECOY_NAMES = {"batch": "a merge that batches", "retry": "a validator that retries its own failures"}
+
+
+def _shapes(shapes: list) -> str:
+    counts = {shape: shapes.count(shape) for shape in SHAPES if shape in shapes}
+
+    return ", ".join(f"{n if n > 1 else 'one'} {SHAPE_NAMES[shape][n > 1]}" for shape, n in counts.items())
+
+
+def _flows(shapes: list) -> str:
+    return "one small flow of its own" if len(shapes) == 1 else f"{len(shapes)} small flows of their own"
+
+
 def summary(scenario: Scenario) -> str:
     """What the filler beside a twin's fault is, in a sentence, for the README."""
-
-    from flows.builder.lib import ProcessGroup
 
     build = scenario.build
     whole, core = ProcessGroup(scenario.id, scenario.group_name), ProcessGroup(scenario.id, scenario.group_name)
     build(whole)
     build.core(core)
-    counts = {shape: build.shapes.count(shape) for shape in SHAPES if shape in build.shapes}
-    names = {"chain": "chains", "lanes": "lane fan-outs", "validate": "validations into a DLQ",
-             "rate": "rate limits"}
+    beside = len(whole.processors) - len(core.processors)
+    decoy = ""
 
-    return (f"Beside {scenario.twin}'s {len(core.processors)} processors, {len(whole.processors) - len(core.processors)} "
-            f"healthy ones in {len(build.shapes)} small flows of their own: "
-            + ", ".join(f"{n} {names[shape]}" for shape, n in counts.items()) + ".")
+    if build.decoy:
+        made = ProcessGroup(scenario.id, scenario.group_name)
+        DECOYS[build.decoy].build(_Flow(made, "decoy", f"{scenario.id} {DECOY}", _slug(scenario.id, DECOY), 1))
+        beside -= len(made.processors)
+        decoy = f"a decoy of {len(made.processors)}, {scenario.id} {DECOY}, {DECOY_NAMES[build.decoy]}, and "
+
+    return (f"Beside {scenario.twin}'s {len(core.processors)} processors, {decoy}{beside} "
+            f"healthy ones in {_flows(build.shapes)}: {_shapes(build.shapes)}.")
+
+
+def walkthrough(scenario: Scenario) -> str:
+    """A control's walkthrough for the README: what its filler is, and why nothing in it needs a fix."""
+
+    group = ProcessGroup(scenario.id, scenario.group_name)
+    scenario.build(group)
+    alert = next(k for k in scenario.kpis if k.alert)
+
+    return (f"{len(group.processors)} healthy processors in {_flows(scenario.build.shapes)}: "
+            f"{_shapes(scenario.build.shapes)}. Each source makes one to three FlowFiles a second, and every "
+            f"stage has room to spare. The alert, at {alert.above:,.0f} FlowFiles in `{alert.component}`, should "
+            "never fire, and the only right answer is no action.")

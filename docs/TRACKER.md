@@ -289,7 +289,7 @@ replay case doesn't record the size of the flow.
 
 ### NFH-95 · Feature · Packs of customer-sized flows
 Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a group of ~100 processors), p22-wide-250,
-p23-siblings (~30 healthy groups beside three faulty ones), p24-healthy-500 (must stay quiet). Each fault scenario is
+p23-siblings (24 healthy groups beside three faulty ones), p24-healthy-500 (must stay quiet). Each fault scenario is
 the twin of a small one (same fault, design fix and traps) inside healthy filler from a deterministic generator, so
 `replay --compare --twins` separates the effect of size from that of a new fault.
 - 2026-11-06: `flows/scenarios/scale.py`: `twin(small, id, processors=N)` copies a scenario under a new id (its
@@ -300,6 +300,17 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   design, acceptable and wrong fixes do what the twin's do (tests/test_large_flows.py); the README draws only the
   fault's part. Oracle replay 3/3 worked; against the twins (`--compare --twins`) the same on every column, prompt
   3.7k → 14.7k tokens (×4), replay wall time 3.6 s → 13.1 s. 568 pass.
+- 2026-11-06: p22–p24, wave 3. A twin can have a *decoy*, a healthy flow beside the fault that looks like it, with a
+  chart-only KPI, a trap and a wrong fix: `batch`, a MergeContent whose input climbs to ~5,000 and empties every
+  500 s; `retry`, a DebugFlow that loops 1 in 20 failures into itself and stays near empty. A *control*
+  (`scale.control`) is a group of filler only, family NONE, NO_ACTION, one alert at 2,000 queued. p22-wide-250:
+  S49/S50, twins of S22/S09 with decoys batch/retry, 250 processors a group, 500 in all, 208 KPIs. p23-siblings:
+  S51–S53, twins of S02/S14/S28 in groups of 12–24, among 24 controls S54–S77 of 8–12; 290 processors in 27 groups,
+  140 KPIs. p24-healthy-500: controls S78–S97, 25 each, 500 in 20 groups, 224 KPIs. Sim CPU 20–28%, 1–2.4 s per 2 h
+  simulated. Tests: each decoy is charted and stays healthy, each control stays quiet through its detect window
+  however large the pack, each sibling fault shows in its own group, and KPIs stay ≤ processors/2. `replay` with no
+  `--pack`/`--scenario` now runs waves 1–2 only; wave 3 is replayed by name. Oracle on p22–p24: 5/5 detected and
+  worked, controls quiet 44/44; prompt 4.4k tokens for groups of 1–20, 5.8k for 21–50, 32k for 101–250. 650 pass.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the

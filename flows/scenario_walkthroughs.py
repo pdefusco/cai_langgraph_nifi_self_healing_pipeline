@@ -12,6 +12,8 @@ paragraph don't matter.
 When a scenario's numbers change, change its walkthrough too.
 """
 
+from flows.scenarios import p23_siblings, p24_healthy_500, scale
+
 PACKS = {
     "p1-throughput": """
         The first pack is about the most common problem there is, a flow that can't keep up. Each scenario is a
@@ -108,6 +110,23 @@ PACKS = {
         touch the fault. The fault, the fix and the traps are the small scenario's, so the only thing that changes
         is how much flow the agent has to read past to find it, and comparing each one with its twin shows what
         size alone does to the diagnosis and to how long it takes.
+    """,
+    "p22-wide-250": """
+        Two faults we already have, each in a group of 250 processors, and each beside one more healthy flow, a
+        decoy, that looks like the fault: a merge that batches beside a merge that deadlocks, and a validator that
+        retries its own failures and keeps up beside one that doesn't. The decoy's queue is charted for the agent,
+        so the readings show both, and changing the decoy is one of the wrong fixes the tests check.
+    """,
+    "p23-siblings": """
+        Many small process groups in one deployment, as customers organize flows by team or source. Three are
+        faults we already have, each in a group about the size of its neighbours, and the other 24 are healthy
+        controls of 8 to 12 processors. Each fault has to be found in its own group, and none of the siblings may
+        alert or be changed, however many groups there are to poll and read.
+    """,
+    "p24-healthy-500": """
+        The largest control: 500 healthy processors in 20 groups of 25, with no fault anywhere. It measures false
+        alarms, and the poll and prompt load, at the biggest size we test. The controls are generated, so their
+        walkthroughs are too.
     """,
 }
 
@@ -719,4 +738,50 @@ WALKTHROUGHS = {
         where the alert points, does nothing. With a cascade, the agent has to follow the backlog through the
         group, so this one shows whether a larger flow makes it lose the trail.
     """,
+    "S49": """
+        S22's merge deadlock, renamed, in a group of 250. A hundred orders a second go to S49 Batch Orders, which
+        waits for 20,000 while its input connection holds only 10,000, so it empties only at its 30 minute bin
+        age and the back pressure reaches `s49-ingest`, five hops upstream, where the alert is.
+
+        Beside it is the decoy, S49 Exports: ten FlowFiles a second into S49 Exports Batch, a merge of 5,000 to
+        6,000. Its bin fills in 500 s and goes, so `s49-exports-2` climbs to 5,000 and drops, again and again.
+        On a chart it looks like the start of the same backlog, but it never reaches its threshold. The other 236
+        processors are healthy filler, as in S46.
+
+        The fix is S22's: a minimum of 5,000 entries on S49 Batch Orders, or a 30,000 threshold on
+        `s49-to-batch`, or a one minute bin age. Lowering the decoy's minimum instead is a wrong fix, and the tests
+        check that it leaves the deadlock in place.
+    """,
+    "S50": """
+        S09's failure self-loop, renamed, in a group of 250. Nine attempts in ten fail and go straight back into
+        S50 Validator, so each FlowFile needs ten runs and the validator, with one run a second, falls further
+        behind every second. `s50-failure-loop` grows past 100.
+
+        The decoy, S50 Exports Send, also loops its failures back into itself, but only one in 20 fails and it
+        runs on a 0 sec schedule, so it has room for the retries and `s50-exports-2` stays near empty. The other
+        243 processors are healthy filler, as in S46.
+
+        The fix is S09's: route S50 Validator's failures to S50 DLQ. Routing the decoy's failures there instead
+        is a wrong fix, and the tests check that it leaves the self-loop growing.
+    """,
+    "S51": """
+        S02's slow run schedule, renamed, in a group of 12 among 24 healthy siblings: S51 Drain runs every 10
+        seconds with four tasks, 0.4 FlowFiles a second against one coming in. The fix is S02's, a 1 sec
+        schedule, and more tasks still fall short.
+    """,
+    "S52": """
+        S14's auto-terminated failures, renamed, in a group of 14 among its siblings: one record in five fails
+        S52 Validator and vanishes. The fix is S14's, routing the failures to S52 DLQ. Nothing queues, so the
+        only sign is the gap between what goes into the validator and what comes out.
+    """,
+    "S53": """
+        S28's stopped lane, renamed, in a group of 24 among its siblings: S53 Tokenize Lane 3 is disabled, and
+        the balancer's queue for lane 3 fills behind it while lanes 1 and 2 carry the rest. The fix is S28's,
+        enabling the tokenizer, and the traps are too: more tasks on the authorizer, or a higher threshold, change
+        nothing.
+    """,
 }
+
+# The controls of p23 and p24 are filler alone, so their walkthroughs are generated.
+WALKTHROUGHS.update({s.id: scale.walkthrough(s) for pack in (p23_siblings.PACK, p24_healthy_500.PACK)
+                     for s in pack.scenarios if s.kind == "control"})

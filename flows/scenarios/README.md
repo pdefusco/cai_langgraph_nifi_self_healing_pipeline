@@ -13,9 +13,9 @@ they always match what gets deployed.
 
 ## How the scenarios are built
 
-The scenarios are grouped into 21 packs. Each pack is one NiFi flow definition and one CDF DataFlow
+The scenarios are grouped into 24 packs. Each pack is one NiFi flow definition and one CDF DataFlow
 deployment, named `nfh-<pack>`, running NiFi 2.6.0 on a single EXTRA_SMALL node unless the pack is about sizing.
-Inside the flow, each of the 48 scenarios gets its own process group, named after the scenario (for
+Inside the flow, each of the 97 scenarios gets its own process group, named after the scenario (for
 example `S22 Order Merge Deadlock`). The agent works on one process group at a time, so incidents, fixes and grading
 are all per scenario.
 
@@ -125,6 +125,9 @@ scenarios, and possibly their fixes, would change.
 | p19-daily-cycle | `nfh-p19-daily-cycle` | EXTRA_SMALL × 1 | [S42 Daily Cycle Load](#s42-daily-cycle-load), [S43 Long Idle Periods](#s43-long-idle-periods) |
 | p20-big-healthy | `nfh-p20-big-healthy` | EXTRA_SMALL × 1 | [S44 Thirty-Stage Healthy Pipeline](#s44-thirty-stage-healthy-pipeline), [S45 Busy But Sized Right](#s45-busy-but-sized-right) |
 | p21-wide-100 | `nfh-p21-wide-100` | EXTRA_SMALL × 1 | [S46 Slow Consumer in 100 Processors](#s46-slow-consumer-in-100-processors), [S47 Pipeline Bottleneck in 100 Processors](#s47-pipeline-bottleneck-in-100-processors), [S48 Fan-out Into One Task in 100 Processors](#s48-fan-out-into-one-task-in-100-processors) |
+| p22-wide-250 | `nfh-p22-wide-250` | EXTRA_SMALL × 1 | [S49 Order Merge Deadlock in 250 Processors](#s49-order-merge-deadlock-in-250-processors), [S50 Failure Self-Loop in 250 Processors](#s50-failure-self-loop-in-250-processors) |
+| p23-siblings | `nfh-p23-siblings` | EXTRA_SMALL × 1 | [S51 Slow Run Schedule Among Siblings](#s51-slow-run-schedule-among-siblings), [S52 Auto-terminated Failures Among Siblings](#s52-auto-terminated-failures-among-siblings), [S53 Stopped Lane Among Siblings](#s53-stopped-lane-among-siblings), [S54 Healthy Invoices Group](#s54-healthy-invoices-group), [S55 Healthy Refunds Group](#s55-healthy-refunds-group), [S56 Healthy Customers Group](#s56-healthy-customers-group), [S57 Healthy Carts Group](#s57-healthy-carts-group), [S58 Healthy Contracts Group](#s58-healthy-contracts-group), [S59 Healthy Campaigns Group](#s59-healthy-campaigns-group), [S60 Healthy Assets Group](#s60-healthy-assets-group), [S61 Healthy Policies Group](#s61-healthy-policies-group), [S62 Healthy Stores Group](#s62-healthy-stores-group), [S63 Healthy Budgets Group](#s63-healthy-budgets-group), [S64 Healthy Devices Group](#s64-healthy-devices-group), [S65 Healthy Routes Group](#s65-healthy-routes-group), [S66 Healthy Bookings Group](#s66-healthy-bookings-group), [S67 Healthy Recipes Group](#s67-healthy-recipes-group), [S68 Healthy Returns Group](#s68-healthy-returns-group), [S69 Healthy Prices Group](#s69-healthy-prices-group), [S70 Healthy Coupons Group](#s70-healthy-coupons-group), [S71 Healthy Suppliers Group](#s71-healthy-suppliers-group), [S72 Healthy Leads Group](#s72-healthy-leads-group), [S73 Healthy Timesheets Group](#s73-healthy-timesheets-group), [S74 Healthy Claims Group](#s74-healthy-claims-group), [S75 Healthy Vendors Group](#s75-healthy-vendors-group), [S76 Healthy Ledger Group](#s76-healthy-ledger-group), [S77 Healthy Alerts Group](#s77-healthy-alerts-group) |
+| p24-healthy-500 | `nfh-p24-healthy-500` | EXTRA_SMALL × 1 | [S78 Healthy Invoices Group](#s78-healthy-invoices-group), [S79 Healthy Returns Group](#s79-healthy-returns-group), [S80 Healthy Inventory Group](#s80-healthy-inventory-group), [S81 Healthy Customers Group](#s81-healthy-customers-group), [S82 Healthy Coupons Group](#s82-healthy-coupons-group), [S83 Healthy Wishlists Group](#s83-healthy-wishlists-group), [S84 Healthy Contracts Group](#s84-healthy-contracts-group), [S85 Healthy Leads Group](#s85-healthy-leads-group), [S86 Healthy Payroll Group](#s86-healthy-payroll-group), [S87 Healthy Assets Group](#s87-healthy-assets-group), [S88 Healthy Claims Group](#s88-healthy-claims-group), [S89 Healthy Quotes Group](#s89-healthy-quotes-group), [S90 Healthy Stores Group](#s90-healthy-stores-group), [S91 Healthy Ledger Group](#s91-healthy-ledger-group), [S92 Healthy Audits Group](#s92-healthy-audits-group), [S93 Healthy Devices Group](#s93-healthy-devices-group), [S94 Healthy Meters Group](#s94-healthy-meters-group), [S95 Healthy Drivers Group](#s95-healthy-drivers-group), [S96 Healthy Bookings Group](#s96-healthy-bookings-group), [S97 Healthy Menus Group](#s97-healthy-menus-group) |
 
 ## p1-throughput: Throughput
 
@@ -3112,3 +3115,2362 @@ The tests also apply these wrong fixes and check that they don't clear the fault
 - Setting the concurrent tasks on S48 Split Clicks to 2.
 
 </details>
+
+## p22-wide-250: Wide groups of 250, with decoys
+
+Deployed as `nfh-p22-wide-250` on EXTRA_SMALL × 1, in rollout wave 3.
+
+Two faults we already have, each in a group of 250 processors, and each beside one more healthy flow, a decoy, that looks like the fault: a merge that batches beside a merge that deadlocks, and a validator that retries its own failures and keeps up beside one that doesn't. The decoy's queue is charted for the agent, so the readings show both, and changing the decoy is one of the wrong fixes the tests check.
+
+### S49 Order Merge Deadlock in 250 Processors
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S22's merge deadlock, renamed, in a group of 250. A hundred orders a second go to S49 Batch Orders, which waits for 20,000 while its input connection holds only 10,000, so it empties only at its 30 minute bin age and the back pressure reaches `s49-ingest`, five hops upstream, where the alert is.
+
+Beside it is the decoy, S49 Exports: ten FlowFiles a second into S49 Exports Batch, a merge of 5,000 to 6,000. Its bin fills in 500 s and goes, so `s49-exports-2` climbs to 5,000 and drops, again and again. On a chart it looks like the start of the same backlog, but it never reaches its threshold. The other 236 processors are healthy filler, as in S46.
+
+The fix is S22's: a minimum of 5,000 entries on S49 Batch Orders, or a 30,000 threshold on `s49-to-batch`, or a one minute bin age. Lowering the decoy's minimum instead is a wrong fix, and the tests check that it leaves the deadlock in place.
+
+Size twin of [S22 Order Merge Deadlock](#s22-order-merge-deadlock). Beside S22's 10 processors, a decoy of 4, S49 Exports, a merge that batches, and 236 healthy ones in 42 small flows of their own: 12 chains, 10 lane fan-outs, 10 validations into a DLQ, 10 rate limits. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart TD
+    p0["<b>S49 Order Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>100 × 1 KB per run"]
+    p1["<b>S49 Extract Order</b><br/>EvaluateJsonPath<br/>order.region: $.region"]
+    p2["<b>S49 Tag Region</b><br/>UpdateAttribute"]
+    p3["<b>S49 Normalize Currency</b><br/>UpdateAttribute"]
+    p4["<b>S49 Mask Card</b><br/>ReplaceText"]
+    p5["<b>S49 Batch Orders</b><br/>MergeContent<br/>20000 to 25000 entries<br/>max bin age 30 min"]
+    p6["<b>S49 Compress Batch</b><br/>CompressContent<br/>gzip level 1"]
+    p7["<b>S49 Name Batch File</b><br/>UpdateAttribute"]
+    p8["<b>S49 Publish Orders</b><br/>UpdateAttribute"]
+    p9["<b>S49 Unparsed DLQ</b><br/>LogAttribute"]
+    p0 -->|"s49-ingest"| p1
+    p1 -->|"s49-extracted<br/>matched"| p2
+    p1 -->|"s49-unparsed<br/>failure, unmatched"| p9
+    p2 -->|"s49-tagged"| p3
+    p3 -->|"s49-normalized"| p4
+    p4 -->|"s49-to-batch"| p5
+    p4 -->|"s49-mask-failed<br/>failure"| p9
+    p5 -->|"s49-batches<br/>merged"| p6
+    p6 -->|"s49-compressed"| p7
+    p7 -->|"s49-named"| p8
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p5 fix
+```
+
+**How it's graded.** The alert fires when the queue `s49-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s49-normalized`, the size of the queue `s49-to-batch`, FlowFiles out of S49 Batch Orders and the size of the queue `s49-exports-2`. Whether a fix worked is decided by the size of the queue `s49-ingest`. The fix we grade as correct is setting Minimum Number of Entries on S49 Batch Orders to `5000`. We also accept setting the back pressure on `s49-to-batch` to 30,000 objects or setting Max Bin Age on S49 Batch Orders to `1 min`.
+
+<details>
+<summary>Settings: 10 processors, 10 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S49 Order Feed | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `100`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"order_id": "o-1042", "region": "emea", "card": "4111111111111111", "total": 59.90}` |
+| S49 Extract Order | EvaluateJsonPath | 0 sec | 1 | enabled |  | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>order.region: `$.region` |
+| S49 Tag Region | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S49 Normalize Currency | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S49 Mask Card | ReplaceText | 0 sec | 1 | enabled |  | Regular Expression: `[0-9]{12}([0-9]{4})`<br>Replacement Value: `************$1`<br>Replacement Strategy: `Regex Replace`<br>Evaluation Mode: `Line-by-Line` |
+| S49 Batch Orders | MergeContent | 0 sec | 1 | enabled | failure, original | Merge Strategy: `Bin-Packing Algorithm`<br>Merge Format: `Binary Concatenation`<br>Minimum Number of Entries: `20000`<br>Maximum Number of Entries: `25000`<br>Max Bin Age: `30 min`<br>Maximum number of Bins: `5` |
+| S49 Compress Batch | CompressContent | 0 sec | 1 | enabled | failure | Mode: `compress`<br>Compression Format: `gzip`<br>Compression Level: `1` |
+| S49 Name Batch File | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S49 Publish Orders | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S49 Unparsed DLQ | LogAttribute | 0 sec | 1 | enabled | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s49-ingest | S49 Order Feed | S49 Extract Order | success | 10,000 / 1 GB |  |
+| s49-extracted | S49 Extract Order | S49 Tag Region | matched | 10,000 / 1 GB |  |
+| s49-unparsed | S49 Extract Order | S49 Unparsed DLQ | failure, unmatched | 10,000 / 1 GB |  |
+| s49-tagged | S49 Tag Region | S49 Normalize Currency | success | 10,000 / 1 GB |  |
+| s49-normalized | S49 Normalize Currency | S49 Mask Card | success | 10,000 / 1 GB |  |
+| s49-to-batch | S49 Mask Card | S49 Batch Orders | success | 10,000 / 1 GB |  |
+| s49-mask-failed | S49 Mask Card | S49 Unparsed DLQ | failure | 10,000 / 1 GB |  |
+| s49-batches | S49 Batch Orders | S49 Compress Batch | merged | 10,000 / 1 GB |  |
+| s49-compressed | S49 Compress Batch | S49 Name Batch File | success | 10,000 / 1 GB |  |
+| s49-named | S49 Name Batch File | S49 Publish Orders | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S49 Extract Order to 4.
+- Setting the back pressure on `s49-ingest` to 50,000 objects.
+- Setting Minimum Number of Entries on S49 Exports Batch to `1000`.
+
+</details>
+
+### S50 Failure Self-Loop in 250 Processors
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S09's failure self-loop, renamed, in a group of 250. Nine attempts in ten fail and go straight back into S50 Validator, so each FlowFile needs ten runs and the validator, with one run a second, falls further behind every second. `s50-failure-loop` grows past 100.
+
+The decoy, S50 Exports Send, also loops its failures back into itself, but only one in 20 fails and it runs on a 0 sec schedule, so it has room for the retries and `s50-exports-2` stays near empty. The other 243 processors are healthy filler, as in S46.
+
+The fix is S09's: route S50 Validator's failures to S50 DLQ. Routing the decoy's failures there instead is a wrong fix, and the tests check that it leaves the self-loop growing.
+
+Size twin of [S09 Failure Self-Loop](#s09-failure-self-loop). Beside S09's 4 processors, a decoy of 3, S50 Exports, a validator that retries its own failures, and 243 healthy ones in 43 small flows of their own: 12 chains, 11 lane fan-outs, 10 validations into a DLQ, 10 rate limits. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S50 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S50 Validator</b><br/>DebugFlow<br/>1 task every 1 sec<br/>1 succeed, then 9 fail"]
+    p2["<b>S50 Publish</b><br/>UpdateAttribute"]
+    p3["<b>S50 DLQ</b><br/>LogAttribute<br/>DISABLED"]
+    p0 -->|"s50-input"| p1
+    p1 -->|"s50-failure-loop<br/>failure"| p1
+    p1 -->|"s50-valid"| p2
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p3 off
+    class p1 fix
+    linkStyle 1 stroke:#c2410c,stroke-width:3px
+```
+
+**How it's graded.** The alert fires when the queue `s50-failure-loop` holds more than 100 FlowFiles for a minute or when the queue `s50-input` holds more than 500 FlowFiles for a minute. We also chart the size of the queue `s50-exports-2`. Whether a fix worked is decided by the size of the queue `s50-failure-loop`. The fix we grade as correct is routing failure from S50 Validator to S50 DLQ.
+
+<details>
+<summary>Settings: 4 processors, 3 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S50 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S50 Validator | DebugFlow | 1 sec | 1 | enabled |  | FlowFile Success Iterations: `1`<br>FlowFile Failure Iterations: `9`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S50 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S50 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s50-input | S50 Source | S50 Validator | success | 10,000 / 1 GB |  |
+| s50-failure-loop | S50 Validator | itself | failure | 10,000 / 1 GB | **self-loop** |
+| s50-valid | S50 Validator | S50 Publish | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Routing failure from S50 Exports Send to S50 DLQ.
+
+</details>
+
+## p23-siblings: Faults among 24 sibling groups
+
+Deployed as `nfh-p23-siblings` on EXTRA_SMALL × 1, in rollout wave 3.
+
+Many small process groups in one deployment, as customers organize flows by team or source. Three are faults we already have, each in a group about the size of its neighbours, and the other 24 are healthy controls of 8 to 12 processors. Each fault has to be found in its own group, and none of the siblings may alert or be changed, however many groups there are to poll and read.
+
+### S51 Slow Run Schedule Among Siblings
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S02's slow run schedule, renamed, in a group of 12 among 24 healthy siblings: S51 Drain runs every 10 seconds with four tasks, 0.4 FlowFiles a second against one coming in. The fix is S02's, a 1 sec schedule, and more tasks still fall short.
+
+Size twin of [S02 Slow Run Schedule](#s02-slow-run-schedule). Beside S02's 2 processors, 10 healthy ones in 2 small flows of their own: 2 chains. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S51 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S51 Drain</b><br/>UpdateAttribute<br/>4 tasks every 10 sec"]
+    p0 -->|"s51-backlog"| p1
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p1 fix
+```
+
+**How it's graded.** The alert fires when the queue `s51-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S51 Drain. Whether a fix worked is decided by the size of the queue `s51-backlog`. The fix we grade as correct is setting the run schedule of S51 Drain to 1 sec or shorter. We also accept setting the run schedule of S51 Drain to 3 sec or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 2 processors, 1 connection</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S51 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S51 Drain | UpdateAttribute | 10 sec | 4 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s51-backlog | S51 Source | S51 Drain | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S52 Auto-terminated Failures Among Siblings
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S14's auto-terminated failures, renamed, in a group of 14 among its siblings: one record in five fails S52 Validator and vanishes. The fix is S14's, routing the failures to S52 DLQ. Nothing queues, so the only sign is the gap between what goes into the validator and what comes out.
+
+Size twin of [S14 Auto-terminated Failures](#s14-auto-terminated-failures). Beside S14's 4 processors, 10 healthy ones in 2 small flows of their own: 2 chains. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S52 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S52 Validator</b><br/>DebugFlow<br/>4 succeed, then 1 fail"]
+    p2["<b>S52 Publish</b><br/>UpdateAttribute"]
+    p3["<b>S52 DLQ</b><br/>LogAttribute<br/>DISABLED"]
+    p1_failure(["dropped"])
+    p0 -->|"s52-input"| p1
+    p1 -->|"s52-valid"| p2
+    p1 -.->|"failure"| p1_failure
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p3 off
+    class p1 fix
+    class p1_failure gone
+    linkStyle 2 stroke:#c2410c,stroke-width:3px
+```
+
+**How it's graded.** No KPI alerts on this one, so the problem has to be spotted in the charts. We chart FlowFiles into S52 Validator and FlowFiles out of S52 Validator. Whether a fix worked is decided by FlowFiles out of S52 Validator. The fix we grade as correct is routing failure from S52 Validator to S52 DLQ.
+
+<details>
+<summary>Settings: 4 processors, 2 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S52 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S52 Validator | DebugFlow | 0 sec | 1 | enabled | failure | FlowFile Success Iterations: `4`<br>FlowFile Failure Iterations: `1`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S52 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S52 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s52-input | S52 Source | S52 Validator | success | 10,000 / 1 GB |  |
+| s52-valid | S52 Validator | S52 Publish | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S53 Stopped Lane Among Siblings
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S28's stopped lane, renamed, in a group of 24 among its siblings: S53 Tokenize Lane 3 is disabled, and the balancer's queue for lane 3 fills behind it while lanes 1 and 2 carry the rest. The fix is S28's, enabling the tokenizer, and the traps are too: more tasks on the authorizer, or a higher threshold, change nothing.
+
+Size twin of [S28 Lane Stopped Behind Load Balancer](#s28-lane-stopped-behind-load-balancer). Beside S28's 13 processors, 11 healthy ones in 2 small flows of their own: 2 chains. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart TD
+    p0["<b>S53 Payment Requests</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>12 × 1 KB per run"]
+    p1["<b>S53 Parse Payment</b><br/>EvaluateJsonPath<br/>payment.id: $.payment"]
+    p2["<b>S53 Fraud Score</b><br/>UpdateAttribute"]
+    p3["<b>S53 Balance Lanes</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p4["<b>S53 Capture Payment</b><br/>UpdateAttribute"]
+    p5["<b>S53 Ledger Write</b><br/>UpdateAttribute"]
+    p6["<b>S53 Parse DLQ</b><br/>LogAttribute"]
+    p7["<b>S53 Authorize Lane 1</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p8["<b>S53 Tokenize Lane 1</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p9["<b>S53 Authorize Lane 2</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p10["<b>S53 Tokenize Lane 2</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p11["<b>S53 Authorize Lane 3</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p12["<b>S53 Tokenize Lane 3</b><br/>UpdateAttribute<br/>1 task every 100 ms<br/>DISABLED"]
+    p0 -->|"s53-ingest"| p1
+    p1 -->|"s53-parsed<br/>matched"| p2
+    p1 -->|"s53-unparsed<br/>failure, unmatched"| p6
+    p2 -->|"s53-scored"| p3
+    p3 -->|"s53-to-lane-1<br/>relationship 1<br/>limit 2,000"| p7
+    p7 -->|"s53-lane-1-authorized<br/>limit 2,000"| p8
+    p8 -->|"s53-lane-1-tokenized"| p4
+    p3 -->|"s53-to-lane-2<br/>relationship 2<br/>limit 2,000"| p9
+    p9 -->|"s53-lane-2-authorized<br/>limit 2,000"| p10
+    p10 -->|"s53-lane-2-tokenized"| p4
+    p3 -->|"s53-to-lane-3<br/>relationship 3<br/>limit 2,000"| p11
+    p11 -->|"s53-lane-3-authorized<br/>limit 2,000"| p12
+    p12 -->|"s53-lane-3-tokenized"| p4
+    p4 -->|"s53-captured"| p5
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p12 fix
+```
+
+**How it's graded.** The alert fires when the queue `s53-to-lane-3` holds more than 1,500 FlowFiles for a minute. We also chart the size of the queue `s53-lane-3-authorized`, the size of the queue `s53-to-lane-1` and FlowFiles into S53 Ledger Write. Whether a fix worked is decided by the size of the queue `s53-to-lane-3`. The fix we grade as correct is enabling S53 Tokenize Lane 3.
+
+<details>
+<summary>Settings: 13 processors, 14 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S53 Payment Requests | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `12`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"payment": "pay-5521", "merchant": "m-88", "amount": 42.10, "currency": "EUR"}` |
+| S53 Parse Payment | EvaluateJsonPath | 0 sec | 1 | enabled |  | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>payment.id: `$.payment` |
+| S53 Fraud Score | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S53 Balance Lanes | DistributeLoad | 0 sec | 1 | enabled |  | Number of Relationships: `3`<br>Distribution Strategy: `round robin` |
+| S53 Capture Payment | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S53 Ledger Write | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S53 Parse DLQ | LogAttribute | 0 sec | 1 | enabled | success | Log Level: `warn` |
+| S53 Authorize Lane 1 | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S53 Tokenize Lane 1 | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S53 Authorize Lane 2 | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S53 Tokenize Lane 2 | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S53 Authorize Lane 3 | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S53 Tokenize Lane 3 | UpdateAttribute | 100 ms | 1 | **DISABLED** |  |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s53-ingest | S53 Payment Requests | S53 Parse Payment | success | 10,000 / 1 GB |  |
+| s53-parsed | S53 Parse Payment | S53 Fraud Score | matched | 10,000 / 1 GB |  |
+| s53-unparsed | S53 Parse Payment | S53 Parse DLQ | failure, unmatched | 10,000 / 1 GB |  |
+| s53-scored | S53 Fraud Score | S53 Balance Lanes | success | 10,000 / 1 GB |  |
+| s53-to-lane-1 | S53 Balance Lanes | S53 Authorize Lane 1 | 1 | **2,000** / 1 GB |  |
+| s53-lane-1-authorized | S53 Authorize Lane 1 | S53 Tokenize Lane 1 | success | **2,000** / 1 GB |  |
+| s53-lane-1-tokenized | S53 Tokenize Lane 1 | S53 Capture Payment | success | 10,000 / 1 GB |  |
+| s53-to-lane-2 | S53 Balance Lanes | S53 Authorize Lane 2 | 2 | **2,000** / 1 GB |  |
+| s53-lane-2-authorized | S53 Authorize Lane 2 | S53 Tokenize Lane 2 | success | **2,000** / 1 GB |  |
+| s53-lane-2-tokenized | S53 Tokenize Lane 2 | S53 Capture Payment | success | 10,000 / 1 GB |  |
+| s53-to-lane-3 | S53 Balance Lanes | S53 Authorize Lane 3 | 3 | **2,000** / 1 GB |  |
+| s53-lane-3-authorized | S53 Authorize Lane 3 | S53 Tokenize Lane 3 | success | **2,000** / 1 GB |  |
+| s53-lane-3-tokenized | S53 Tokenize Lane 3 | S53 Capture Payment | success | 10,000 / 1 GB |  |
+| s53-captured | S53 Capture Payment | S53 Ledger Write | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S53 Authorize Lane 3 to 4.
+- Setting the back pressure on `s53-to-lane-3` to 10,000 objects.
+
+</details>
+
+### S54 Healthy Invoices Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s54-invoices-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S54 Invoices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S54 Invoices Parse</b><br/>UpdateAttribute"]
+    p2["<b>S54 Invoices Score</b><br/>UpdateAttribute"]
+    p3["<b>S54 Invoices Route</b><br/>UpdateAttribute"]
+    p4["<b>S54 Invoices Enrich</b><br/>UpdateAttribute"]
+    p5["<b>S54 Invoices Format</b><br/>UpdateAttribute"]
+    p6["<b>S54 Invoices Tag</b><br/>UpdateAttribute"]
+    p7["<b>S54 Invoices Store</b><br/>UpdateAttribute"]
+    p0 -->|"s54-invoices-1"| p1
+    p1 -->|"s54-invoices-2"| p2
+    p2 -->|"s54-invoices-3"| p3
+    p3 -->|"s54-invoices-4"| p4
+    p4 -->|"s54-invoices-5"| p5
+    p5 -->|"s54-invoices-6"| p6
+    p6 -->|"s54-invoices-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s54-invoices-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S55 Healthy Refunds Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s55-refunds-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S55 Refunds Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S55 Refunds Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S55 Refunds Validate</b><br/>UpdateAttribute"]
+    p3["<b>S55 Refunds Store</b><br/>UpdateAttribute"]
+    p4["<b>S55 Inventory Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p5["<b>S55 Inventory Mask</b><br/>UpdateAttribute"]
+    p6["<b>S55 Inventory Format</b><br/>UpdateAttribute"]
+    p7["<b>S55 Inventory Normalize</b><br/>UpdateAttribute"]
+    p8["<b>S55 Inventory Route</b><br/>UpdateAttribute"]
+    p9["<b>S55 Inventory Store</b><br/>UpdateAttribute"]
+    p0 -->|"s55-refunds-1"| p1
+    p1 -->|"s55-refunds-2"| p2
+    p2 -->|"s55-refunds-3"| p3
+    p4 -->|"s55-inventory-1"| p5
+    p5 -->|"s55-inventory-2"| p6
+    p6 -->|"s55-inventory-3"| p7
+    p7 -->|"s55-inventory-4"| p8
+    p8 -->|"s55-inventory-5"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s55-refunds-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S56 Healthy Customers Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: one chain, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s56-customers-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S56 Customers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S56 Customers Parse</b><br/>UpdateAttribute"]
+    p2["<b>S56 Customers Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S56 Customers Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S56 Customers Format</b><br/>UpdateAttribute"]
+    p5["<b>S56 Customers Store</b><br/>UpdateAttribute"]
+    p6["<b>S56 Reviews Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S56 Reviews Stamp</b><br/>UpdateAttribute"]
+    p8["<b>S56 Reviews Route</b><br/>UpdateAttribute"]
+    p9["<b>S56 Reviews Score</b><br/>UpdateAttribute"]
+    p10["<b>S56 Reviews Convert</b><br/>UpdateAttribute"]
+    p11["<b>S56 Reviews Store</b><br/>UpdateAttribute"]
+    p0 -->|"s56-customers-1"| p1
+    p1 -->|"s56-customers-2"| p2
+    p2 -->|"s56-customers-3<br/>failure"| p3
+    p2 -->|"s56-customers-4"| p4
+    p4 -->|"s56-customers-5"| p5
+    p6 -->|"s56-reviews-1"| p7
+    p7 -->|"s56-reviews-2"| p8
+    p8 -->|"s56-reviews-3"| p9
+    p9 -->|"s56-reviews-4"| p10
+    p10 -->|"s56-reviews-5"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s56-customers-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S57 Healthy Carts Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s57-carts-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S57 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S57 Carts Mask</b><br/>UpdateAttribute"]
+    p2["<b>S57 Carts Stamp</b><br/>UpdateAttribute"]
+    p3["<b>S57 Carts Convert</b><br/>UpdateAttribute"]
+    p4["<b>S57 Carts Dedupe</b><br/>UpdateAttribute"]
+    p5["<b>S57 Carts Normalize</b><br/>UpdateAttribute"]
+    p6["<b>S57 Carts Parse</b><br/>UpdateAttribute"]
+    p7["<b>S57 Carts Store</b><br/>UpdateAttribute"]
+    p0 -->|"s57-carts-1"| p1
+    p1 -->|"s57-carts-2"| p2
+    p2 -->|"s57-carts-3"| p3
+    p3 -->|"s57-carts-4"| p4
+    p4 -->|"s57-carts-5"| p5
+    p5 -->|"s57-carts-6"| p6
+    p6 -->|"s57-carts-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s57-carts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S58 Healthy Contracts Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: 2 chains. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s58-contracts-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S58 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S58 Contracts Validate</b><br/>UpdateAttribute"]
+    p2["<b>S58 Contracts Route</b><br/>UpdateAttribute"]
+    p3["<b>S58 Contracts Convert</b><br/>UpdateAttribute"]
+    p4["<b>S58 Contracts Dedupe</b><br/>UpdateAttribute"]
+    p5["<b>S58 Contracts Tag</b><br/>UpdateAttribute"]
+    p6["<b>S58 Contracts Store</b><br/>UpdateAttribute"]
+    p7["<b>S58 Tickets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p8["<b>S58 Tickets Score</b><br/>UpdateAttribute"]
+    p9["<b>S58 Tickets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s58-contracts-1"| p1
+    p1 -->|"s58-contracts-2"| p2
+    p2 -->|"s58-contracts-3"| p3
+    p3 -->|"s58-contracts-4"| p4
+    p4 -->|"s58-contracts-5"| p5
+    p5 -->|"s58-contracts-6"| p6
+    p7 -->|"s58-tickets-1"| p8
+    p8 -->|"s58-tickets-2"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s58-contracts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S59 Healthy Campaigns Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: one chain, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s59-campaigns-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S59 Campaigns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S59 Campaigns Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S59 Campaigns Dedupe</b><br/>UpdateAttribute"]
+    p3["<b>S59 Campaigns Store</b><br/>UpdateAttribute"]
+    p4["<b>S59 Payroll Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p5["<b>S59 Payroll Convert</b><br/>UpdateAttribute"]
+    p6["<b>S59 Payroll Annotate</b><br/>UpdateAttribute"]
+    p7["<b>S59 Payroll Parse</b><br/>UpdateAttribute"]
+    p8["<b>S59 Payroll Stamp</b><br/>UpdateAttribute"]
+    p9["<b>S59 Payroll Enrich</b><br/>UpdateAttribute"]
+    p10["<b>S59 Payroll Format</b><br/>UpdateAttribute"]
+    p11["<b>S59 Payroll Store</b><br/>UpdateAttribute"]
+    p0 -->|"s59-campaigns-1"| p1
+    p1 -->|"s59-campaigns-2"| p2
+    p2 -->|"s59-campaigns-3"| p3
+    p4 -->|"s59-payroll-1"| p5
+    p5 -->|"s59-payroll-2"| p6
+    p6 -->|"s59-payroll-3"| p7
+    p7 -->|"s59-payroll-4"| p8
+    p8 -->|"s59-payroll-5"| p9
+    p9 -->|"s59-payroll-6"| p10
+    p10 -->|"s59-payroll-7"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s59-campaigns-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S60 Healthy Assets Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s60-assets-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S60 Assets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S60 Assets Annotate</b><br/>UpdateAttribute"]
+    p2["<b>S60 Assets Mask</b><br/>UpdateAttribute"]
+    p3["<b>S60 Assets Stamp</b><br/>UpdateAttribute"]
+    p4["<b>S60 Assets Route</b><br/>UpdateAttribute"]
+    p5["<b>S60 Assets Normalize</b><br/>UpdateAttribute"]
+    p6["<b>S60 Assets Parse</b><br/>UpdateAttribute"]
+    p7["<b>S60 Assets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s60-assets-1"| p1
+    p1 -->|"s60-assets-2"| p2
+    p2 -->|"s60-assets-3"| p3
+    p3 -->|"s60-assets-4"| p4
+    p4 -->|"s60-assets-5"| p5
+    p5 -->|"s60-assets-6"| p6
+    p6 -->|"s60-assets-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s60-assets-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S61 Healthy Policies Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one lane fan-out. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s61-policies-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S61 Policies Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S61 Policies Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p2["<b>S61 Policies Lane 1</b><br/>UpdateAttribute"]
+    p3["<b>S61 Policies Lane 2</b><br/>UpdateAttribute"]
+    p4["<b>S61 Policies Join Lanes</b><br/>UpdateAttribute"]
+    p5["<b>S61 Policies Store</b><br/>UpdateAttribute"]
+    p6["<b>S61 Quotes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S61 Quotes Classify</b><br/>UpdateAttribute"]
+    p8["<b>S61 Quotes Enrich</b><br/>UpdateAttribute"]
+    p9["<b>S61 Quotes Store</b><br/>UpdateAttribute"]
+    p0 -->|"s61-policies-1"| p1
+    p1 -->|"s61-policies-2<br/>relationship 1"| p2
+    p2 -->|"s61-policies-3"| p4
+    p1 -->|"s61-policies-4<br/>relationship 2"| p3
+    p3 -->|"s61-policies-5"| p4
+    p4 -->|"s61-policies-6"| p5
+    p6 -->|"s61-quotes-1"| p7
+    p7 -->|"s61-quotes-2"| p8
+    p8 -->|"s61-quotes-3"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s61-policies-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S62 Healthy Stores Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: 2 chains. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s62-stores-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S62 Stores Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S62 Stores Stamp</b><br/>UpdateAttribute"]
+    p2["<b>S62 Stores Tag</b><br/>UpdateAttribute"]
+    p3["<b>S62 Stores Normalize</b><br/>UpdateAttribute"]
+    p4["<b>S62 Stores Store</b><br/>UpdateAttribute"]
+    p5["<b>S62 Catalog Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p6["<b>S62 Catalog Score</b><br/>UpdateAttribute"]
+    p7["<b>S62 Catalog Enrich</b><br/>UpdateAttribute"]
+    p8["<b>S62 Catalog Tag</b><br/>UpdateAttribute"]
+    p9["<b>S62 Catalog Route</b><br/>UpdateAttribute"]
+    p10["<b>S62 Catalog Annotate</b><br/>UpdateAttribute"]
+    p11["<b>S62 Catalog Store</b><br/>UpdateAttribute"]
+    p0 -->|"s62-stores-1"| p1
+    p1 -->|"s62-stores-2"| p2
+    p2 -->|"s62-stores-3"| p3
+    p3 -->|"s62-stores-4"| p4
+    p5 -->|"s62-catalog-1"| p6
+    p6 -->|"s62-catalog-2"| p7
+    p7 -->|"s62-catalog-3"| p8
+    p8 -->|"s62-catalog-4"| p9
+    p9 -->|"s62-catalog-5"| p10
+    p10 -->|"s62-catalog-6"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s62-stores-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S63 Healthy Budgets Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in 2 small flows of their own: one chain, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s63-budgets-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S63 Budgets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S63 Budgets Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S63 Budgets Mask</b><br/>UpdateAttribute"]
+    p3["<b>S63 Budgets Store</b><br/>UpdateAttribute"]
+    p4["<b>S63 Audits Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p5["<b>S63 Audits Dedupe</b><br/>UpdateAttribute"]
+    p6["<b>S63 Audits Enrich</b><br/>UpdateAttribute"]
+    p7["<b>S63 Audits Store</b><br/>UpdateAttribute"]
+    p0 -->|"s63-budgets-1"| p1
+    p1 -->|"s63-budgets-2"| p2
+    p2 -->|"s63-budgets-3"| p3
+    p4 -->|"s63-audits-1"| p5
+    p5 -->|"s63-audits-2"| p6
+    p6 -->|"s63-audits-3"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s63-budgets-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S64 Healthy Devices Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s64-devices-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S64 Devices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S64 Devices Parse</b><br/>UpdateAttribute"]
+    p2["<b>S64 Devices Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S64 Devices Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S64 Devices Format</b><br/>UpdateAttribute"]
+    p5["<b>S64 Devices Store</b><br/>UpdateAttribute"]
+    p6["<b>S64 Firmware Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S64 Firmware Classify</b><br/>UpdateAttribute"]
+    p8["<b>S64 Firmware Route</b><br/>UpdateAttribute"]
+    p9["<b>S64 Firmware Store</b><br/>UpdateAttribute"]
+    p0 -->|"s64-devices-1"| p1
+    p1 -->|"s64-devices-2"| p2
+    p2 -->|"s64-devices-3<br/>failure"| p3
+    p2 -->|"s64-devices-4"| p4
+    p4 -->|"s64-devices-5"| p5
+    p6 -->|"s64-firmware-1"| p7
+    p7 -->|"s64-firmware-2"| p8
+    p8 -->|"s64-firmware-3"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s64-devices-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S65 Healthy Routes Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: one chain, one lane fan-out. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s65-routes-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S65 Routes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S65 Routes Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p2["<b>S65 Routes Lane 1</b><br/>UpdateAttribute"]
+    p3["<b>S65 Routes Lane 2</b><br/>UpdateAttribute"]
+    p4["<b>S65 Routes Join Lanes</b><br/>UpdateAttribute"]
+    p5["<b>S65 Routes Store</b><br/>UpdateAttribute"]
+    p6["<b>S65 Drivers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S65 Drivers Format</b><br/>UpdateAttribute"]
+    p8["<b>S65 Drivers Parse</b><br/>UpdateAttribute"]
+    p9["<b>S65 Drivers Validate</b><br/>UpdateAttribute"]
+    p10["<b>S65 Drivers Mask</b><br/>UpdateAttribute"]
+    p11["<b>S65 Drivers Store</b><br/>UpdateAttribute"]
+    p0 -->|"s65-routes-1"| p1
+    p1 -->|"s65-routes-2<br/>relationship 1"| p2
+    p2 -->|"s65-routes-3"| p4
+    p1 -->|"s65-routes-4<br/>relationship 2"| p3
+    p3 -->|"s65-routes-5"| p4
+    p4 -->|"s65-routes-6"| p5
+    p6 -->|"s65-drivers-1"| p7
+    p7 -->|"s65-drivers-2"| p8
+    p8 -->|"s65-drivers-3"| p9
+    p9 -->|"s65-drivers-4"| p10
+    p10 -->|"s65-drivers-5"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s65-routes-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S66 Healthy Bookings Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s66-bookings-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S66 Bookings Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S66 Bookings Validate</b><br/>UpdateAttribute"]
+    p2["<b>S66 Bookings Enrich</b><br/>UpdateAttribute"]
+    p3["<b>S66 Bookings Route</b><br/>UpdateAttribute"]
+    p4["<b>S66 Bookings Dedupe</b><br/>UpdateAttribute"]
+    p5["<b>S66 Bookings Classify</b><br/>UpdateAttribute"]
+    p6["<b>S66 Bookings Mask</b><br/>UpdateAttribute"]
+    p7["<b>S66 Bookings Store</b><br/>UpdateAttribute"]
+    p0 -->|"s66-bookings-1"| p1
+    p1 -->|"s66-bookings-2"| p2
+    p2 -->|"s66-bookings-3"| p3
+    p3 -->|"s66-bookings-4"| p4
+    p4 -->|"s66-bookings-5"| p5
+    p5 -->|"s66-bookings-6"| p6
+    p6 -->|"s66-bookings-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s66-bookings-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S67 Healthy Recipes Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s67-recipes-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S67 Recipes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S67 Recipes Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S67 Recipes Parse</b><br/>UpdateAttribute"]
+    p3["<b>S67 Recipes Store</b><br/>UpdateAttribute"]
+    p4["<b>S67 Invoices 2 Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p5["<b>S67 Invoices 2 Classify</b><br/>UpdateAttribute"]
+    p6["<b>S67 Invoices 2 Convert</b><br/>UpdateAttribute"]
+    p7["<b>S67 Invoices 2 Validate</b><br/>UpdateAttribute"]
+    p8["<b>S67 Invoices 2 Parse</b><br/>UpdateAttribute"]
+    p9["<b>S67 Invoices 2 Store</b><br/>UpdateAttribute"]
+    p0 -->|"s67-recipes-1"| p1
+    p1 -->|"s67-recipes-2"| p2
+    p2 -->|"s67-recipes-3"| p3
+    p4 -->|"s67-invoices-2-1"| p5
+    p5 -->|"s67-invoices-2-2"| p6
+    p6 -->|"s67-invoices-2-3"| p7
+    p7 -->|"s67-invoices-2-4"| p8
+    p8 -->|"s67-invoices-2-5"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s67-recipes-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S68 Healthy Returns Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: one chain, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s68-returns-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S68 Returns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S68 Returns Parse</b><br/>UpdateAttribute"]
+    p2["<b>S68 Returns Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S68 Returns Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S68 Returns Format</b><br/>UpdateAttribute"]
+    p5["<b>S68 Returns Store</b><br/>UpdateAttribute"]
+    p6["<b>S68 Refunds Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S68 Refunds Annotate</b><br/>UpdateAttribute"]
+    p8["<b>S68 Refunds Normalize</b><br/>UpdateAttribute"]
+    p9["<b>S68 Refunds Validate</b><br/>UpdateAttribute"]
+    p10["<b>S68 Refunds Enrich</b><br/>UpdateAttribute"]
+    p11["<b>S68 Refunds Store</b><br/>UpdateAttribute"]
+    p0 -->|"s68-returns-1"| p1
+    p1 -->|"s68-returns-2"| p2
+    p2 -->|"s68-returns-3<br/>failure"| p3
+    p2 -->|"s68-returns-4"| p4
+    p4 -->|"s68-returns-5"| p5
+    p6 -->|"s68-refunds-1"| p7
+    p7 -->|"s68-refunds-2"| p8
+    p8 -->|"s68-refunds-3"| p9
+    p9 -->|"s68-refunds-4"| p10
+    p10 -->|"s68-refunds-5"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s68-returns-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S69 Healthy Prices Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s69-prices-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S69 Prices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S69 Prices Dedupe</b><br/>UpdateAttribute"]
+    p2["<b>S69 Prices Enrich</b><br/>UpdateAttribute"]
+    p3["<b>S69 Prices Score</b><br/>UpdateAttribute"]
+    p4["<b>S69 Prices Tag</b><br/>UpdateAttribute"]
+    p5["<b>S69 Prices Route</b><br/>UpdateAttribute"]
+    p6["<b>S69 Prices Classify</b><br/>UpdateAttribute"]
+    p7["<b>S69 Prices Store</b><br/>UpdateAttribute"]
+    p0 -->|"s69-prices-1"| p1
+    p1 -->|"s69-prices-2"| p2
+    p2 -->|"s69-prices-3"| p3
+    p3 -->|"s69-prices-4"| p4
+    p4 -->|"s69-prices-5"| p5
+    p5 -->|"s69-prices-6"| p6
+    p6 -->|"s69-prices-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s69-prices-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S70 Healthy Coupons Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: 2 chains. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s70-coupons-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S70 Coupons Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S70 Coupons Classify</b><br/>UpdateAttribute"]
+    p2["<b>S70 Coupons Enrich</b><br/>UpdateAttribute"]
+    p3["<b>S70 Coupons Store</b><br/>UpdateAttribute"]
+    p4["<b>S70 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p5["<b>S70 Carts Dedupe</b><br/>UpdateAttribute"]
+    p6["<b>S70 Carts Mask</b><br/>UpdateAttribute"]
+    p7["<b>S70 Carts Format</b><br/>UpdateAttribute"]
+    p8["<b>S70 Carts Parse</b><br/>UpdateAttribute"]
+    p9["<b>S70 Carts Store</b><br/>UpdateAttribute"]
+    p0 -->|"s70-coupons-1"| p1
+    p1 -->|"s70-coupons-2"| p2
+    p2 -->|"s70-coupons-3"| p3
+    p4 -->|"s70-carts-1"| p5
+    p5 -->|"s70-carts-2"| p6
+    p6 -->|"s70-carts-3"| p7
+    p7 -->|"s70-carts-4"| p8
+    p8 -->|"s70-carts-5"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s70-coupons-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S71 Healthy Suppliers Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 3 small flows of their own: 2 chains, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s71-suppliers-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S71 Suppliers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S71 Suppliers Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S71 Suppliers Score</b><br/>UpdateAttribute"]
+    p3["<b>S71 Suppliers Store</b><br/>UpdateAttribute"]
+    p4["<b>S71 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p5["<b>S71 Contracts Score</b><br/>UpdateAttribute"]
+    p6["<b>S71 Contracts Format</b><br/>UpdateAttribute"]
+    p7["<b>S71 Contracts Tag</b><br/>UpdateAttribute"]
+    p8["<b>S71 Contracts Store</b><br/>UpdateAttribute"]
+    p9["<b>S71 Tickets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p10["<b>S71 Tickets Score</b><br/>UpdateAttribute"]
+    p11["<b>S71 Tickets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s71-suppliers-1"| p1
+    p1 -->|"s71-suppliers-2"| p2
+    p2 -->|"s71-suppliers-3"| p3
+    p4 -->|"s71-contracts-1"| p5
+    p5 -->|"s71-contracts-2"| p6
+    p6 -->|"s71-contracts-3"| p7
+    p7 -->|"s71-contracts-4"| p8
+    p9 -->|"s71-tickets-1"| p10
+    p10 -->|"s71-tickets-2"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s71-suppliers-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S72 Healthy Leads Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in one small flow of its own: one chain. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s72-leads-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S72 Leads Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S72 Leads Parse</b><br/>UpdateAttribute"]
+    p2["<b>S72 Leads Convert</b><br/>UpdateAttribute"]
+    p3["<b>S72 Leads Classify</b><br/>UpdateAttribute"]
+    p4["<b>S72 Leads Route</b><br/>UpdateAttribute"]
+    p5["<b>S72 Leads Format</b><br/>UpdateAttribute"]
+    p6["<b>S72 Leads Mask</b><br/>UpdateAttribute"]
+    p7["<b>S72 Leads Store</b><br/>UpdateAttribute"]
+    p0 -->|"s72-leads-1"| p1
+    p1 -->|"s72-leads-2"| p2
+    p2 -->|"s72-leads-3"| p3
+    p3 -->|"s72-leads-4"| p4
+    p4 -->|"s72-leads-5"| p5
+    p5 -->|"s72-leads-6"| p6
+    p6 -->|"s72-leads-7"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s72-leads-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S73 Healthy Timesheets Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one lane fan-out. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s73-timesheets-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S73 Timesheets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S73 Timesheets Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p2["<b>S73 Timesheets Lane 1</b><br/>UpdateAttribute"]
+    p3["<b>S73 Timesheets Lane 2</b><br/>UpdateAttribute"]
+    p4["<b>S73 Timesheets Join Lanes</b><br/>UpdateAttribute"]
+    p5["<b>S73 Timesheets Store</b><br/>UpdateAttribute"]
+    p6["<b>S73 Assets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S73 Assets Normalize</b><br/>UpdateAttribute"]
+    p8["<b>S73 Assets Mask</b><br/>UpdateAttribute"]
+    p9["<b>S73 Assets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s73-timesheets-1"| p1
+    p1 -->|"s73-timesheets-2<br/>relationship 1"| p2
+    p2 -->|"s73-timesheets-3"| p4
+    p1 -->|"s73-timesheets-4<br/>relationship 2"| p3
+    p3 -->|"s73-timesheets-5"| p4
+    p4 -->|"s73-timesheets-6"| p5
+    p6 -->|"s73-assets-1"| p7
+    p7 -->|"s73-assets-2"| p8
+    p8 -->|"s73-assets-3"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s73-timesheets-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S74 Healthy Claims Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: 2 chains. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s74-claims-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S74 Claims Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S74 Claims Mask</b><br/>UpdateAttribute"]
+    p2["<b>S74 Claims Annotate</b><br/>UpdateAttribute"]
+    p3["<b>S74 Claims Normalize</b><br/>UpdateAttribute"]
+    p4["<b>S74 Claims Format</b><br/>UpdateAttribute"]
+    p5["<b>S74 Claims Tag</b><br/>UpdateAttribute"]
+    p6["<b>S74 Claims Classify</b><br/>UpdateAttribute"]
+    p7["<b>S74 Claims Store</b><br/>UpdateAttribute"]
+    p8["<b>S74 Policies Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p9["<b>S74 Policies Convert</b><br/>UpdateAttribute"]
+    p10["<b>S74 Policies Dedupe</b><br/>UpdateAttribute"]
+    p11["<b>S74 Policies Store</b><br/>UpdateAttribute"]
+    p0 -->|"s74-claims-1"| p1
+    p1 -->|"s74-claims-2"| p2
+    p2 -->|"s74-claims-3"| p3
+    p3 -->|"s74-claims-4"| p4
+    p4 -->|"s74-claims-5"| p5
+    p5 -->|"s74-claims-6"| p6
+    p6 -->|"s74-claims-7"| p7
+    p8 -->|"s74-policies-1"| p9
+    p9 -->|"s74-policies-2"| p10
+    p10 -->|"s74-policies-3"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s74-claims-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S75 Healthy Vendors Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+8 healthy processors in 2 small flows of their own: one chain, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s75-vendors-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S75 Vendors Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S75 Vendors Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p2["<b>S75 Vendors Validate</b><br/>UpdateAttribute"]
+    p3["<b>S75 Vendors Store</b><br/>UpdateAttribute"]
+    p4["<b>S75 Stores Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p5["<b>S75 Stores Classify</b><br/>UpdateAttribute"]
+    p6["<b>S75 Stores Normalize</b><br/>UpdateAttribute"]
+    p7["<b>S75 Stores Store</b><br/>UpdateAttribute"]
+    p0 -->|"s75-vendors-1"| p1
+    p1 -->|"s75-vendors-2"| p2
+    p2 -->|"s75-vendors-3"| p3
+    p4 -->|"s75-stores-1"| p5
+    p5 -->|"s75-stores-2"| p6
+    p6 -->|"s75-stores-3"| p7
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s75-vendors-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S76 Healthy Ledger Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+10 healthy processors in 2 small flows of their own: one chain, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s76-ledger-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S76 Ledger Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S76 Ledger Parse</b><br/>UpdateAttribute"]
+    p2["<b>S76 Ledger Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S76 Ledger Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S76 Ledger Format</b><br/>UpdateAttribute"]
+    p5["<b>S76 Ledger Store</b><br/>UpdateAttribute"]
+    p6["<b>S76 Budgets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S76 Budgets Parse</b><br/>UpdateAttribute"]
+    p8["<b>S76 Budgets Classify</b><br/>UpdateAttribute"]
+    p9["<b>S76 Budgets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s76-ledger-1"| p1
+    p1 -->|"s76-ledger-2"| p2
+    p2 -->|"s76-ledger-3<br/>failure"| p3
+    p2 -->|"s76-ledger-4"| p4
+    p4 -->|"s76-ledger-5"| p5
+    p6 -->|"s76-budgets-1"| p7
+    p7 -->|"s76-budgets-2"| p8
+    p8 -->|"s76-budgets-3"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s76-ledger-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S77 Healthy Alerts Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+12 healthy processors in 2 small flows of their own: one chain, one lane fan-out. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s77-alerts-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S77 Alerts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S77 Alerts Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+    p2["<b>S77 Alerts Lane 1</b><br/>UpdateAttribute"]
+    p3["<b>S77 Alerts Lane 2</b><br/>UpdateAttribute"]
+    p4["<b>S77 Alerts Lane 3</b><br/>UpdateAttribute"]
+    p5["<b>S77 Alerts Lane 4</b><br/>UpdateAttribute"]
+    p6["<b>S77 Alerts Join Lanes</b><br/>UpdateAttribute"]
+    p7["<b>S77 Alerts Store</b><br/>UpdateAttribute"]
+    p8["<b>S77 Devices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p9["<b>S77 Devices Dedupe</b><br/>UpdateAttribute"]
+    p10["<b>S77 Devices Convert</b><br/>UpdateAttribute"]
+    p11["<b>S77 Devices Store</b><br/>UpdateAttribute"]
+    p0 -->|"s77-alerts-1"| p1
+    p1 -->|"s77-alerts-2<br/>relationship 1"| p2
+    p2 -->|"s77-alerts-3"| p6
+    p1 -->|"s77-alerts-4<br/>relationship 2"| p3
+    p3 -->|"s77-alerts-5"| p6
+    p1 -->|"s77-alerts-6<br/>relationship 3"| p4
+    p4 -->|"s77-alerts-7"| p6
+    p1 -->|"s77-alerts-8<br/>relationship 4"| p5
+    p5 -->|"s77-alerts-9"| p6
+    p6 -->|"s77-alerts-10"| p7
+    p8 -->|"s77-devices-1"| p9
+    p9 -->|"s77-devices-2"| p10
+    p10 -->|"s77-devices-3"| p11
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s77-alerts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+## p24-healthy-500: Controls: 500 healthy processors
+
+Deployed as `nfh-p24-healthy-500` on EXTRA_SMALL × 1, in rollout wave 3.
+
+The largest control: 500 healthy processors in 20 groups of 25, with no fault anywhere. It measures false alarms, and the poll and prompt load, at the biggest size we test. The controls are generated, so their walkthroughs are too.
+
+### S78 Healthy Invoices Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s78-invoices-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S78 Invoices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S78 Invoices Parse</b><br/>UpdateAttribute"]
+    p2["<b>S78 Invoices Enrich</b><br/>UpdateAttribute"]
+    p3["<b>S78 Invoices Tag</b><br/>UpdateAttribute"]
+    p4["<b>S78 Invoices Format</b><br/>UpdateAttribute"]
+    p5["<b>S78 Invoices Store</b><br/>UpdateAttribute"]
+    p6["<b>S78 Shipments Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p7["<b>S78 Shipments Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p8["<b>S78 Shipments Lane 1</b><br/>UpdateAttribute"]
+    p9["<b>S78 Shipments Lane 2</b><br/>UpdateAttribute"]
+    p10["<b>S78 Shipments Lane 3</b><br/>UpdateAttribute"]
+    p11["<b>S78 Shipments Join Lanes</b><br/>UpdateAttribute"]
+    p12["<b>S78 Shipments Store</b><br/>UpdateAttribute"]
+    p13["<b>S78 Returns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p14["<b>S78 Returns Parse</b><br/>UpdateAttribute"]
+    p15["<b>S78 Returns Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p16["<b>S78 Returns Reject DLQ</b><br/>LogAttribute"]
+    p17["<b>S78 Returns Format</b><br/>UpdateAttribute"]
+    p18["<b>S78 Returns Store</b><br/>UpdateAttribute"]
+    p19["<b>S78 Refunds Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p20["<b>S78 Refunds Enrich</b><br/>UpdateAttribute"]
+    p21["<b>S78 Refunds Tag</b><br/>UpdateAttribute"]
+    p22["<b>S78 Refunds Parse</b><br/>UpdateAttribute"]
+    p23["<b>S78 Refunds Convert</b><br/>UpdateAttribute"]
+    p24["<b>S78 Refunds Store</b><br/>UpdateAttribute"]
+    p0 -->|"s78-invoices-1"| p1
+    p1 -->|"s78-invoices-2"| p2
+    p2 -->|"s78-invoices-3"| p3
+    p3 -->|"s78-invoices-4"| p4
+    p4 -->|"s78-invoices-5"| p5
+    p6 -->|"s78-shipments-1"| p7
+    p7 -->|"s78-shipments-2<br/>relationship 1"| p8
+    p8 -->|"s78-shipments-3"| p11
+    p7 -->|"s78-shipments-4<br/>relationship 2"| p9
+    p9 -->|"s78-shipments-5"| p11
+    p7 -->|"s78-shipments-6<br/>relationship 3"| p10
+    p10 -->|"s78-shipments-7"| p11
+    p11 -->|"s78-shipments-8"| p12
+    p13 -->|"s78-returns-1"| p14
+    p14 -->|"s78-returns-2"| p15
+    p15 -->|"s78-returns-3<br/>failure"| p16
+    p15 -->|"s78-returns-4"| p17
+    p17 -->|"s78-returns-5"| p18
+    p19 -->|"s78-refunds-1"| p20
+    p20 -->|"s78-refunds-2"| p21
+    p21 -->|"s78-refunds-3"| p22
+    p22 -->|"s78-refunds-4"| p23
+    p23 -->|"s78-refunds-5"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s78-invoices-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S79 Healthy Returns Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s79-returns-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S79 Returns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S79 Returns Parse</b><br/>UpdateAttribute"]
+    p2["<b>S79 Returns Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S79 Returns Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S79 Returns Format</b><br/>UpdateAttribute"]
+    p5["<b>S79 Returns Store</b><br/>UpdateAttribute"]
+    p6["<b>S79 Refunds Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S79 Refunds Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S79 Refunds Convert</b><br/>UpdateAttribute"]
+    p9["<b>S79 Refunds Store</b><br/>UpdateAttribute"]
+    p10["<b>S79 Inventory Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S79 Inventory Route</b><br/>UpdateAttribute"]
+    p12["<b>S79 Inventory Format</b><br/>UpdateAttribute"]
+    p13["<b>S79 Inventory Score</b><br/>UpdateAttribute"]
+    p14["<b>S79 Inventory Normalize</b><br/>UpdateAttribute"]
+    p15["<b>S79 Inventory Parse</b><br/>UpdateAttribute"]
+    p16["<b>S79 Inventory Stamp</b><br/>UpdateAttribute"]
+    p17["<b>S79 Inventory Store</b><br/>UpdateAttribute"]
+    p18["<b>S79 Prices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p19["<b>S79 Prices Stamp</b><br/>UpdateAttribute"]
+    p20["<b>S79 Prices Classify</b><br/>UpdateAttribute"]
+    p21["<b>S79 Prices Format</b><br/>UpdateAttribute"]
+    p22["<b>S79 Prices Enrich</b><br/>UpdateAttribute"]
+    p23["<b>S79 Prices Normalize</b><br/>UpdateAttribute"]
+    p24["<b>S79 Prices Store</b><br/>UpdateAttribute"]
+    p0 -->|"s79-returns-1"| p1
+    p1 -->|"s79-returns-2"| p2
+    p2 -->|"s79-returns-3<br/>failure"| p3
+    p2 -->|"s79-returns-4"| p4
+    p4 -->|"s79-returns-5"| p5
+    p6 -->|"s79-refunds-1"| p7
+    p7 -->|"s79-refunds-2"| p8
+    p8 -->|"s79-refunds-3"| p9
+    p10 -->|"s79-inventory-1"| p11
+    p11 -->|"s79-inventory-2"| p12
+    p12 -->|"s79-inventory-3"| p13
+    p13 -->|"s79-inventory-4"| p14
+    p14 -->|"s79-inventory-5"| p15
+    p15 -->|"s79-inventory-6"| p16
+    p16 -->|"s79-inventory-7"| p17
+    p18 -->|"s79-prices-1"| p19
+    p19 -->|"s79-prices-2"| p20
+    p20 -->|"s79-prices-3"| p21
+    p21 -->|"s79-prices-4"| p22
+    p22 -->|"s79-prices-5"| p23
+    p23 -->|"s79-prices-6"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s79-returns-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S80 Healthy Inventory Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s80-inventory-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S80 Inventory Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S80 Inventory Classify</b><br/>UpdateAttribute"]
+    p2["<b>S80 Inventory Annotate</b><br/>UpdateAttribute"]
+    p3["<b>S80 Inventory Mask</b><br/>UpdateAttribute"]
+    p4["<b>S80 Inventory Tag</b><br/>UpdateAttribute"]
+    p5["<b>S80 Inventory Dedupe</b><br/>UpdateAttribute"]
+    p6["<b>S80 Inventory Normalize</b><br/>UpdateAttribute"]
+    p7["<b>S80 Inventory Store</b><br/>UpdateAttribute"]
+    p8["<b>S80 Prices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p9["<b>S80 Prices Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+    p10["<b>S80 Prices Lane 1</b><br/>UpdateAttribute"]
+    p11["<b>S80 Prices Lane 2</b><br/>UpdateAttribute"]
+    p12["<b>S80 Prices Lane 3</b><br/>UpdateAttribute"]
+    p13["<b>S80 Prices Lane 4</b><br/>UpdateAttribute"]
+    p14["<b>S80 Prices Join Lanes</b><br/>UpdateAttribute"]
+    p15["<b>S80 Prices Store</b><br/>UpdateAttribute"]
+    p16["<b>S80 Customers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p17["<b>S80 Customers Parse</b><br/>UpdateAttribute"]
+    p18["<b>S80 Customers Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p19["<b>S80 Customers Reject DLQ</b><br/>LogAttribute"]
+    p20["<b>S80 Customers Format</b><br/>UpdateAttribute"]
+    p21["<b>S80 Customers Store</b><br/>UpdateAttribute"]
+    p22["<b>S80 Reviews Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p23["<b>S80 Reviews Classify</b><br/>UpdateAttribute"]
+    p24["<b>S80 Reviews Store</b><br/>UpdateAttribute"]
+    p0 -->|"s80-inventory-1"| p1
+    p1 -->|"s80-inventory-2"| p2
+    p2 -->|"s80-inventory-3"| p3
+    p3 -->|"s80-inventory-4"| p4
+    p4 -->|"s80-inventory-5"| p5
+    p5 -->|"s80-inventory-6"| p6
+    p6 -->|"s80-inventory-7"| p7
+    p8 -->|"s80-prices-1"| p9
+    p9 -->|"s80-prices-2<br/>relationship 1"| p10
+    p10 -->|"s80-prices-3"| p14
+    p9 -->|"s80-prices-4<br/>relationship 2"| p11
+    p11 -->|"s80-prices-5"| p14
+    p9 -->|"s80-prices-6<br/>relationship 3"| p12
+    p12 -->|"s80-prices-7"| p14
+    p9 -->|"s80-prices-8<br/>relationship 4"| p13
+    p13 -->|"s80-prices-9"| p14
+    p14 -->|"s80-prices-10"| p15
+    p16 -->|"s80-customers-1"| p17
+    p17 -->|"s80-customers-2"| p18
+    p18 -->|"s80-customers-3<br/>failure"| p19
+    p18 -->|"s80-customers-4"| p20
+    p20 -->|"s80-customers-5"| p21
+    p22 -->|"s80-reviews-1"| p23
+    p23 -->|"s80-reviews-2"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s80-inventory-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S81 Healthy Customers Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s81-customers-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S81 Customers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S81 Customers Parse</b><br/>UpdateAttribute"]
+    p2["<b>S81 Customers Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S81 Customers Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S81 Customers Format</b><br/>UpdateAttribute"]
+    p5["<b>S81 Customers Store</b><br/>UpdateAttribute"]
+    p6["<b>S81 Reviews Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S81 Reviews Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S81 Reviews Format</b><br/>UpdateAttribute"]
+    p9["<b>S81 Reviews Store</b><br/>UpdateAttribute"]
+    p10["<b>S81 Coupons Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S81 Coupons Annotate</b><br/>UpdateAttribute"]
+    p12["<b>S81 Coupons Stamp</b><br/>UpdateAttribute"]
+    p13["<b>S81 Coupons Tag</b><br/>UpdateAttribute"]
+    p14["<b>S81 Coupons Route</b><br/>UpdateAttribute"]
+    p15["<b>S81 Coupons Enrich</b><br/>UpdateAttribute"]
+    p16["<b>S81 Coupons Store</b><br/>UpdateAttribute"]
+    p17["<b>S81 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p18["<b>S81 Carts Parse</b><br/>UpdateAttribute"]
+    p19["<b>S81 Carts Enrich</b><br/>UpdateAttribute"]
+    p20["<b>S81 Carts Classify</b><br/>UpdateAttribute"]
+    p21["<b>S81 Carts Normalize</b><br/>UpdateAttribute"]
+    p22["<b>S81 Carts Tag</b><br/>UpdateAttribute"]
+    p23["<b>S81 Carts Validate</b><br/>UpdateAttribute"]
+    p24["<b>S81 Carts Store</b><br/>UpdateAttribute"]
+    p0 -->|"s81-customers-1"| p1
+    p1 -->|"s81-customers-2"| p2
+    p2 -->|"s81-customers-3<br/>failure"| p3
+    p2 -->|"s81-customers-4"| p4
+    p4 -->|"s81-customers-5"| p5
+    p6 -->|"s81-reviews-1"| p7
+    p7 -->|"s81-reviews-2"| p8
+    p8 -->|"s81-reviews-3"| p9
+    p10 -->|"s81-coupons-1"| p11
+    p11 -->|"s81-coupons-2"| p12
+    p12 -->|"s81-coupons-3"| p13
+    p13 -->|"s81-coupons-4"| p14
+    p14 -->|"s81-coupons-5"| p15
+    p15 -->|"s81-coupons-6"| p16
+    p17 -->|"s81-carts-1"| p18
+    p18 -->|"s81-carts-2"| p19
+    p19 -->|"s81-carts-3"| p20
+    p20 -->|"s81-carts-4"| p21
+    p21 -->|"s81-carts-5"| p22
+    p22 -->|"s81-carts-6"| p23
+    p23 -->|"s81-carts-7"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s81-customers-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S82 Healthy Coupons Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s82-coupons-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S82 Coupons Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S82 Coupons Dedupe</b><br/>UpdateAttribute"]
+    p2["<b>S82 Coupons Annotate</b><br/>UpdateAttribute"]
+    p3["<b>S82 Coupons Store</b><br/>UpdateAttribute"]
+    p4["<b>S82 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p5["<b>S82 Carts Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+    p6["<b>S82 Carts Lane 1</b><br/>UpdateAttribute"]
+    p7["<b>S82 Carts Lane 2</b><br/>UpdateAttribute"]
+    p8["<b>S82 Carts Lane 3</b><br/>UpdateAttribute"]
+    p9["<b>S82 Carts Lane 4</b><br/>UpdateAttribute"]
+    p10["<b>S82 Carts Join Lanes</b><br/>UpdateAttribute"]
+    p11["<b>S82 Carts Store</b><br/>UpdateAttribute"]
+    p12["<b>S82 Wishlists Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p13["<b>S82 Wishlists Parse</b><br/>UpdateAttribute"]
+    p14["<b>S82 Wishlists Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p15["<b>S82 Wishlists Reject DLQ</b><br/>LogAttribute"]
+    p16["<b>S82 Wishlists Format</b><br/>UpdateAttribute"]
+    p17["<b>S82 Wishlists Store</b><br/>UpdateAttribute"]
+    p18["<b>S82 Suppliers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p19["<b>S82 Suppliers Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p20["<b>S82 Suppliers Classify</b><br/>UpdateAttribute"]
+    p21["<b>S82 Suppliers Store</b><br/>UpdateAttribute"]
+    p22["<b>S82 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p23["<b>S82 Contracts Enrich</b><br/>UpdateAttribute"]
+    p24["<b>S82 Contracts Store</b><br/>UpdateAttribute"]
+    p0 -->|"s82-coupons-1"| p1
+    p1 -->|"s82-coupons-2"| p2
+    p2 -->|"s82-coupons-3"| p3
+    p4 -->|"s82-carts-1"| p5
+    p5 -->|"s82-carts-2<br/>relationship 1"| p6
+    p6 -->|"s82-carts-3"| p10
+    p5 -->|"s82-carts-4<br/>relationship 2"| p7
+    p7 -->|"s82-carts-5"| p10
+    p5 -->|"s82-carts-6<br/>relationship 3"| p8
+    p8 -->|"s82-carts-7"| p10
+    p5 -->|"s82-carts-8<br/>relationship 4"| p9
+    p9 -->|"s82-carts-9"| p10
+    p10 -->|"s82-carts-10"| p11
+    p12 -->|"s82-wishlists-1"| p13
+    p13 -->|"s82-wishlists-2"| p14
+    p14 -->|"s82-wishlists-3<br/>failure"| p15
+    p14 -->|"s82-wishlists-4"| p16
+    p16 -->|"s82-wishlists-5"| p17
+    p18 -->|"s82-suppliers-1"| p19
+    p19 -->|"s82-suppliers-2"| p20
+    p20 -->|"s82-suppliers-3"| p21
+    p22 -->|"s82-contracts-1"| p23
+    p23 -->|"s82-contracts-2"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s82-coupons-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S83 Healthy Wishlists Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s83-wishlists-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S83 Wishlists Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S83 Wishlists Parse</b><br/>UpdateAttribute"]
+    p2["<b>S83 Wishlists Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S83 Wishlists Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S83 Wishlists Format</b><br/>UpdateAttribute"]
+    p5["<b>S83 Wishlists Store</b><br/>UpdateAttribute"]
+    p6["<b>S83 Suppliers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S83 Suppliers Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S83 Suppliers Dedupe</b><br/>UpdateAttribute"]
+    p9["<b>S83 Suppliers Store</b><br/>UpdateAttribute"]
+    p10["<b>S83 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S83 Contracts Classify</b><br/>UpdateAttribute"]
+    p12["<b>S83 Contracts Score</b><br/>UpdateAttribute"]
+    p13["<b>S83 Contracts Route</b><br/>UpdateAttribute"]
+    p14["<b>S83 Contracts Store</b><br/>UpdateAttribute"]
+    p15["<b>S83 Tickets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p16["<b>S83 Tickets Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p17["<b>S83 Tickets Lane 1</b><br/>UpdateAttribute"]
+    p18["<b>S83 Tickets Lane 2</b><br/>UpdateAttribute"]
+    p19["<b>S83 Tickets Join Lanes</b><br/>UpdateAttribute"]
+    p20["<b>S83 Tickets Store</b><br/>UpdateAttribute"]
+    p21["<b>S83 Leads Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S83 Leads Tag</b><br/>UpdateAttribute"]
+    p23["<b>S83 Leads Annotate</b><br/>UpdateAttribute"]
+    p24["<b>S83 Leads Store</b><br/>UpdateAttribute"]
+    p0 -->|"s83-wishlists-1"| p1
+    p1 -->|"s83-wishlists-2"| p2
+    p2 -->|"s83-wishlists-3<br/>failure"| p3
+    p2 -->|"s83-wishlists-4"| p4
+    p4 -->|"s83-wishlists-5"| p5
+    p6 -->|"s83-suppliers-1"| p7
+    p7 -->|"s83-suppliers-2"| p8
+    p8 -->|"s83-suppliers-3"| p9
+    p10 -->|"s83-contracts-1"| p11
+    p11 -->|"s83-contracts-2"| p12
+    p12 -->|"s83-contracts-3"| p13
+    p13 -->|"s83-contracts-4"| p14
+    p15 -->|"s83-tickets-1"| p16
+    p16 -->|"s83-tickets-2<br/>relationship 1"| p17
+    p17 -->|"s83-tickets-3"| p19
+    p16 -->|"s83-tickets-4<br/>relationship 2"| p18
+    p18 -->|"s83-tickets-5"| p19
+    p19 -->|"s83-tickets-6"| p20
+    p21 -->|"s83-leads-1"| p22
+    p22 -->|"s83-leads-2"| p23
+    p23 -->|"s83-leads-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s83-wishlists-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S84 Healthy Contracts Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s84-contracts-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S84 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S84 Contracts Parse</b><br/>UpdateAttribute"]
+    p2["<b>S84 Contracts Classify</b><br/>UpdateAttribute"]
+    p3["<b>S84 Contracts Annotate</b><br/>UpdateAttribute"]
+    p4["<b>S84 Contracts Format</b><br/>UpdateAttribute"]
+    p5["<b>S84 Contracts Store</b><br/>UpdateAttribute"]
+    p6["<b>S84 Tickets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p7["<b>S84 Tickets Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p8["<b>S84 Tickets Lane 1</b><br/>UpdateAttribute"]
+    p9["<b>S84 Tickets Lane 2</b><br/>UpdateAttribute"]
+    p10["<b>S84 Tickets Join Lanes</b><br/>UpdateAttribute"]
+    p11["<b>S84 Tickets Store</b><br/>UpdateAttribute"]
+    p12["<b>S84 Leads Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p13["<b>S84 Leads Parse</b><br/>UpdateAttribute"]
+    p14["<b>S84 Leads Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p15["<b>S84 Leads Reject DLQ</b><br/>LogAttribute"]
+    p16["<b>S84 Leads Format</b><br/>UpdateAttribute"]
+    p17["<b>S84 Leads Store</b><br/>UpdateAttribute"]
+    p18["<b>S84 Campaigns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p19["<b>S84 Campaigns Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p20["<b>S84 Campaigns Tag</b><br/>UpdateAttribute"]
+    p21["<b>S84 Campaigns Store</b><br/>UpdateAttribute"]
+    p22["<b>S84 Payroll Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p23["<b>S84 Payroll Route</b><br/>UpdateAttribute"]
+    p24["<b>S84 Payroll Store</b><br/>UpdateAttribute"]
+    p0 -->|"s84-contracts-1"| p1
+    p1 -->|"s84-contracts-2"| p2
+    p2 -->|"s84-contracts-3"| p3
+    p3 -->|"s84-contracts-4"| p4
+    p4 -->|"s84-contracts-5"| p5
+    p6 -->|"s84-tickets-1"| p7
+    p7 -->|"s84-tickets-2<br/>relationship 1"| p8
+    p8 -->|"s84-tickets-3"| p10
+    p7 -->|"s84-tickets-4<br/>relationship 2"| p9
+    p9 -->|"s84-tickets-5"| p10
+    p10 -->|"s84-tickets-6"| p11
+    p12 -->|"s84-leads-1"| p13
+    p13 -->|"s84-leads-2"| p14
+    p14 -->|"s84-leads-3<br/>failure"| p15
+    p14 -->|"s84-leads-4"| p16
+    p16 -->|"s84-leads-5"| p17
+    p18 -->|"s84-campaigns-1"| p19
+    p19 -->|"s84-campaigns-2"| p20
+    p20 -->|"s84-campaigns-3"| p21
+    p22 -->|"s84-payroll-1"| p23
+    p23 -->|"s84-payroll-2"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s84-contracts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S85 Healthy Leads Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s85-leads-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S85 Leads Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S85 Leads Parse</b><br/>UpdateAttribute"]
+    p2["<b>S85 Leads Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S85 Leads Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S85 Leads Format</b><br/>UpdateAttribute"]
+    p5["<b>S85 Leads Store</b><br/>UpdateAttribute"]
+    p6["<b>S85 Campaigns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S85 Campaigns Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S85 Campaigns Annotate</b><br/>UpdateAttribute"]
+    p9["<b>S85 Campaigns Store</b><br/>UpdateAttribute"]
+    p10["<b>S85 Payroll Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S85 Payroll Stamp</b><br/>UpdateAttribute"]
+    p12["<b>S85 Payroll Normalize</b><br/>UpdateAttribute"]
+    p13["<b>S85 Payroll Tag</b><br/>UpdateAttribute"]
+    p14["<b>S85 Payroll Format</b><br/>UpdateAttribute"]
+    p15["<b>S85 Payroll Score</b><br/>UpdateAttribute"]
+    p16["<b>S85 Payroll Classify</b><br/>UpdateAttribute"]
+    p17["<b>S85 Payroll Store</b><br/>UpdateAttribute"]
+    p18["<b>S85 Timesheets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p19["<b>S85 Timesheets Mask</b><br/>UpdateAttribute"]
+    p20["<b>S85 Timesheets Tag</b><br/>UpdateAttribute"]
+    p21["<b>S85 Timesheets Classify</b><br/>UpdateAttribute"]
+    p22["<b>S85 Timesheets Format</b><br/>UpdateAttribute"]
+    p23["<b>S85 Timesheets Score</b><br/>UpdateAttribute"]
+    p24["<b>S85 Timesheets Store</b><br/>UpdateAttribute"]
+    p0 -->|"s85-leads-1"| p1
+    p1 -->|"s85-leads-2"| p2
+    p2 -->|"s85-leads-3<br/>failure"| p3
+    p2 -->|"s85-leads-4"| p4
+    p4 -->|"s85-leads-5"| p5
+    p6 -->|"s85-campaigns-1"| p7
+    p7 -->|"s85-campaigns-2"| p8
+    p8 -->|"s85-campaigns-3"| p9
+    p10 -->|"s85-payroll-1"| p11
+    p11 -->|"s85-payroll-2"| p12
+    p12 -->|"s85-payroll-3"| p13
+    p13 -->|"s85-payroll-4"| p14
+    p14 -->|"s85-payroll-5"| p15
+    p15 -->|"s85-payroll-6"| p16
+    p16 -->|"s85-payroll-7"| p17
+    p18 -->|"s85-timesheets-1"| p19
+    p19 -->|"s85-timesheets-2"| p20
+    p20 -->|"s85-timesheets-3"| p21
+    p21 -->|"s85-timesheets-4"| p22
+    p22 -->|"s85-timesheets-5"| p23
+    p23 -->|"s85-timesheets-6"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s85-leads-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S86 Healthy Payroll Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s86-payroll-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S86 Payroll Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S86 Payroll Mask</b><br/>UpdateAttribute"]
+    p2["<b>S86 Payroll Annotate</b><br/>UpdateAttribute"]
+    p3["<b>S86 Payroll Tag</b><br/>UpdateAttribute"]
+    p4["<b>S86 Payroll Convert</b><br/>UpdateAttribute"]
+    p5["<b>S86 Payroll Store</b><br/>UpdateAttribute"]
+    p6["<b>S86 Timesheets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p7["<b>S86 Timesheets Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p8["<b>S86 Timesheets Lane 1</b><br/>UpdateAttribute"]
+    p9["<b>S86 Timesheets Lane 2</b><br/>UpdateAttribute"]
+    p10["<b>S86 Timesheets Lane 3</b><br/>UpdateAttribute"]
+    p11["<b>S86 Timesheets Join Lanes</b><br/>UpdateAttribute"]
+    p12["<b>S86 Timesheets Store</b><br/>UpdateAttribute"]
+    p13["<b>S86 Assets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p14["<b>S86 Assets Parse</b><br/>UpdateAttribute"]
+    p15["<b>S86 Assets Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p16["<b>S86 Assets Reject DLQ</b><br/>LogAttribute"]
+    p17["<b>S86 Assets Format</b><br/>UpdateAttribute"]
+    p18["<b>S86 Assets Store</b><br/>UpdateAttribute"]
+    p19["<b>S86 Leases Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p20["<b>S86 Leases Validate</b><br/>UpdateAttribute"]
+    p21["<b>S86 Leases Normalize</b><br/>UpdateAttribute"]
+    p22["<b>S86 Leases Convert</b><br/>UpdateAttribute"]
+    p23["<b>S86 Leases Classify</b><br/>UpdateAttribute"]
+    p24["<b>S86 Leases Store</b><br/>UpdateAttribute"]
+    p0 -->|"s86-payroll-1"| p1
+    p1 -->|"s86-payroll-2"| p2
+    p2 -->|"s86-payroll-3"| p3
+    p3 -->|"s86-payroll-4"| p4
+    p4 -->|"s86-payroll-5"| p5
+    p6 -->|"s86-timesheets-1"| p7
+    p7 -->|"s86-timesheets-2<br/>relationship 1"| p8
+    p8 -->|"s86-timesheets-3"| p11
+    p7 -->|"s86-timesheets-4<br/>relationship 2"| p9
+    p9 -->|"s86-timesheets-5"| p11
+    p7 -->|"s86-timesheets-6<br/>relationship 3"| p10
+    p10 -->|"s86-timesheets-7"| p11
+    p11 -->|"s86-timesheets-8"| p12
+    p13 -->|"s86-assets-1"| p14
+    p14 -->|"s86-assets-2"| p15
+    p15 -->|"s86-assets-3<br/>failure"| p16
+    p15 -->|"s86-assets-4"| p17
+    p17 -->|"s86-assets-5"| p18
+    p19 -->|"s86-leases-1"| p20
+    p20 -->|"s86-leases-2"| p21
+    p21 -->|"s86-leases-3"| p22
+    p22 -->|"s86-leases-4"| p23
+    p23 -->|"s86-leases-5"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s86-payroll-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S87 Healthy Assets Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s87-assets-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S87 Assets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S87 Assets Parse</b><br/>UpdateAttribute"]
+    p2["<b>S87 Assets Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S87 Assets Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S87 Assets Format</b><br/>UpdateAttribute"]
+    p5["<b>S87 Assets Store</b><br/>UpdateAttribute"]
+    p6["<b>S87 Leases Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S87 Leases Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S87 Leases Enrich</b><br/>UpdateAttribute"]
+    p9["<b>S87 Leases Store</b><br/>UpdateAttribute"]
+    p10["<b>S87 Claims Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S87 Claims Route</b><br/>UpdateAttribute"]
+    p12["<b>S87 Claims Mask</b><br/>UpdateAttribute"]
+    p13["<b>S87 Claims Parse</b><br/>UpdateAttribute"]
+    p14["<b>S87 Claims Store</b><br/>UpdateAttribute"]
+    p15["<b>S87 Policies Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p16["<b>S87 Policies Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p17["<b>S87 Policies Lane 1</b><br/>UpdateAttribute"]
+    p18["<b>S87 Policies Lane 2</b><br/>UpdateAttribute"]
+    p19["<b>S87 Policies Join Lanes</b><br/>UpdateAttribute"]
+    p20["<b>S87 Policies Store</b><br/>UpdateAttribute"]
+    p21["<b>S87 Quotes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p22["<b>S87 Quotes Format</b><br/>UpdateAttribute"]
+    p23["<b>S87 Quotes Enrich</b><br/>UpdateAttribute"]
+    p24["<b>S87 Quotes Store</b><br/>UpdateAttribute"]
+    p0 -->|"s87-assets-1"| p1
+    p1 -->|"s87-assets-2"| p2
+    p2 -->|"s87-assets-3<br/>failure"| p3
+    p2 -->|"s87-assets-4"| p4
+    p4 -->|"s87-assets-5"| p5
+    p6 -->|"s87-leases-1"| p7
+    p7 -->|"s87-leases-2"| p8
+    p8 -->|"s87-leases-3"| p9
+    p10 -->|"s87-claims-1"| p11
+    p11 -->|"s87-claims-2"| p12
+    p12 -->|"s87-claims-3"| p13
+    p13 -->|"s87-claims-4"| p14
+    p15 -->|"s87-policies-1"| p16
+    p16 -->|"s87-policies-2<br/>relationship 1"| p17
+    p17 -->|"s87-policies-3"| p19
+    p16 -->|"s87-policies-4<br/>relationship 2"| p18
+    p18 -->|"s87-policies-5"| p19
+    p19 -->|"s87-policies-6"| p20
+    p21 -->|"s87-quotes-1"| p22
+    p22 -->|"s87-quotes-2"| p23
+    p23 -->|"s87-quotes-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s87-assets-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S88 Healthy Claims Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s88-claims-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S88 Claims Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S88 Claims Enrich</b><br/>UpdateAttribute"]
+    p2["<b>S88 Claims Classify</b><br/>UpdateAttribute"]
+    p3["<b>S88 Claims Store</b><br/>UpdateAttribute"]
+    p4["<b>S88 Policies Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p5["<b>S88 Policies Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p6["<b>S88 Policies Lane 1</b><br/>UpdateAttribute"]
+    p7["<b>S88 Policies Lane 2</b><br/>UpdateAttribute"]
+    p8["<b>S88 Policies Lane 3</b><br/>UpdateAttribute"]
+    p9["<b>S88 Policies Join Lanes</b><br/>UpdateAttribute"]
+    p10["<b>S88 Policies Store</b><br/>UpdateAttribute"]
+    p11["<b>S88 Quotes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p12["<b>S88 Quotes Parse</b><br/>UpdateAttribute"]
+    p13["<b>S88 Quotes Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p14["<b>S88 Quotes Reject DLQ</b><br/>LogAttribute"]
+    p15["<b>S88 Quotes Format</b><br/>UpdateAttribute"]
+    p16["<b>S88 Quotes Store</b><br/>UpdateAttribute"]
+    p17["<b>S88 Vendors Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p18["<b>S88 Vendors Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p19["<b>S88 Vendors Score</b><br/>UpdateAttribute"]
+    p20["<b>S88 Vendors Store</b><br/>UpdateAttribute"]
+    p21["<b>S88 Stores Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S88 Stores Convert</b><br/>UpdateAttribute"]
+    p23["<b>S88 Stores Dedupe</b><br/>UpdateAttribute"]
+    p24["<b>S88 Stores Store</b><br/>UpdateAttribute"]
+    p0 -->|"s88-claims-1"| p1
+    p1 -->|"s88-claims-2"| p2
+    p2 -->|"s88-claims-3"| p3
+    p4 -->|"s88-policies-1"| p5
+    p5 -->|"s88-policies-2<br/>relationship 1"| p6
+    p6 -->|"s88-policies-3"| p9
+    p5 -->|"s88-policies-4<br/>relationship 2"| p7
+    p7 -->|"s88-policies-5"| p9
+    p5 -->|"s88-policies-6<br/>relationship 3"| p8
+    p8 -->|"s88-policies-7"| p9
+    p9 -->|"s88-policies-8"| p10
+    p11 -->|"s88-quotes-1"| p12
+    p12 -->|"s88-quotes-2"| p13
+    p13 -->|"s88-quotes-3<br/>failure"| p14
+    p13 -->|"s88-quotes-4"| p15
+    p15 -->|"s88-quotes-5"| p16
+    p17 -->|"s88-vendors-1"| p18
+    p18 -->|"s88-vendors-2"| p19
+    p19 -->|"s88-vendors-3"| p20
+    p21 -->|"s88-stores-1"| p22
+    p22 -->|"s88-stores-2"| p23
+    p23 -->|"s88-stores-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s88-claims-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S89 Healthy Quotes Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s89-quotes-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S89 Quotes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S89 Quotes Parse</b><br/>UpdateAttribute"]
+    p2["<b>S89 Quotes Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S89 Quotes Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S89 Quotes Format</b><br/>UpdateAttribute"]
+    p5["<b>S89 Quotes Store</b><br/>UpdateAttribute"]
+    p6["<b>S89 Vendors Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p7["<b>S89 Vendors Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S89 Vendors Validate</b><br/>UpdateAttribute"]
+    p9["<b>S89 Vendors Store</b><br/>UpdateAttribute"]
+    p10["<b>S89 Stores Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S89 Stores Format</b><br/>UpdateAttribute"]
+    p12["<b>S89 Stores Tag</b><br/>UpdateAttribute"]
+    p13["<b>S89 Stores Classify</b><br/>UpdateAttribute"]
+    p14["<b>S89 Stores Store</b><br/>UpdateAttribute"]
+    p15["<b>S89 Catalog Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p16["<b>S89 Catalog Validate</b><br/>UpdateAttribute"]
+    p17["<b>S89 Catalog Score</b><br/>UpdateAttribute"]
+    p18["<b>S89 Catalog Classify</b><br/>UpdateAttribute"]
+    p19["<b>S89 Catalog Dedupe</b><br/>UpdateAttribute"]
+    p20["<b>S89 Catalog Convert</b><br/>UpdateAttribute"]
+    p21["<b>S89 Catalog Route</b><br/>UpdateAttribute"]
+    p22["<b>S89 Catalog Stamp</b><br/>UpdateAttribute"]
+    p23["<b>S89 Catalog Annotate</b><br/>UpdateAttribute"]
+    p24["<b>S89 Catalog Store</b><br/>UpdateAttribute"]
+    p0 -->|"s89-quotes-1"| p1
+    p1 -->|"s89-quotes-2"| p2
+    p2 -->|"s89-quotes-3<br/>failure"| p3
+    p2 -->|"s89-quotes-4"| p4
+    p4 -->|"s89-quotes-5"| p5
+    p6 -->|"s89-vendors-1"| p7
+    p7 -->|"s89-vendors-2"| p8
+    p8 -->|"s89-vendors-3"| p9
+    p10 -->|"s89-stores-1"| p11
+    p11 -->|"s89-stores-2"| p12
+    p12 -->|"s89-stores-3"| p13
+    p13 -->|"s89-stores-4"| p14
+    p15 -->|"s89-catalog-1"| p16
+    p16 -->|"s89-catalog-2"| p17
+    p17 -->|"s89-catalog-3"| p18
+    p18 -->|"s89-catalog-4"| p19
+    p19 -->|"s89-catalog-5"| p20
+    p20 -->|"s89-catalog-6"| p21
+    p21 -->|"s89-catalog-7"| p22
+    p22 -->|"s89-catalog-8"| p23
+    p23 -->|"s89-catalog-9"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s89-quotes-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S90 Healthy Stores Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s90-stores-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S90 Stores Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S90 Stores Classify</b><br/>UpdateAttribute"]
+    p2["<b>S90 Stores Score</b><br/>UpdateAttribute"]
+    p3["<b>S90 Stores Parse</b><br/>UpdateAttribute"]
+    p4["<b>S90 Stores Store</b><br/>UpdateAttribute"]
+    p5["<b>S90 Catalog Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p6["<b>S90 Catalog Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p7["<b>S90 Catalog Lane 1</b><br/>UpdateAttribute"]
+    p8["<b>S90 Catalog Lane 2</b><br/>UpdateAttribute"]
+    p9["<b>S90 Catalog Join Lanes</b><br/>UpdateAttribute"]
+    p10["<b>S90 Catalog Store</b><br/>UpdateAttribute"]
+    p11["<b>S90 Ledger Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p12["<b>S90 Ledger Parse</b><br/>UpdateAttribute"]
+    p13["<b>S90 Ledger Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p14["<b>S90 Ledger Reject DLQ</b><br/>LogAttribute"]
+    p15["<b>S90 Ledger Format</b><br/>UpdateAttribute"]
+    p16["<b>S90 Ledger Store</b><br/>UpdateAttribute"]
+    p17["<b>S90 Budgets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p18["<b>S90 Budgets Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p19["<b>S90 Budgets Mask</b><br/>UpdateAttribute"]
+    p20["<b>S90 Budgets Store</b><br/>UpdateAttribute"]
+    p21["<b>S90 Audits Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p22["<b>S90 Audits Mask</b><br/>UpdateAttribute"]
+    p23["<b>S90 Audits Dedupe</b><br/>UpdateAttribute"]
+    p24["<b>S90 Audits Store</b><br/>UpdateAttribute"]
+    p0 -->|"s90-stores-1"| p1
+    p1 -->|"s90-stores-2"| p2
+    p2 -->|"s90-stores-3"| p3
+    p3 -->|"s90-stores-4"| p4
+    p5 -->|"s90-catalog-1"| p6
+    p6 -->|"s90-catalog-2<br/>relationship 1"| p7
+    p7 -->|"s90-catalog-3"| p9
+    p6 -->|"s90-catalog-4<br/>relationship 2"| p8
+    p8 -->|"s90-catalog-5"| p9
+    p9 -->|"s90-catalog-6"| p10
+    p11 -->|"s90-ledger-1"| p12
+    p12 -->|"s90-ledger-2"| p13
+    p13 -->|"s90-ledger-3<br/>failure"| p14
+    p13 -->|"s90-ledger-4"| p15
+    p15 -->|"s90-ledger-5"| p16
+    p17 -->|"s90-budgets-1"| p18
+    p18 -->|"s90-budgets-2"| p19
+    p19 -->|"s90-budgets-3"| p20
+    p21 -->|"s90-audits-1"| p22
+    p22 -->|"s90-audits-2"| p23
+    p23 -->|"s90-audits-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s90-stores-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S91 Healthy Ledger Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s91-ledger-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S91 Ledger Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S91 Ledger Parse</b><br/>UpdateAttribute"]
+    p2["<b>S91 Ledger Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S91 Ledger Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S91 Ledger Format</b><br/>UpdateAttribute"]
+    p5["<b>S91 Ledger Store</b><br/>UpdateAttribute"]
+    p6["<b>S91 Budgets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S91 Budgets Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S91 Budgets Mask</b><br/>UpdateAttribute"]
+    p9["<b>S91 Budgets Store</b><br/>UpdateAttribute"]
+    p10["<b>S91 Audits Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p11["<b>S91 Audits Convert</b><br/>UpdateAttribute"]
+    p12["<b>S91 Audits Route</b><br/>UpdateAttribute"]
+    p13["<b>S91 Audits Store</b><br/>UpdateAttribute"]
+    p14["<b>S91 Alerts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p15["<b>S91 Alerts Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+    p16["<b>S91 Alerts Lane 1</b><br/>UpdateAttribute"]
+    p17["<b>S91 Alerts Lane 2</b><br/>UpdateAttribute"]
+    p18["<b>S91 Alerts Lane 3</b><br/>UpdateAttribute"]
+    p19["<b>S91 Alerts Lane 4</b><br/>UpdateAttribute"]
+    p20["<b>S91 Alerts Join Lanes</b><br/>UpdateAttribute"]
+    p21["<b>S91 Alerts Store</b><br/>UpdateAttribute"]
+    p22["<b>S91 Devices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p23["<b>S91 Devices Dedupe</b><br/>UpdateAttribute"]
+    p24["<b>S91 Devices Store</b><br/>UpdateAttribute"]
+    p0 -->|"s91-ledger-1"| p1
+    p1 -->|"s91-ledger-2"| p2
+    p2 -->|"s91-ledger-3<br/>failure"| p3
+    p2 -->|"s91-ledger-4"| p4
+    p4 -->|"s91-ledger-5"| p5
+    p6 -->|"s91-budgets-1"| p7
+    p7 -->|"s91-budgets-2"| p8
+    p8 -->|"s91-budgets-3"| p9
+    p10 -->|"s91-audits-1"| p11
+    p11 -->|"s91-audits-2"| p12
+    p12 -->|"s91-audits-3"| p13
+    p14 -->|"s91-alerts-1"| p15
+    p15 -->|"s91-alerts-2<br/>relationship 1"| p16
+    p16 -->|"s91-alerts-3"| p20
+    p15 -->|"s91-alerts-4<br/>relationship 2"| p17
+    p17 -->|"s91-alerts-5"| p20
+    p15 -->|"s91-alerts-6<br/>relationship 3"| p18
+    p18 -->|"s91-alerts-7"| p20
+    p15 -->|"s91-alerts-8<br/>relationship 4"| p19
+    p19 -->|"s91-alerts-9"| p20
+    p20 -->|"s91-alerts-10"| p21
+    p22 -->|"s91-devices-1"| p23
+    p23 -->|"s91-devices-2"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s91-ledger-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S92 Healthy Audits Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 4 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s92-audits-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S92 Audits Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S92 Audits Format</b><br/>UpdateAttribute"]
+    p2["<b>S92 Audits Route</b><br/>UpdateAttribute"]
+    p3["<b>S92 Audits Classify</b><br/>UpdateAttribute"]
+    p4["<b>S92 Audits Tag</b><br/>UpdateAttribute"]
+    p5["<b>S92 Audits Parse</b><br/>UpdateAttribute"]
+    p6["<b>S92 Audits Dedupe</b><br/>UpdateAttribute"]
+    p7["<b>S92 Audits Store</b><br/>UpdateAttribute"]
+    p8["<b>S92 Alerts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p9["<b>S92 Alerts Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p10["<b>S92 Alerts Lane 1</b><br/>UpdateAttribute"]
+    p11["<b>S92 Alerts Lane 2</b><br/>UpdateAttribute"]
+    p12["<b>S92 Alerts Lane 3</b><br/>UpdateAttribute"]
+    p13["<b>S92 Alerts Join Lanes</b><br/>UpdateAttribute"]
+    p14["<b>S92 Alerts Store</b><br/>UpdateAttribute"]
+    p15["<b>S92 Devices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p16["<b>S92 Devices Parse</b><br/>UpdateAttribute"]
+    p17["<b>S92 Devices Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p18["<b>S92 Devices Reject DLQ</b><br/>LogAttribute"]
+    p19["<b>S92 Devices Format</b><br/>UpdateAttribute"]
+    p20["<b>S92 Devices Store</b><br/>UpdateAttribute"]
+    p21["<b>S92 Firmware Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S92 Firmware Mask</b><br/>UpdateAttribute"]
+    p23["<b>S92 Firmware Score</b><br/>UpdateAttribute"]
+    p24["<b>S92 Firmware Store</b><br/>UpdateAttribute"]
+    p0 -->|"s92-audits-1"| p1
+    p1 -->|"s92-audits-2"| p2
+    p2 -->|"s92-audits-3"| p3
+    p3 -->|"s92-audits-4"| p4
+    p4 -->|"s92-audits-5"| p5
+    p5 -->|"s92-audits-6"| p6
+    p6 -->|"s92-audits-7"| p7
+    p8 -->|"s92-alerts-1"| p9
+    p9 -->|"s92-alerts-2<br/>relationship 1"| p10
+    p10 -->|"s92-alerts-3"| p13
+    p9 -->|"s92-alerts-4<br/>relationship 2"| p11
+    p11 -->|"s92-alerts-5"| p13
+    p9 -->|"s92-alerts-6<br/>relationship 3"| p12
+    p12 -->|"s92-alerts-7"| p13
+    p13 -->|"s92-alerts-8"| p14
+    p15 -->|"s92-devices-1"| p16
+    p16 -->|"s92-devices-2"| p17
+    p17 -->|"s92-devices-3<br/>failure"| p18
+    p17 -->|"s92-devices-4"| p19
+    p19 -->|"s92-devices-5"| p20
+    p21 -->|"s92-firmware-1"| p22
+    p22 -->|"s92-firmware-2"| p23
+    p23 -->|"s92-firmware-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s92-audits-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S93 Healthy Devices Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s93-devices-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S93 Devices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S93 Devices Parse</b><br/>UpdateAttribute"]
+    p2["<b>S93 Devices Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S93 Devices Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S93 Devices Format</b><br/>UpdateAttribute"]
+    p5["<b>S93 Devices Store</b><br/>UpdateAttribute"]
+    p6["<b>S93 Firmware Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S93 Firmware Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S93 Firmware Convert</b><br/>UpdateAttribute"]
+    p9["<b>S93 Firmware Store</b><br/>UpdateAttribute"]
+    p10["<b>S93 Meters Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p11["<b>S93 Meters Mask</b><br/>UpdateAttribute"]
+    p12["<b>S93 Meters Route</b><br/>UpdateAttribute"]
+    p13["<b>S93 Meters Format</b><br/>UpdateAttribute"]
+    p14["<b>S93 Meters Store</b><br/>UpdateAttribute"]
+    p15["<b>S93 Routes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p16["<b>S93 Routes Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p17["<b>S93 Routes Lane 1</b><br/>UpdateAttribute"]
+    p18["<b>S93 Routes Lane 2</b><br/>UpdateAttribute"]
+    p19["<b>S93 Routes Join Lanes</b><br/>UpdateAttribute"]
+    p20["<b>S93 Routes Store</b><br/>UpdateAttribute"]
+    p21["<b>S93 Drivers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S93 Drivers Parse</b><br/>UpdateAttribute"]
+    p23["<b>S93 Drivers Tag</b><br/>UpdateAttribute"]
+    p24["<b>S93 Drivers Store</b><br/>UpdateAttribute"]
+    p0 -->|"s93-devices-1"| p1
+    p1 -->|"s93-devices-2"| p2
+    p2 -->|"s93-devices-3<br/>failure"| p3
+    p2 -->|"s93-devices-4"| p4
+    p4 -->|"s93-devices-5"| p5
+    p6 -->|"s93-firmware-1"| p7
+    p7 -->|"s93-firmware-2"| p8
+    p8 -->|"s93-firmware-3"| p9
+    p10 -->|"s93-meters-1"| p11
+    p11 -->|"s93-meters-2"| p12
+    p12 -->|"s93-meters-3"| p13
+    p13 -->|"s93-meters-4"| p14
+    p15 -->|"s93-routes-1"| p16
+    p16 -->|"s93-routes-2<br/>relationship 1"| p17
+    p17 -->|"s93-routes-3"| p19
+    p16 -->|"s93-routes-4<br/>relationship 2"| p18
+    p18 -->|"s93-routes-5"| p19
+    p19 -->|"s93-routes-6"| p20
+    p21 -->|"s93-drivers-1"| p22
+    p22 -->|"s93-drivers-2"| p23
+    p23 -->|"s93-drivers-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s93-devices-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S94 Healthy Meters Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s94-meters-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S94 Meters Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S94 Meters Classify</b><br/>UpdateAttribute"]
+    p2["<b>S94 Meters Route</b><br/>UpdateAttribute"]
+    p3["<b>S94 Meters Store</b><br/>UpdateAttribute"]
+    p4["<b>S94 Routes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p5["<b>S94 Routes Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p6["<b>S94 Routes Lane 1</b><br/>UpdateAttribute"]
+    p7["<b>S94 Routes Lane 2</b><br/>UpdateAttribute"]
+    p8["<b>S94 Routes Lane 3</b><br/>UpdateAttribute"]
+    p9["<b>S94 Routes Join Lanes</b><br/>UpdateAttribute"]
+    p10["<b>S94 Routes Store</b><br/>UpdateAttribute"]
+    p11["<b>S94 Drivers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p12["<b>S94 Drivers Parse</b><br/>UpdateAttribute"]
+    p13["<b>S94 Drivers Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p14["<b>S94 Drivers Reject DLQ</b><br/>LogAttribute"]
+    p15["<b>S94 Drivers Format</b><br/>UpdateAttribute"]
+    p16["<b>S94 Drivers Store</b><br/>UpdateAttribute"]
+    p17["<b>S94 Fleet Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p18["<b>S94 Fleet Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p19["<b>S94 Fleet Convert</b><br/>UpdateAttribute"]
+    p20["<b>S94 Fleet Store</b><br/>UpdateAttribute"]
+    p21["<b>S94 Bookings Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S94 Bookings Mask</b><br/>UpdateAttribute"]
+    p23["<b>S94 Bookings Tag</b><br/>UpdateAttribute"]
+    p24["<b>S94 Bookings Store</b><br/>UpdateAttribute"]
+    p0 -->|"s94-meters-1"| p1
+    p1 -->|"s94-meters-2"| p2
+    p2 -->|"s94-meters-3"| p3
+    p4 -->|"s94-routes-1"| p5
+    p5 -->|"s94-routes-2<br/>relationship 1"| p6
+    p6 -->|"s94-routes-3"| p9
+    p5 -->|"s94-routes-4<br/>relationship 2"| p7
+    p7 -->|"s94-routes-5"| p9
+    p5 -->|"s94-routes-6<br/>relationship 3"| p8
+    p8 -->|"s94-routes-7"| p9
+    p9 -->|"s94-routes-8"| p10
+    p11 -->|"s94-drivers-1"| p12
+    p12 -->|"s94-drivers-2"| p13
+    p13 -->|"s94-drivers-3<br/>failure"| p14
+    p13 -->|"s94-drivers-4"| p15
+    p15 -->|"s94-drivers-5"| p16
+    p17 -->|"s94-fleet-1"| p18
+    p18 -->|"s94-fleet-2"| p19
+    p19 -->|"s94-fleet-3"| p20
+    p21 -->|"s94-bookings-1"| p22
+    p22 -->|"s94-bookings-2"| p23
+    p23 -->|"s94-bookings-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s94-meters-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S95 Healthy Drivers Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s95-drivers-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S95 Drivers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S95 Drivers Parse</b><br/>UpdateAttribute"]
+    p2["<b>S95 Drivers Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S95 Drivers Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S95 Drivers Format</b><br/>UpdateAttribute"]
+    p5["<b>S95 Drivers Store</b><br/>UpdateAttribute"]
+    p6["<b>S95 Fleet Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S95 Fleet Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S95 Fleet Dedupe</b><br/>UpdateAttribute"]
+    p9["<b>S95 Fleet Store</b><br/>UpdateAttribute"]
+    p10["<b>S95 Bookings Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p11["<b>S95 Bookings Mask</b><br/>UpdateAttribute"]
+    p12["<b>S95 Bookings Annotate</b><br/>UpdateAttribute"]
+    p13["<b>S95 Bookings Store</b><br/>UpdateAttribute"]
+    p14["<b>S95 Rooms Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p15["<b>S95 Rooms Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p16["<b>S95 Rooms Lane 1</b><br/>UpdateAttribute"]
+    p17["<b>S95 Rooms Lane 2</b><br/>UpdateAttribute"]
+    p18["<b>S95 Rooms Lane 3</b><br/>UpdateAttribute"]
+    p19["<b>S95 Rooms Join Lanes</b><br/>UpdateAttribute"]
+    p20["<b>S95 Rooms Store</b><br/>UpdateAttribute"]
+    p21["<b>S95 Menus Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p22["<b>S95 Menus Format</b><br/>UpdateAttribute"]
+    p23["<b>S95 Menus Parse</b><br/>UpdateAttribute"]
+    p24["<b>S95 Menus Store</b><br/>UpdateAttribute"]
+    p0 -->|"s95-drivers-1"| p1
+    p1 -->|"s95-drivers-2"| p2
+    p2 -->|"s95-drivers-3<br/>failure"| p3
+    p2 -->|"s95-drivers-4"| p4
+    p4 -->|"s95-drivers-5"| p5
+    p6 -->|"s95-fleet-1"| p7
+    p7 -->|"s95-fleet-2"| p8
+    p8 -->|"s95-fleet-3"| p9
+    p10 -->|"s95-bookings-1"| p11
+    p11 -->|"s95-bookings-2"| p12
+    p12 -->|"s95-bookings-3"| p13
+    p14 -->|"s95-rooms-1"| p15
+    p15 -->|"s95-rooms-2<br/>relationship 1"| p16
+    p16 -->|"s95-rooms-3"| p19
+    p15 -->|"s95-rooms-4<br/>relationship 2"| p17
+    p17 -->|"s95-rooms-5"| p19
+    p15 -->|"s95-rooms-6<br/>relationship 3"| p18
+    p18 -->|"s95-rooms-7"| p19
+    p19 -->|"s95-rooms-8"| p20
+    p21 -->|"s95-menus-1"| p22
+    p22 -->|"s95-menus-2"| p23
+    p23 -->|"s95-menus-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s95-drivers-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S96 Healthy Bookings Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s96-bookings-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S96 Bookings Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S96 Bookings Dedupe</b><br/>UpdateAttribute"]
+    p2["<b>S96 Bookings Score</b><br/>UpdateAttribute"]
+    p3["<b>S96 Bookings Route</b><br/>UpdateAttribute"]
+    p4["<b>S96 Bookings Store</b><br/>UpdateAttribute"]
+    p5["<b>S96 Rooms Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p6["<b>S96 Rooms Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+    p7["<b>S96 Rooms Lane 1</b><br/>UpdateAttribute"]
+    p8["<b>S96 Rooms Lane 2</b><br/>UpdateAttribute"]
+    p9["<b>S96 Rooms Lane 3</b><br/>UpdateAttribute"]
+    p10["<b>S96 Rooms Join Lanes</b><br/>UpdateAttribute"]
+    p11["<b>S96 Rooms Store</b><br/>UpdateAttribute"]
+    p12["<b>S96 Menus Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p13["<b>S96 Menus Parse</b><br/>UpdateAttribute"]
+    p14["<b>S96 Menus Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p15["<b>S96 Menus Reject DLQ</b><br/>LogAttribute"]
+    p16["<b>S96 Menus Format</b><br/>UpdateAttribute"]
+    p17["<b>S96 Menus Store</b><br/>UpdateAttribute"]
+    p18["<b>S96 Recipes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p19["<b>S96 Recipes Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p20["<b>S96 Recipes Tag</b><br/>UpdateAttribute"]
+    p21["<b>S96 Recipes Store</b><br/>UpdateAttribute"]
+    p22["<b>S96 Invoices 2 Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p23["<b>S96 Invoices 2 Classify</b><br/>UpdateAttribute"]
+    p24["<b>S96 Invoices 2 Store</b><br/>UpdateAttribute"]
+    p0 -->|"s96-bookings-1"| p1
+    p1 -->|"s96-bookings-2"| p2
+    p2 -->|"s96-bookings-3"| p3
+    p3 -->|"s96-bookings-4"| p4
+    p5 -->|"s96-rooms-1"| p6
+    p6 -->|"s96-rooms-2<br/>relationship 1"| p7
+    p7 -->|"s96-rooms-3"| p10
+    p6 -->|"s96-rooms-4<br/>relationship 2"| p8
+    p8 -->|"s96-rooms-5"| p10
+    p6 -->|"s96-rooms-6<br/>relationship 3"| p9
+    p9 -->|"s96-rooms-7"| p10
+    p10 -->|"s96-rooms-8"| p11
+    p12 -->|"s96-menus-1"| p13
+    p13 -->|"s96-menus-2"| p14
+    p14 -->|"s96-menus-3<br/>failure"| p15
+    p14 -->|"s96-menus-4"| p16
+    p16 -->|"s96-menus-5"| p17
+    p18 -->|"s96-recipes-1"| p19
+    p19 -->|"s96-recipes-2"| p20
+    p20 -->|"s96-recipes-3"| p21
+    p22 -->|"s96-invoices-2-1"| p23
+    p23 -->|"s96-invoices-2-2"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s96-bookings-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S97 Healthy Menus Group
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+25 healthy processors in 5 small flows of their own: 2 chains, one lane fan-out, one validation into a DLQ, one rate limit. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s97-menus-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S97 Menus Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S97 Menus Parse</b><br/>UpdateAttribute"]
+    p2["<b>S97 Menus Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p3["<b>S97 Menus Reject DLQ</b><br/>LogAttribute"]
+    p4["<b>S97 Menus Format</b><br/>UpdateAttribute"]
+    p5["<b>S97 Menus Store</b><br/>UpdateAttribute"]
+    p6["<b>S97 Recipes Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p7["<b>S97 Recipes Rate Limit</b><br/>ControlRate<br/>at most 600 per 1 min"]
+    p8["<b>S97 Recipes Classify</b><br/>UpdateAttribute"]
+    p9["<b>S97 Recipes Store</b><br/>UpdateAttribute"]
+    p10["<b>S97 Invoices 2 Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p11["<b>S97 Invoices 2 Enrich</b><br/>UpdateAttribute"]
+    p12["<b>S97 Invoices 2 Normalize</b><br/>UpdateAttribute"]
+    p13["<b>S97 Invoices 2 Score</b><br/>UpdateAttribute"]
+    p14["<b>S97 Invoices 2 Store</b><br/>UpdateAttribute"]
+    p15["<b>S97 Shipments 2 Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p16["<b>S97 Shipments 2 Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p17["<b>S97 Shipments 2 Lane 1</b><br/>UpdateAttribute"]
+    p18["<b>S97 Shipments 2 Lane 2</b><br/>UpdateAttribute"]
+    p19["<b>S97 Shipments 2 Join Lanes</b><br/>UpdateAttribute"]
+    p20["<b>S97 Shipments 2 Store</b><br/>UpdateAttribute"]
+    p21["<b>S97 Returns 2 Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p22["<b>S97 Returns 2 Mask</b><br/>UpdateAttribute"]
+    p23["<b>S97 Returns 2 Classify</b><br/>UpdateAttribute"]
+    p24["<b>S97 Returns 2 Store</b><br/>UpdateAttribute"]
+    p0 -->|"s97-menus-1"| p1
+    p1 -->|"s97-menus-2"| p2
+    p2 -->|"s97-menus-3<br/>failure"| p3
+    p2 -->|"s97-menus-4"| p4
+    p4 -->|"s97-menus-5"| p5
+    p6 -->|"s97-recipes-1"| p7
+    p7 -->|"s97-recipes-2"| p8
+    p8 -->|"s97-recipes-3"| p9
+    p10 -->|"s97-invoices-2-1"| p11
+    p11 -->|"s97-invoices-2-2"| p12
+    p12 -->|"s97-invoices-2-3"| p13
+    p13 -->|"s97-invoices-2-4"| p14
+    p15 -->|"s97-shipments-2-1"| p16
+    p16 -->|"s97-shipments-2-2<br/>relationship 1"| p17
+    p17 -->|"s97-shipments-2-3"| p19
+    p16 -->|"s97-shipments-2-4<br/>relationship 2"| p18
+    p18 -->|"s97-shipments-2-5"| p19
+    p19 -->|"s97-shipments-2-6"| p20
+    p21 -->|"s97-returns-2-1"| p22
+    p22 -->|"s97-returns-2-2"| p23
+    p23 -->|"s97-returns-2-3"| p24
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s97-menus-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.

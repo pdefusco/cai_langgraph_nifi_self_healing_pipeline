@@ -393,7 +393,8 @@ def test_the_scorecard_shows_the_replay(replayed):
 def test_chosen_scenarios():
     assert replay.chosen(["S19", "S01"]) == ["S01", "S19"]
     assert replay.chosen(pack_names=["p1-throughput"]) == ["S01", "S02", "S03", "S04"]
-    assert len(replay.chosen()) == len(packs.SCENARIOS) > 21     # every wave
+    assert len(replay.chosen()) == sum(len(p.scenarios) for p in packs.PACKS.values() if p.wave < 3) > 21
+    assert replay.chosen(pack_names=["p21-wide-100"]) == ["S46", "S47", "S48"]     # the third wave, by name
 
     with pytest.raises(SystemExit):
         replay.chosen(["S99"])
