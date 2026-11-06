@@ -120,7 +120,7 @@ them.
 | NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
-| NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | In progress | |
+| NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
 
 ## Open tickets
 
@@ -381,6 +381,8 @@ nothing; but on p21–p23 the filler's bulletins would bury a twin's own.
   Parse DLQ). 20/20/12/4 DLQs move in p24/p22/p21/p23; waves 1–2 are unchanged. A test checks every wave-3
   LogAttribute is WARN only in a twin's fault. README regenerated. 664 pass. Next, live: p24 to the rebuilt flow (01
   `--new-baseline`, 06 `--flow-only`), which should go Good Health.
+- 2026-11-06: live (`rebaseline_p24.py`: git-pull, 01 `--new-baseline`, 06 `--flow-only` armed in its own job
+  only, 05): p24-healthy-500 on the rebuilt flow is Good Health, the bulletin alert gone. Done.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
