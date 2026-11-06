@@ -311,6 +311,19 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   however large the pack, each sibling fault shows in its own group, and KPIs stay ≤ processors/2. `replay` with no
   `--pack`/`--scenario` now runs waves 1–2 only; wave 3 is replayed by name. Oracle on p22–p24: 5/5 detected and
   worked, controls quiet 44/44; prompt 4.4k tokens for groups of 1–20, 5.8k for 21–50, 32k for 101–250. 650 pass.
+- 2026-11-06: first LLM replay of p22–p24 with their small twins (CAI job replay-eval, nemotron-3-super-120b, 1
+  round, `--compare --twins`): 10/10 detected, controls quiet 44/44, every first proposal valid, neither decoy
+  touched. Worked 100% → 60% (S49, S52 worse; luck alone ±40 pts with 5 pairs, so within luck). S49 read the bin
+  minimum right but added tasks to S49 Batch Orders, calling Minimum Number of Entries business logic (S22 changed
+  it); S52, in a group of only 14, added tasks instead of S14's DLQ route; S50 and S09 both raised capacity
+  instead of the design's DLQ route, and both worked. Diagnose time 62 s at 4.4k prompt tokens, 141 s at 32k.
+- 2026-11-06: the same 10 over 3 rounds (llm-wave3-x3, before NFH-97, 1,550 s): 30/30 detected and worked, design
+  fix 100% on every scenario, S49 and S52 included; `--compare --twins` the same on every column, 15 pairs. With the
+  first round, the large twins worked 18/20 and the small ones 20/20: the first round's two misses were luck, not
+  size. The only invalid first proposals are one each on S52 and S14, the same mistake (a DebugFlow iteration count,
+  which is not editable), so the fault's, not the size's. Diagnose time 72 s at 4.5k prompt tokens, 24 s at 6.5k,
+  57 s at 32.6k: the shared endpoint's queue sets it, not the prompt. At 250 processors size does not measurably
+  hurt the diagnosis; NFH-97 is for the tokens, and for the 500-processor groups still to come.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
