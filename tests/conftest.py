@@ -43,6 +43,8 @@ def tenant(tmp_path, monkeypatch):
     def build(*names, history: float = 0):
         worlds._WORLD = None
         world = worlds.get_world()
+        # No wall time reaches the flows, so a slow machine polls them where a fast one does (NFH-93).
+        world.stepped = True
         client = MockClient(world)
         clients.set_client(client)
         store = db.Store(config.DB_PATH)
