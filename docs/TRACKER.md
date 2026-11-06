@@ -333,6 +333,14 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   missed: it read the intake as 1/s (the source's 2/s less the upstream queue's growth), kept 2 tasks through two
   capacity send-backs, and on the third attempt the check became a warning, as it does for a person to weigh; the
   replay approves, and the backlog grew (−96%). Diagnose time 188 s at 3.7k tokens, 214 s at 14.7k, 68 s at 32k.
+- 2026-11-06: p24-healthy-500 live on pdf110526 (`provision_packs.py p24-healthy-500`, 14:20–14:28 PST), the first
+  wave-3 pack live: the 941 KB definition imported in 31 s, the 500-processor deployment created in 166 s, KPI
+  metadata 21 s; 04 exited 1 at 42 s on chart lag as in wave 1, and 05 then found 224/224 charts, so CDF takes 224
+  flow KPIs on one deployment. EXTRA_SMALL ×1: node CPU 17–20%, 26% at most. The flow Good Health, no KPI alert, no
+  incident (0 false alarms among the 20 controls). App health with 8 deployments, ~30 min in: KPI reads late p95
+  0 s, CDP failures 0.0%, container CPU p95 1.3%, 76 CDP calls/min; poll jobs queued 6 (peak 11) and health reads
+  20 s late, both up a little since p24. The deployment itself was Concerning Health from 14:24: a WARN bulletin
+  from the filler's DLQs, which the sim does not model (NFH-98).
 
 ### NFH-97 · Feature · A prompt budget for large groups
 The prompt shows the whole incident's group: every processor with every property, and a reading for every
