@@ -78,7 +78,7 @@ them.
 | NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
 | NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | e93d361 |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
-| NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | In progress | |
+| NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Done | bd4c0cf, eaed1d0, 6aee1f8 |
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
 | NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Parked | |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
@@ -188,34 +188,6 @@ of re-drafted. The old proposal shows as superseded in History.
 - 2026-10-21: the user chose automatic, re-drafting only what an event affected, to keep tokens down. Planned, after
   NFH-54, 60 and 61.
 
-### NFH-56 · Fix · Flow definitions over 64 KB can't be read
-`get-flow-version` for nfh-p11-payments returns JSON cut at 65,535 characters, so every p11 review has no inventory
-and no p11 fix can be validated. Almost certainly server-side: cdpcli only base64-decodes the API's answer.
-p20-big-healthy will hit it too.
-- 2026-10-20: found on S28. Asked the CDF product team. Blocks p14–p20.
-- 2026-11-05: probed on se-sandbox-aws, read-only. The cut is getFlowVersion's: its decoded `flowDefinition` is
-  65,536 bytes of p11's 71,377, and cdpcli's json.loads fails on it ("Unterminated string ... (char 65535)"). The
-  stored flow is whole: the console UI's Download serves it. A console session cookie can't be minted without the
-  interactive SSO login, but the console's UI backend accepts a request signed with the CDP API key (cdpcli's own
-  signer, `Content-Type` required even on a GET). `GET <console>/dfx/api/v1/catalog/flows/versions/<id>` returns the
-  full definition, where `<id>` is the last segment of the version's `bucketIdentifier` in
-  `list-flow-definition-versions`. The DF workload token is refused there (401 "Missing scope definition").
-- 2026-11-05: built. `flow_definition` still calls `get-flow-version` first and downloads from the console only when
-  the answer was cut short or doesn't parse (`SELFHEAL_CDP_CONSOLE_URL`). The mock cuts at 64 KiB too, so p11 and
-  p20 take the fallback in tests. Live, p11 v1 reads in full, identical to `flows/out/p11-payments.json`; p9 still
-  reads through the CLI. p14–p20 no longer wait on this. The console path is the UI's backend, not a documented API,
-  so the limit stays reported to the CDF team.
-- 2026-11-05: tested at scale on se-sandbox-aws (`provision/probe_large_flows.py`; Ed25519 key, from a laptop).
-  11 versions read back exactly as imported: 60,000–65,537 bytes through the CLI, 100 KB, 500 KB, 2 MB, p11 and p20
-  through the console; a flow's v1 and v2 each read as itself. The cut is exactly the first 65,536 bytes of the file
-  as imported: a cut-off flow whose byte 65,536 is the second byte of an "é" fails with "'utf-8' codec can't decode
-  byte 0xc3 in position 65535", which the first build did not take for a cut and now does; the 65,537-byte flow lost
-  only its final newline and still parses. A cut that drops anything but trailing whitespace cannot parse, so a parse
-  failure catches every cut. A console read takes ~1 s for 500 KB (one 10 s outlier); 50 downloads each at 1, 6 and
-  12 at once ran with no errors and no throttling, 7.4/s at 12. A cut read costs 1.7–4.6 s, against ~0.9 s for one
-  that isn't. A wrong version id answers 500 "Failed to Read Vault Key", not 404. Not yet tried: from CAI (egress to
-  the console host), RSA and ECDSA keys, a least-privilege role.
-
 ### NFH-57 · Feature · Dismiss a review for a platform problem
 A review that failed for a platform reason (NFH-56) can only be rejected, which counts against the fix, becomes a past
 case and drafts a playbook edit. Add a separate outcome that closes the review without teaching or grading the agent.
@@ -289,6 +261,40 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-56 · Fix · Flow definitions over 64 KB can't be read
+`get-flow-version` for nfh-p11-payments returns JSON cut at 65,535 characters, so every p11 review has no inventory
+and no p11 fix can be validated. Almost certainly server-side: cdpcli only base64-decodes the API's answer.
+p20-big-healthy will hit it too.
+- 2026-10-20: found on S28. Asked the CDF product team. Blocks p14–p20.
+- 2026-11-05: probed on se-sandbox-aws, read-only. The cut is getFlowVersion's: its decoded `flowDefinition` is
+  65,536 bytes of p11's 71,377, and cdpcli's json.loads fails on it ("Unterminated string ... (char 65535)"). The
+  stored flow is whole: the console UI's Download serves it. A console session cookie can't be minted without the
+  interactive SSO login, but the console's UI backend accepts a request signed with the CDP API key (cdpcli's own
+  signer, `Content-Type` required even on a GET). `GET <console>/dfx/api/v1/catalog/flows/versions/<id>` returns the
+  full definition, where `<id>` is the last segment of the version's `bucketIdentifier` in
+  `list-flow-definition-versions`. The DF workload token is refused there (401 "Missing scope definition").
+- 2026-11-05: built. `flow_definition` still calls `get-flow-version` first and downloads from the console only when
+  the answer was cut short or doesn't parse (`SELFHEAL_CDP_CONSOLE_URL`). The mock cuts at 64 KiB too, so p11 and
+  p20 take the fallback in tests. Live, p11 v1 reads in full, identical to `flows/out/p11-payments.json`; p9 still
+  reads through the CLI. p14–p20 no longer wait on this. The console path is the UI's backend, not a documented API,
+  so the limit stays reported to the CDF team.
+- 2026-11-05: tested at scale on se-sandbox-aws (`provision/probe_large_flows.py`; Ed25519 key, from a laptop).
+  11 versions read back exactly as imported: 60,000–65,537 bytes through the CLI, 100 KB, 500 KB, 2 MB, p11 and p20
+  through the console; a flow's v1 and v2 each read as itself. The cut is exactly the first 65,536 bytes of the file
+  as imported: a cut-off flow whose byte 65,536 is the second byte of an "é" fails with "'utf-8' codec can't decode
+  byte 0xc3 in position 65535", which the first build did not take for a cut and now does; the 65,537-byte flow lost
+  only its final newline and still parses. A cut that drops anything but trailing whitespace cannot parse, so a parse
+  failure catches every cut. A console read takes ~1 s for 500 KB (one 10 s outlier); 50 downloads each at 1, 6 and
+  12 at once ran with no errors and no throttling, 7.4/s at 12. A cut read costs 1.7–4.6 s, against ~0.9 s for one
+  that isn't. A wrong version id answers 500 "Failed to Read Vault Key", not 404. Not yet tried: from CAI (egress to
+  the console host), RSA and ECDSA keys, a least-privilege role.
+- 2026-11-05: the same probe from CAI, as a job on the new pdf-workbench-110526 (env pdf110526-cdp-env), with the
+  project's `CDP_*` key (Ed25519, from env), no proxy, the runtime's own `SSL_CERT_FILE`: the console is reachable and
+  takes the signed request; all 11 reads exact, same paths and same cdpcli errors as from the laptop. Faster: a cut
+  read 1.7–2.2 s; 500 KB downloads p50 ~680 ms, p95 ≤ 764 ms at 1, 6 and 12 at once (one 5.9 s outlier, sequential),
+  14.7/s at 12, no errors. Other key types and a narrower role are not being tested: the app's user has CDF rights.
+  The fix is on main (bd4c0cf, eaed1d0; probe 6aee1f8).
 
 ### NFH-91 · Feature · Read-only tools the agent may call before it proposes
 In NFH-65's rounds nearly every first-try miss had one cause: the agent took a rate back pressure held down as the
