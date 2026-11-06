@@ -3,6 +3,7 @@ The offline replay (eval/replay.py): rounds of scenarios on an isolated
 mock tenant, auto-approved there only, scored like the live agent.
 """
 
+import dataclasses
 import json
 import time
 
@@ -142,6 +143,37 @@ def test_two_runs_side_by_side(replayed, tmp_path):
     assert first.startswith("valid 1st 0 better, 1 worse (S01)") and worked == "worked    nothing to compare"
     # The same first prompt (a stepped clock, NFH-84), answered differently by another model.
     assert same == "same tenant: 1 pair(s), 1 of 1 with the same prompt, and 0 of 1 of those with the same first proposal"
+
+
+def test_a_case_records_its_flow_size_and_what_it_cost(replayed):
+    run = replay.run(["S01"], oracle=True)
+    snapshot = replay.load()
+    [found] = replay.cases(snapshot)
+    built = packs.build("p1-throughput")["flowContents"]
+
+    assert snapshot["runs"][0]["trials"][0]["size"] == found["size"]
+    assert found["size"]["group"] == {"processors": 2, "connections": 1, "groups": 0}
+    assert found["size"]["deployment"]["processors"] == sum(len(g["processors"]) for g in built["processGroups"])
+    assert found["size"]["deployment"]["groups"] == len(built["processGroups"]) and found["size"]["deployment"]["bytes"]
+    assert {"gather_context", "diagnose_and_propose", "validate_proposal"} <= set(found["seconds"])
+    assert found["prompt_size"]["tokens"] > 0 and found["prompt"]           # the prompt hash is still there
+
+    lines = replay.report(snapshot, run).splitlines()
+    tier = lines[lines.index("by size (processors in the fault's group)") + 2].split()
+    assert tier[:5] == ["1-20", str(found["size"]["deployment"]["processors"]), "1", "100%", "100%"]
+
+
+def test_twins_sit_side_by_side(replayed, monkeypatch):
+    # S02 stands in for a larger flow's copy of S01 (NFH-95).
+    monkeypatch.setitem(packs.SCENARIOS, "S02", dataclasses.replace(packs.SCENARIOS["S02"], twin="S01"))
+    replay.run(["S01", "S02"], oracle=True)
+    snapshot = replay.load()
+
+    header, twin, total, shared, *_ = replay.compare(snapshot, snapshot, twins=True).splitlines()
+
+    # One row, the large flow's, its before the small twin's case: S01 has no row of its own.
+    assert twin.startswith("S02 vs S01") and twin[32:].split()[0] == "1→1" and total.startswith("all")
+    assert shared == "all: the 1 scenario(s) in both"
 
 
 def case(scenario, right):

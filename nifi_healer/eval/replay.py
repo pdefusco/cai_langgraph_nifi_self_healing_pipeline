@@ -11,6 +11,7 @@ the configured LLM, scored the way the Scorecard scores the live agent.
     python -m nifi_healer.eval.replay --trials 3 --tools       # the agent may check a fix before it proposes it
     python -m nifi_healer.eval.replay --pack p12-warehouse --fixes 3   # up to 3 fixes a fault
     python -m nifi_healer.eval.replay --compare BEFORE_DIR AFTER_DIR   # two records side by side
+    python -m nifi_healer.eval.replay --compare DIR DIR --twins        # each large-flow fault by its small twin
     python -m nifi_healer.eval.replay --show DIR --pack p8-orders     # what the agent proposed, and why
     CAI job: cai_job.py    Arguments: -m nifi_healer.eval.replay --trials 3
 
@@ -396,6 +397,75 @@ def prompt_hash(incident_id: str) -> str | None:
     return hashlib.sha1(re.sub(r"\b(INC-\d{8}-\d{6}-\w+)-[0-9a-f]{4}\b", r"\1", text).encode()).hexdigest()[:8]
 
 
+_SIZES: dict = {}   # pack name -> (its flow's counts, {group name: the group's counts})
+
+
+def _counted_flow(group: dict) -> dict:
+    """Processors, connections and process groups in a flow definition's group and every group inside it."""
+
+    found = {"processors": len(group.get("processors") or []), "connections": len(group.get("connections") or []),
+             "groups": len(group.get("processGroups") or [])}
+
+    for child in group.get("processGroups") or []:
+        for key, n in _counted_flow(child).items():
+            found[key] += n
+
+    return found
+
+
+def flow_size(scenario_id: str) -> dict:
+    """
+    How big the scenario's flow is (NFH-94): {deployment: {processors,
+    connections, groups, bytes}, group: the same for its process group,
+    bytes left out}. {} for a scenario no pack has.
+    """
+
+    scenario = packs.SCENARIOS.get(scenario_id)
+
+    if scenario is None:
+        return {}
+
+    pack = packs.pack_of(scenario_id).name
+
+    if pack not in _SIZES:
+        definition = packs.build(pack)
+        contents = definition["flowContents"]
+        _SIZES[pack] = (dict(_counted_flow(contents), bytes=len(json.dumps(definition, indent=2))),
+                        {g["name"]: _counted_flow(g) for g in contents.get("processGroups") or []})
+
+    deployment, groups = _SIZES[pack]
+
+    return {"deployment": deployment, "group": groups.get(scenario.group_name, {})}
+
+
+def _validation(proposal: dict) -> dict:
+    found = proposal.get("validation") or {}
+
+    return json.loads(found) if isinstance(found, str) else found
+
+
+def costs(snapshot: dict) -> dict:
+    """
+    {incident id: {seconds: wall seconds per graph node of its latest
+    timed run, prompt_size: the first proposal's}}, from the validation
+    reports (NFH-94); runs before NFH-94 have neither.
+    """
+
+    found = {}
+
+    for p in sorted(snapshot.get("record", {}).get("proposals") or [], key=lambda p: p["id"]):
+        report = _validation(p)
+        mine = found.setdefault(p["incident_id"], {"seconds": None, "prompt_size": None})
+
+        if report.get("timings"):
+            mine["seconds"] = report["timings"]
+
+        if report.get("prompt_size") and mine["prompt_size"] is None:
+            mine["prompt_size"] = report["prompt_size"]
+
+    return found
+
+
 def attempt(number: int, fix: int, found: dict, world, client, store) -> tuple:
     """
     Diagnose, approve and judge each of {scenario id: incident}: (the
@@ -431,12 +501,13 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
     """
     One trial of each scenario in `ids` on a fresh tenant, with up to `fixes`
     fixes each: [{round, scenario, incident, incidents, prompts, fixes,
-    cleared, control, at, world}]. `incident` is the first, and `prompts`
-    their prompt_hash; `cleared` is None unless `fixes` is above 1 (nothing
-    was watched after the fix), and for a missed fault or a control.
-    `world` is where in the day the round started, and its history: two
-    trials with the same one, on the same flows and code, saw the same
-    tenant. The faults are diagnosed and fixed a stage at a time (stages()).
+    cleared, control, at, world, size}]. `incident` is the first, and
+    `prompts` their prompt_hash; `cleared` is None unless `fixes` is above
+    1 (nothing was watched after the fix), and for a missed fault or a
+    control. `world` is where in the day the round started, and its
+    history: two trials with the same one, on the same flows and code, saw
+    the same tenant. `size` is flow_size(). The faults are diagnosed and
+    fixed a stage at a time (stages()).
     """
 
     if not _on_mock():
@@ -447,7 +518,7 @@ def trial_round(number: int, ids: list, world, client, store, detect_seconds: fl
     at = client.now()
     trials = {s: {"round": number, "scenario": s, "incident": None, "incidents": [],
                   "prompts": [], "fixes": 0, "cleared": None, "control": packs.SCENARIOS[s].family == "NONE",
-                  "at": at, "world": [(start - EPOCH) % DAY, history]}
+                  "at": at, "world": [(start - EPOCH) % DAY, history], "size": flow_size(s)}
               for s in ids}
     heard, waiting = [], list(ids)       # every incident the round's pollers opened; the scenarios with none yet
 
@@ -558,8 +629,9 @@ def _trials(snapshot: dict, since: float = 0.0) -> list:
 def cases(snapshot: dict, since: float = 0.0) -> list:
     """
     The Scorecard's cases for the replay's trials, each with its run, round,
-    fix, world and prompt hash (trial_round); the store's other incidents
-    are not.
+    fix, world, prompt hash and flow size (trial_round; a trial from before
+    NFH-94 is sized from the pack as it is now), and its costs(); the
+    store's other incidents are not.
     """
 
     trials = {}
@@ -571,7 +643,11 @@ def cases(snapshot: dict, since: float = 0.0) -> list:
             if incident:
                 trials[incident] = dict(t, fix=fix, prompt=shown[fix - 1] if fix <= len(shown) else None)
 
-    return [dict(c, **{key: trials[c["incident"]].get(key) for key in ("run", "round", "fix", "world", "prompt")})
+    spent = costs(snapshot)
+
+    return [dict(c, **{key: trials[c["incident"]].get(key) for key in ("run", "round", "fix", "world", "prompt")},
+                 size=trials[c["incident"]].get("size") or flow_size(c["scenario"]),
+                 **spent.get(c["incident"], {"seconds": None, "prompt_size": None}))
             for c in sc.cases(snapshot.get("record") or {}) if c["incident"] in trials]
 
 
@@ -617,7 +693,68 @@ def report(snapshot: dict, run: str) -> str:
         rows.append(f"cleared {seen['cleared']} of {seen['watched']} detected faults"
                     + (f", after {seen['fixes_to_clear']:g} fix(es) (median)" if seen["cleared"] else ""))
 
-    return "\n".join(rows)
+    return "\n".join(rows + by_size(found))
+
+
+# Tiers of by_size(), by processors in the fault's group: the upper bound of each.
+TIERS = (20, 50, 100, 250, 500)
+
+
+def _tier(processors: int) -> str:
+    low = 0
+
+    for high in TIERS:
+        if processors <= high:
+            return f"{low + 1}-{high}"
+
+        low = high
+
+    return f">{TIERS[-1]}"
+
+
+def _median(values) -> float | None:
+    values = [v for v in values if v is not None]
+
+    return statistics.median(values) if values else None
+
+
+def by_size(found: list) -> list:
+    """
+    The report's rows by the size of the fault's process group (NFH-94):
+    cases, valid on the first try, worked, and the medians of the
+    deployment's processors, the seconds diagnose_and_propose and the whole
+    run took, and the first prompt's tokens. Controls are left out.
+    """
+
+    tiers = {}
+
+    for c in found:
+        if not c.get("control"):
+            tiers.setdefault(_tier(((c.get("size") or {}).get("group") or {}).get("processors", 0)), []).append(c)
+
+    if not tiers:
+        return []
+
+    rows = ["", "by size (processors in the fault's group)",
+            f"{'group':<8} {'deployment':>10} {'cases':>5} {'valid 1st':>9} {'worked':>7} {'diagnose s':>10} "
+            f"{'run s':>7} {'prompt tok':>10}"]
+    order = [_tier(high) for high in TIERS] + [f">{TIERS[-1]}"]
+
+    def shown(value, form):
+        return "-" if value is None else format(value, form)
+
+    for tier in sorted(tiers, key=order.index):
+        group = tiers[tier]
+        s = sc.summarize(group)
+        deployed = _median(((c.get("size") or {}).get("deployment") or {}).get("processors") for c in group)
+        diagnose = _median((c.get("seconds") or {}).get("diagnose_and_propose") for c in group)
+        run = _median(sum(c["seconds"].values()) if c.get("seconds") else None for c in group)
+        tokens = _median((c.get("prompt_size") or {}).get("tokens") for c in group)
+        rows.append(f"{tier:<8} {shown(deployed, '.0f'):>10} {s['incidents']:>5} {_pct(s['valid_first']):>9} "
+                    f"{_pct(s['worked']):>7} {shown(diagnose, '.1f'):>10} {shown(run, '.1f'):>7} "
+                    f"{shown(tokens, ',.0f'):>10}")
+
+    return rows
 
 
 def _pct(rate) -> str:
@@ -785,7 +922,21 @@ def sameness(before: dict, after: dict, groups: dict) -> str:
             + (f", and {kept} of {len(answered)} of those with the same first proposal" if answered else ""))
 
 
-def compare(before: dict, after: dict) -> str:
+def twinned(before: list, after: list) -> tuple:
+    """
+    For `--compare --twins`: (the before cases of every small scenario a
+    larger flow's scenario is the twin of, under the larger one's id, the
+    after cases of the larger ones), so compare() sets each fault in a
+    large flow beside the same fault in its small one (NFH-95).
+    """
+
+    twins = {s.id: s.twin for s in packs.SCENARIOS.values() if s.twin}
+
+    return ([dict(c, scenario=big) for big, small in twins.items() for c in before if c["scenario"] == small],
+            [c for c in after if c["scenario"] in twins])
+
+
+def compare(before: dict, after: dict, twins: bool = False) -> str:
     """
     Two replay records side by side, per scenario and in all, as
     before→after, both graded by the Scorecard as it is now: the design
@@ -797,13 +948,23 @@ def compare(before: dict, after: dict) -> str:
     change is beyond what luck alone makes (tally()), and how alike the
     cases on the same tenant were (sameness()). Agree before a run which
     of these decides whether a change stays.
+
+    With `twins`, before is the small scenarios and after their twins in
+    larger flows (twinned()), which may both be in one record.
     """
 
     sides = [cases(snapshot or {}) for snapshot in (before, after)]
+
+    if twins:
+        sides = list(twinned(*sides))
+
     order = list(packs.SCENARIOS)
     ids = sorted({c["scenario"] for side in sides for c in side},
                  key=lambda s: (order.index(s) if s in order else len(order), s))
     titles = {c["scenario"]: c["scenario_title"] for side in sides for c in side}
+
+    if twins:
+        titles = {s: f"{s} vs {packs.SCENARIOS[s].twin} {packs.SCENARIOS[s].title}" for s in ids}
     rows = [f"{'scenario':<32}" + "".join(f" {name:>11}" for name, _ in COMPARED)]
 
     def row(name, groups):
@@ -1032,6 +1193,9 @@ def main() -> int:
                         help="fixes a fault may take: above 1, each fixed fault is watched for a new incident")
     parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"),
                         help="print two replay directories' records side by side, and run nothing")
+    parser.add_argument("--twins", action="store_true",
+                        help="with --compare: BEFORE's small scenarios beside AFTER's twins of them in larger "
+                             "flows (the same directory twice compares one run's)")
     parser.add_argument("--show", metavar="DIR",
                         help="print what the agent proposed in a replay directory's record (only --scenario "
                              "and --pack, if given), and run nothing")
@@ -1054,7 +1218,7 @@ def main() -> int:
             if snapshot is None:
                 parser.error(f"no replay record in {directory}")
 
-        print(compare(*snapshots), flush=True)
+        print(compare(*snapshots, twins=args.twins), flush=True)
 
         return 0
 

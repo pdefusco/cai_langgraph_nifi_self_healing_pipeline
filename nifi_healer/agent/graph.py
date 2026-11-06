@@ -61,14 +61,14 @@ APPLY_WORKERS = 4
 
 def build(checkpointer=None):
     graph = StateGraph(AgentState)
-    graph.add_node("propose_rollback", nodes.propose_rollback)
-    graph.add_node("gather_context", nodes.gather_context)
-    graph.add_node("retrieve_playbooks", nodes.retrieve_playbooks)
-    graph.add_node("diagnose_and_propose", nodes.diagnose_and_propose)
-    graph.add_node("validate_proposal", nodes.validate_proposal)
-    graph.add_node("critique_proposal", nodes.critique_proposal)
+
+    # The nodes that do the work are timed (NFH-94); a review waits on a person.
+    for name in ("propose_rollback", "gather_context", "retrieve_playbooks", "diagnose_and_propose",
+                 "validate_proposal", "critique_proposal"):
+        graph.add_node(name, nodes.timed(name, getattr(nodes, name)))
+
     graph.add_node("human_review", nodes.human_review)
-    graph.add_node("apply_remediation", nodes.apply_remediation)
+    graph.add_node("apply_remediation", nodes.timed("apply_remediation", nodes.apply_remediation))
     graph.add_node("record_feedback", nodes.record_feedback)
     graph.add_node("record_no_action", nodes.record_no_action)
 

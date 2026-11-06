@@ -32,3 +32,6 @@ class AgentState(TypedDict, total=False):
     result: dict             # the actions row executor.execute returned
     agent_version: str       # prompt hash + model id
     error: str               # why the run stopped early (LLM unavailable, unreadable flow)
+    timings: dict            # wall seconds per node this run, from gather_context on (nodes.timed)
+    prompt_size: dict        # the last proposal's prompt: chars, tokens, reply_chars, inventory_chars,
+                             # readings_chars

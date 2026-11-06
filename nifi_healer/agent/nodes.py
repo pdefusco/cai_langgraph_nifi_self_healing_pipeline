@@ -24,10 +24,16 @@ The store gets the durable record (proposals, reviews, actions, incident
 status) as it happens; the state carries only what the next node needs.
 Nodes read the client and store through get_client()/get_store(), so
 tests can swap both.
+
+timed() wraps the nodes that do the work: each run's wall seconds per
+node add up in the state's timings, from gather_context on, and every
+proposal's validation carries them as they stood, with the prompt's size
+(NFH-94): how a larger flow slows the agent, and how much more it reads.
 """
 
 import collections
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -43,6 +49,7 @@ from nifi_healer.cdp.client import get_client
 from nifi_healer.flow.inventory import inventory, render
 from nifi_healer.kpi import readings
 from nifi_healer.rag import drafter, memory, priors, retriever
+from nifi_healer.runtime import telemetry
 from nifi_healer.sim.world import groups_from_definition
 from nifi_healer.store.db import get_store
 
@@ -65,6 +72,40 @@ def _now() -> float:
 
 def _status(incident_id: str, status: str) -> None:
     get_store().update_incident(incident_id, _now(), status=status)
+
+
+# Where a run's timings start over: a diagnosis, again on a rediagnose, or a rollback.
+STARTS = ("gather_context", "propose_rollback")
+
+
+def timed(name: str, node):
+    """
+    `node`, adding its wall seconds to the state's timings under `name`
+    (and to App health as agent.<name>). Wall time, not the client's: the
+    replay holds the sim clock while the agent works.
+    """
+
+    def run(state: dict) -> dict:
+        started = time.perf_counter()
+        found = node(state)
+        seconds = time.perf_counter() - started
+        telemetry.record(f"agent.{name}", seconds)
+        timings = {} if name in STARTS else dict(state.get("timings") or {})
+        timings[name] = round(timings.get(name, 0.0) + seconds, 3)
+
+        return dict(found, timings=timings)
+
+    run.__name__ = name
+
+    return run
+
+
+def _size(messages: list, raw: str) -> dict:
+    """The prompt's size: characters in and out, and tokens at about four characters each."""
+
+    sent = sum(len(prompts.text_of(m)) for m in messages)
+
+    return {"chars": sent, "tokens": round(sent / 4), "reply_chars": len(raw or "")}
 
 
 # ---------------------------------------------------------------------
@@ -346,16 +387,20 @@ def diagnose_and_propose(state: dict) -> dict:
 
         return {"error": f"LLM call failed: {exc}"}
 
+    context = state["context"] or {}
+    size = dict(_size(messages, raw), inventory_chars=len(context.get("inventory") or ""),
+                readings_chars=len(context.get("readings") or ""))
+
     if proposal is None:
         log(f"{incident['id']}: attempt {attempts}: unusable reply: {error}")
 
         return {"proposal": {"diagnosis": "", "steps": [], "rationale": raw[:2000], "citations": [],
                              "confidence": 0.0, "parse_error": error},
                 "attempts": attempts, "agent_version": version, "source": "agent", "vote": vote,
-                "tool_calls": called}
+                "tool_calls": called, "prompt_size": size}
 
     return {"proposal": proposal.as_dict(), "attempts": attempts, "agent_version": version,
-            "source": "agent", "vote": vote, "tool_calls": called}
+            "source": "agent", "vote": vote, "tool_calls": called, "prompt_size": size}
 
 
 def after_diagnosis(state: dict) -> str:
@@ -370,6 +415,7 @@ def after_diagnosis(state: dict) -> str:
 def validate_proposal(state: dict) -> dict:
     client, store = get_client(), get_store()
     incident, proposal = state["incident"], dict(state["proposal"])
+    started = time.perf_counter()
 
     if proposal.get("parse_error"):
         report = {"ok": False, "problems": [f"the reply was not a usable proposal: {proposal['parse_error']}"],
@@ -385,6 +431,9 @@ def validate_proposal(state: dict) -> dict:
 
     if state.get("source") == "agent" and state.get("tool_calls"):
         report["tool_calls"] = state["tool_calls"]
+
+    if state.get("source") == "agent" and state.get("prompt_size"):
+        report["prompt_size"] = state["prompt_size"]
 
     known = {h["id"] for h in (state.get("playbooks") or []) + (state.get("memory") or [])}
     cited = list(proposal.get("citations") or [])
@@ -410,6 +459,11 @@ def validate_proposal(state: dict) -> dict:
 
     else:
         status = "VALID" if report["ok"] else "INVALID"
+
+    # The run's seconds so far, this validation's in them (timed() adds the same once it returns).
+    timings = dict(state.get("timings") or {})
+    timings["validate_proposal"] = round(timings.get("validate_proposal", 0.0) + time.perf_counter() - started, 3)
+    report["timings"] = timings
 
     for older in store.proposals(incident["id"]):
         if older["status"] in ("VALID", "INVALID", "NO_ACTION"):
@@ -486,8 +540,9 @@ def critique_proposal(state: dict) -> dict:
                     HumanMessage(content=prompts.critic_prompt(incident, state["context"], state["proposal"]))]
 
         try:
-            reply, _, error = _ask(llm.chat_model(), messages, Critique)
+            reply, raw, error = _ask(llm.chat_model(), messages, Critique)
             critique["error"] = f"unusable reply: {error}" if reply is None else ""
+            critique["prompt_size"] = _size(messages, raw)
 
         except Exception as exc:  # the endpoint, not the reply
             critique["error"] = f"LLM call failed: {exc}"

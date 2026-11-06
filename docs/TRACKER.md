@@ -116,6 +116,9 @@ them.
 | NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38, 4bd7ba4 |
 | NFH-92 | Ops | Replay every scenario: the oracle's ceiling on all 45, then an LLM baseline | In progress | |
 | NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | 8ca4244 |
+| NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
+| NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | Open | |
+| NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 
 ## Open tickets
 
@@ -258,6 +261,31 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 - 2026-10-22: re-graded with NFH-75, after-3 → after-4: design fix 25% → 50%, right value 50% → 67%, right lever
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
+
+### NFH-94 · Feature · Measure what a larger flow costs
+Every pack is small: p20, the largest, has 40 processors, and a fault group 3–23. Customers run hundreds, so before
+building larger packs (NFH-95) the app has to say where the time and the prompt go. Nothing measured it: LLM and CDP
+calls reach telemetry's per-minute p50/p95, but no graph node is timed, the prompt is known only by its hash, and a
+replay case doesn't record the size of the flow.
+- 2026-11-05: each work node of the graph is timed (`nodes.timed`; not human_review, which waits on a person) into
+  telemetry as `agent.<node>` and into the run's `timings`, which the validation report carries. The report carries
+  the proposal's prompt size too (characters, a token estimate at 4 per token, the reply, and the inventory's and
+  readings' share), and the critique its own.
+- 2026-11-06: the replay records each trial's flow size (processors, connections and groups of the deployment and of
+  the fault's group, and the deployment's bytes); its cases carry the stage timings and the first prompt's size, and
+  the report ends with a by-size block (tiers of the fault group's processors: valid 1st, worked, median diagnose and
+  run seconds, prompt tokens). A scenario's `twin` names the small scenario it copies, and `--compare DIR DIR --twins`
+  sets each beside it. 550 pass.
+
+### NFH-95 · Feature · Packs of customer-sized flows
+Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a group of ~100 processors), p22-wide-250,
+p23-siblings (~30 healthy groups beside three faulty ones), p24-healthy-500 (must stay quiet). Each fault scenario is
+the twin of a small one (same fault, design fix and traps) inside healthy filler from a deterministic generator, so
+`replay --compare --twins` separates the effect of size from that of a new fault.
+
+### NFH-96 · Feature · Nested process groups
+The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
+inventory see only a group's own processors. Needed before p25-nested.
 
 ## Closed tickets
 

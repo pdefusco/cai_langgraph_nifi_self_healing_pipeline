@@ -24,6 +24,9 @@ the control). It declares:
   detect_within      seconds from planting by which an incident should open
                      (a control: during which none should)
   clear_within       seconds after the last fix by which its KPIs are healthy
+  twin               for a fault in a customer-sized flow, the small scenario
+                     whose fault, fix and traps it copies: `replay --compare
+                     --twins` sets one beside the other
 
 A *pack* is one deployment: a root process group holding several
 scenarios, and its sizing. Its `wave` is the rollout batch it is
@@ -95,6 +98,7 @@ class Scenario:
     faults: tuple = ()
     detect_within: int = 1800
     clear_within: int = 900
+    twin: str = ""           # the small scenario this one is the fault of, in a larger flow (NFH-95)
 
     def __post_init__(self):
         if not self.kind:

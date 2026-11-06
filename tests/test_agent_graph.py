@@ -112,6 +112,23 @@ def test_approve_applies_and_outcome_improves(agent):
     assert store.incident(incident["id"])["status"] == "RESOLVED"
 
 
+def test_a_proposal_records_its_stage_timings_and_prompt_size(agent):
+    _, _, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    model = install(ScriptedLLM(proposal(S01_FIX)))
+
+    state = graph.start(incident["id"])
+    validation = store.proposals(incident["id"])[-1]["validation"]
+
+    assert {"gather_context", "retrieve_playbooks", "diagnose_and_propose", "validate_proposal"} <= set(
+        validation["timings"])
+    assert all(seconds >= 0 for seconds in validation["timings"].values())
+    size = validation["prompt_size"]
+    assert size["chars"] == sum(len(m.content) for m in model.calls[0]) and size["tokens"] == round(size["chars"] / 4)
+    assert 0 < size["inventory_chars"] < size["chars"] and size["readings_chars"] > 0
+    assert state["prompt_size"] == size
+
+
 def test_unarmed_approval_is_a_dry_run(agent, monkeypatch):
     _, client, store, incidents, install = agent("p1-throughput")
     monkeypatch.setattr(config, "ARMED", False)
