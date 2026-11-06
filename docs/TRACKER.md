@@ -119,7 +119,7 @@ them.
 | NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
 | NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
-| NFH-97 | Feature | A prompt budget: show a large group only around the fault | In progress | |
+| NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 
 ## Open tickets
 
@@ -325,6 +325,14 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   which is not editable), so the fault's, not the size's. Diagnose time 72 s at 4.5k prompt tokens, 24 s at 6.5k,
   57 s at 32.6k: the shared endpoint's queue sets it, not the prompt. At 250 processors size does not measurably
   hurt the diagnosis; NFH-97 is for the tokens, and for the 500-processor groups still to come.
+- 2026-11-06: p21–p22 with their twins, 1 round (llm-nfh97, meant for NFH-97 but by its prompt sizes run on code
+  without it: 14.7k tokens at 51–100 processors and 32k at 101–250, as unscoped). `--compare --twins`,
+  small → large: worked 60% → 80%, value 60% → 80%, valid 1st 80% → 60%, each ±20 pts luck with 5 pairs. S49, S50
+  and S46 worked as their twins did (S01 valid at once, S46 on its third try); S48 and S24 both missed, as S24 has
+  in runs before (NFH-87 to NFH-89), S48 on the right lever. S47 worked (4 tasks on its second try) where S03
+  missed: it read the intake as 1/s (the source's 2/s less the upstream queue's growth), kept 2 tasks through two
+  capacity send-backs, and on the third attempt the check became a warning, as it does for a person to weigh; the
+  replay approves, and the backlog grew (−96%). Diagnose time 188 s at 3.7k tokens, 214 s at 14.7k, 68 s at 32k.
 
 ### NFH-97 · Feature · A prompt budget for large groups
 The prompt shows the whole incident's group: every processor with every property, and a reading for every
@@ -346,7 +354,12 @@ processors is now shown only around the fault.
   101–250 32k → 4.4k, as at 1–20. Bench at 100/250/500: inventory and readings 11.6k/29.6k/59.6k → 0.47k tokens
   (S03's fault is 4 processors); scoping adds nothing measurable. 660 pass. Next: an LLM replay of p21–p22 with
   their twins, which should match the twins as llm-wave3-x3 did unscoped.
-
+- 2026-11-06: LLM replay of p21–p22 with their twins, 1 round (llm-nfh97b, CAI job replay-eval): prompt tokens
+  at 51–100 processors 14.7k → 3.7k and at 101–250 32k → 4.4k, as in the oracle and as at 1–20 (3.7k).
+  `--compare --twins`, small → large: worked 80% → 80% and value 80% → 80%, the same on every scenario; valid
+  1st 80% → 60% (S47 on its second try, S03 on its first; ±20 pts luck with 5 pairs). The one miss is the same on
+  both sides, S48 and S24, the right lever with too little. Diagnose time 113 s at 3.7k, 120 s at 3.7k, 76 s at
+  4.4k: the endpoint's queue again. A wide twin now costs what its small twin does, with no loss.
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
 inventory see only a group's own processors. Needed before p25-nested.
