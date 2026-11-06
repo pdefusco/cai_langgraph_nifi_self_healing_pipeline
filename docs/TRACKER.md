@@ -276,6 +276,16 @@ replay case doesn't record the size of the flow.
   the report ends with a by-size block (tiers of the fault group's processors: valid 1st, worked, median diagnose and
   run seconds, prompt tokens). A scenario's `twin` names the small scenario it copies, and `--compare DIR DIR --twins`
   sets each beside it. 550 pass.
+- 2026-11-06: `python -m nifi_healer.eval.bench` (also a CAI job): S03's fault as a size twin in one group of 50,
+  100, 250 and 500 processors, each alone on a fresh mock tenant, every stage the app runs timed with no LLM, plus
+  the sizes; a table, and JSON in provision/out/. Laptop, ms at 50 → 500: backfill 3 h 438 → 4,179, sim step 0.7 →
+  5.8, world save 46 → 445 (world file 0.55 → 5.3 MB), poll 26 → 161, read flow 3.9 → 29, inventory 0.3 → 16,
+  plan 12 → 156 (validate_edit 5 → 94, capacity 1.8 → 41), Monitor 1.3 → 8; everything about linear, none
+  near a second but the backfill, which the app runs once per deployment. What grows is the prompt: inventory and
+  readings 5.9k → 59.6k tokens, before playbooks, past cases, retries and samples. And the KPIs: 23 → 200, as each
+  filler flow's entry and exit gets a chart-only in/out roll-up KPI (`edge_kpis`), about 0.4 per processor, which
+  live means a 200-KPI `--kpis` argument (43 KB, a third of the 128 KiB limit) and a reading per KPI in the prompt. (The 50's provision, 500 ms,
+  is the first import's warm-up.) 569 pass.
 
 ### NFH-95 · Feature · Packs of customer-sized flows
 Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a group of ~100 processors), p22-wide-250,
