@@ -115,7 +115,7 @@ them.
 | NFH-90 | Fix | S01, S02, S07, S25 and S30 labelled at the smallest value that worked in every oracle round | Done | 0eed9a1 |
 | NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38, 4bd7ba4 |
 | NFH-92 | Ops | Replay every scenario: the oracle's ceiling on all 45, then an LLM baseline | In progress | |
-| NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | |
+| NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | 8ca4244 |
 
 ## Open tickets
 
@@ -270,7 +270,7 @@ wall clock, so the sim moved on MOCK_SPEED times the real time spent building pa
 slower CPU (the suite ran 184 s against 96 s) the poll met S04's ten-minute sawtooth above 300 instead of below it.
 - 2026-11-05: reproduced on a laptop by running time.time ×1.5–4 (fails), not by shifting the time of day (passes).
   The fixture's world is now `stepped` (NFH-84's clock: it moves only by `skip()` and `MockClient.sleep`). 547 pass,
-  also at ×3 wall time, and test_capacity at ×3 with the day shifted 0–40,000 s.
+  also at ×3 wall time, and test_capacity at ×3 with the day shifted 0–40,000 s. On main in 8ca4244.
 
 ### NFH-56 · Fix · Flow definitions over 64 KB can't be read
 `get-flow-version` for nfh-p11-payments returns JSON cut at 65,535 characters, so every p11 review has no inventory
