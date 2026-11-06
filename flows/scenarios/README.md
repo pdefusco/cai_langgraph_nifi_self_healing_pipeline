@@ -13,9 +13,9 @@ they always match what gets deployed.
 
 ## How the scenarios are built
 
-The scenarios are grouped into 20 packs. Each pack is one NiFi flow definition and one CDF DataFlow
+The scenarios are grouped into 21 packs. Each pack is one NiFi flow definition and one CDF DataFlow
 deployment, named `nfh-<pack>`, running NiFi 2.6.0 on a single EXTRA_SMALL node unless the pack is about sizing.
-Inside the flow, each of the 45 scenarios gets its own process group, named after the scenario (for
+Inside the flow, each of the 48 scenarios gets its own process group, named after the scenario (for
 example `S22 Order Merge Deadlock`). The agent works on one process group at a time, so incidents, fixes and grading
 are all per scenario.
 
@@ -124,6 +124,7 @@ scenarios, and possibly their fixes, would change.
 | p18-noisy-bursts | `nfh-p18-noisy-bursts` | EXTRA_SMALL × 1 | [S40 Bursts Within Capacity](#s40-bursts-within-capacity), [S41 Expected Rejects In The DLQ](#s41-expected-rejects-in-the-dlq) |
 | p19-daily-cycle | `nfh-p19-daily-cycle` | EXTRA_SMALL × 1 | [S42 Daily Cycle Load](#s42-daily-cycle-load), [S43 Long Idle Periods](#s43-long-idle-periods) |
 | p20-big-healthy | `nfh-p20-big-healthy` | EXTRA_SMALL × 1 | [S44 Thirty-Stage Healthy Pipeline](#s44-thirty-stage-healthy-pipeline), [S45 Busy But Sized Right](#s45-busy-but-sized-right) |
+| p21-wide-100 | `nfh-p21-wide-100` | EXTRA_SMALL × 1 | [S46 Slow Consumer in 100 Processors](#s46-slow-consumer-in-100-processors), [S47 Pipeline Bottleneck in 100 Processors](#s47-pipeline-bottleneck-in-100-processors), [S48 Fan-out Into One Task in 100 Processors](#s48-fan-out-into-one-task-in-100-processors) |
 
 ## p1-throughput: Throughput
 
@@ -2947,5 +2948,167 @@ flowchart TD
 | s45-cataloged | S45 Catalog Upload | S45 Store Upload | success | 10,000 / 1 GB |  |
 | s45-events | S45 Device Events | S45 Parse Event | success | 10,000 / 1 GB |  |
 | s45-parsed | S45 Parse Event | S45 Index Event | success | 10,000 / 1 GB |  |
+
+</details>
+
+## p21-wide-100: Wide groups of 100
+
+Deployed as `nfh-p21-wide-100` on EXTRA_SMALL × 1, in rollout wave 3.
+
+The first of the customer-sized packs. Each scenario is a fault we already have, copied from a small pack into a process group of 100 processors, where the rest of the group is healthy flows of its own that never touch the fault. The fault, the fix and the traps are the small scenario's, so the only thing that changes is how much flow the agent has to read past to find it, and comparing each one with its twin shows what size alone does to the diagnosis and to how long it takes.
+
+### S46 Slow Consumer in 100 Processors
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S01's slow consumer, renamed: S46 Source makes three FlowFiles a second and S46 Consumer, with one task on a one second schedule, moves one, so `s46-backlog` grows by two a second and passes 500 about four minutes in. Around it are 98 healthy processors in 17 small flows: chains of pass-through stages, lanes that split and join, validations that send one FlowFile in 20 to a DLQ, and rate limits far above their load. Each runs at one to three FlowFiles a second and none of them has a backlog.
+
+The fix is S01's: four tasks on the consumer, or a 300 ms schedule. The filler adds tempting distractions, the DLQs that receive a steady trickle above all, but nothing in it needs changing.
+
+Size twin of [S01 Slow Consumer](#s01-slow-consumer). Beside S01's 2 processors, 98 healthy ones in 17 small flows of their own: 5 chains, 4 lane fan-outs, 4 validations into a DLQ, 4 rate limits. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S46 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S46 Consumer</b><br/>UpdateAttribute<br/>1 task every 1 sec"]
+    p0 -->|"s46-backlog"| p1
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p1 fix
+```
+
+**How it's graded.** The alert fires when the queue `s46-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S46 Consumer. Whether a fix worked is decided by the size of the queue `s46-backlog`. The fix we grade as correct is setting the concurrent tasks on S46 Consumer to 4 or more. We also accept setting the run schedule of S46 Consumer to 300 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 2 processors, 1 connection</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S46 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `3`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S46 Consumer | UpdateAttribute | 1 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s46-backlog | S46 Source | S46 Consumer | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S47 Pipeline Bottleneck in 100 Processors
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S03's pipeline bottleneck, renamed, in a group of 100. Two FlowFiles a second go through S47 Enrich and S47 Publish, which do four a second each, and S47 Transform between them, which does one, so only `s47-to-transform` grows. The other 96 processors are healthy filler, as in S46.
+
+Three or more tasks on Transform, or a 250 ms schedule, fixes it, and adding tasks to Enrich or Publish changes nothing. In a group this size there are many more stages the agent could pick, so this is the twin that tests most directly whether it still finds the one with the backlog in front of it.
+
+Size twin of [S03 Pipeline Bottleneck](#s03-pipeline-bottleneck). Beside S03's 4 processors, 96 healthy ones in 17 small flows of their own: 5 chains, 4 lane fan-outs, 4 validations into a DLQ, 4 rate limits. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S47 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S47 Enrich</b><br/>UpdateAttribute<br/>4 tasks every 1 sec"]
+    p2["<b>S47 Transform</b><br/>UpdateAttribute<br/>1 task every 1 sec"]
+    p3["<b>S47 Publish</b><br/>UpdateAttribute<br/>4 tasks every 1 sec"]
+    p0 -->|"s47-to-enrich"| p1
+    p1 -->|"s47-to-transform"| p2
+    p2 -->|"s47-to-publish"| p3
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p2 fix
+```
+
+**How it's graded.** The alert fires when the queue `s47-to-enrich` holds more than 300 FlowFiles for a minute or when the queue `s47-to-transform` holds more than 300 FlowFiles for a minute or when the queue `s47-to-publish` holds more than 300 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s47-to-transform`. The fix we grade as correct is setting the concurrent tasks on S47 Transform to 3 or more. We also accept setting the run schedule of S47 Transform to 250 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 4 processors, 3 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S47 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `2`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S47 Enrich | UpdateAttribute | 1 sec | 4 | enabled |  |  |
+| S47 Transform | UpdateAttribute | 1 sec | 1 | enabled |  |  |
+| S47 Publish | UpdateAttribute | 1 sec | 4 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s47-to-enrich | S47 Source | S47 Enrich | success | 10,000 / 1 GB |  |
+| s47-to-transform | S47 Enrich | S47 Transform | success | 10,000 / 1 GB |  |
+| s47-to-publish | S47 Transform | S47 Publish | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S48 Fan-out Into One Task in 100 Processors
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 30 minutes of the last fix.*
+
+S24's fan-out into one task, renamed, in a group of 100. Click batches split into 100 clicks a second for a sessionizer that does 50, and the backlog fills the queues back to `s48-splits`, two hops before the cause, where the alert is. The other 90 processors, in 16 flows, are healthy filler, as in S46.
+
+The fix is S24's: three tasks on S48 Sessionize, or a 0 sec schedule. Adding tasks to S48 Parse Click, where the alert points, does nothing. With a cascade, the agent has to follow the backlog through the group, so this one shows whether a larger flow makes it lose the trail.
+
+Size twin of [S24 Fan-out Into One Task](#s24-fan-out-into-one-task). Beside S24's 10 processors, 90 healthy ones in 16 small flows of their own: 5 chains, 4 lane fan-outs, 4 validations into a DLQ, 3 rate limits. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart TD
+    p0["<b>S48 Click Batches</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S48 Split Clicks</b><br/>SplitText<br/>1 line per split"]
+    p2["<b>S48 Parse Click</b><br/>UpdateAttribute"]
+    p3["<b>S48 Drop Bots</b><br/>UpdateAttribute"]
+    p4["<b>S48 Geo Enrich</b><br/>UpdateAttribute"]
+    p5["<b>S48 Sessionize</b><br/>UpdateAttribute<br/>1 task every 20 ms"]
+    p6["<b>S48 Score Session</b><br/>UpdateAttribute"]
+    p7["<b>S48 Merge Sessions</b><br/>MergeContent<br/>500 to 1000 entries<br/>max bin age 1 min"]
+    p8["<b>S48 Compress Sessions</b><br/>CompressContent<br/>gzip level 1"]
+    p9["<b>S48 Publish Sessions</b><br/>UpdateAttribute"]
+    p0 -->|"s48-batches"| p1
+    p1 -->|"s48-splits<br/>splits"| p2
+    p2 -->|"s48-parsed"| p3
+    p3 -->|"s48-humans"| p4
+    p4 -->|"s48-to-sessionize"| p5
+    p5 -->|"s48-sessions"| p6
+    p6 -->|"s48-scored"| p7
+    p7 -->|"s48-merged<br/>merged"| p8
+    p8 -->|"s48-compressed"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p5 fix
+```
+
+**How it's graded.** The alert fires when the queue `s48-splits` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s48-to-sessionize` and FlowFiles out of S48 Sessionize. Whether a fix worked is decided by the size of the queue `s48-splits`. The fix we grade as correct is setting the concurrent tasks on S48 Sessionize to 3 or more. We also accept setting the run schedule of S48 Sessionize to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S48 Click Batches | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `2`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `51 lines` |
+| S48 Split Clicks | SplitText | 0 sec | 1 | enabled | failure, original | Line Split Count: `1`<br>Header Line Count: `1`<br>Remove Trailing Newlines: `true` |
+| S48 Parse Click | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S48 Drop Bots | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S48 Geo Enrich | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S48 Sessionize | UpdateAttribute | 20 ms | 1 | enabled |  |  |
+| S48 Score Session | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S48 Merge Sessions | MergeContent | 0 sec | 1 | enabled | failure, original | Merge Strategy: `Bin-Packing Algorithm`<br>Merge Format: `Binary Concatenation`<br>Minimum Number of Entries: `500`<br>Maximum Number of Entries: `1000`<br>Max Bin Age: `1 min`<br>Maximum number of Bins: `5` |
+| S48 Compress Sessions | CompressContent | 0 sec | 1 | enabled | failure | Mode: `compress`<br>Compression Format: `gzip`<br>Compression Level: `1` |
+| S48 Publish Sessions | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s48-batches | S48 Click Batches | S48 Split Clicks | success | 10,000 / 1 GB |  |
+| s48-splits | S48 Split Clicks | S48 Parse Click | splits | 10,000 / 1 GB |  |
+| s48-parsed | S48 Parse Click | S48 Drop Bots | success | 10,000 / 1 GB |  |
+| s48-humans | S48 Drop Bots | S48 Geo Enrich | success | 10,000 / 1 GB |  |
+| s48-to-sessionize | S48 Geo Enrich | S48 Sessionize | success | 10,000 / 1 GB |  |
+| s48-sessions | S48 Sessionize | S48 Score Session | success | 10,000 / 1 GB |  |
+| s48-scored | S48 Score Session | S48 Merge Sessions | success | 10,000 / 1 GB |  |
+| s48-merged | S48 Merge Sessions | S48 Compress Sessions | merged | 10,000 / 1 GB |  |
+| s48-compressed | S48 Compress Sessions | S48 Publish Sessions | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S48 Parse Click to 4.
+- Setting the concurrent tasks on S48 Split Clicks to 2.
 
 </details>

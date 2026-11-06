@@ -16,7 +16,7 @@ from flows.scenarios import (p1_throughput, p2_backpressure, p3_errors, p4_datal
                              p5_parameters, p6_p7_sizing, p8_orders, p9_clickstream,
                              p10_iot, p11_payments, p12_warehouse, p13_billing, p14_capacity,
                              p15_bursts, p16_slow_burn, p17_nightly_batch, p18_noisy_bursts,
-                             p19_daily_cycle, p20_big_healthy)
+                             p19_daily_cycle, p20_big_healthy, p21_wide_100)
 
 PACKS = {
     pack.name: pack
@@ -41,6 +41,7 @@ PACKS = {
         p18_noisy_bursts.PACK,
         p19_daily_cycle.PACK,
         p20_big_healthy.PACK,
+        p21_wide_100.PACK,
     )
 }
 

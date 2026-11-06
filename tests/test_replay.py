@@ -164,8 +164,9 @@ def test_a_case_records_its_flow_size_and_what_it_cost(replayed):
 
 
 def test_twins_sit_side_by_side(replayed, monkeypatch):
-    # S02 stands in for a larger flow's copy of S01 (NFH-95).
-    monkeypatch.setitem(packs.SCENARIOS, "S02", dataclasses.replace(packs.SCENARIOS["S02"], twin="S01"))
+    # S02 stands in for a larger flow's copy of S01 (NFH-95), and is the only one.
+    for s in packs.SCENARIOS.values():
+        monkeypatch.setitem(packs.SCENARIOS, s.id, dataclasses.replace(s, twin="S01" if s.id == "S02" else ""))
     replay.run(["S01", "S02"], oracle=True)
     snapshot = replay.load()
 

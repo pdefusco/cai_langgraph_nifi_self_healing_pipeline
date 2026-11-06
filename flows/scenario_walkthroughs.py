@@ -102,6 +102,13 @@ PACKS = {
         The last controls are the biggest and busiest flows in the set. S44 is a 30-processor pipeline that uses
         most of the patterns from the other packs, and S45 keeps the CPU busy all day without being undersized.
     """,
+    "p21-wide-100": """
+        The first of the customer-sized packs. Each scenario is a fault we already have, copied from a small pack
+        into a process group of 100 processors, where the rest of the group is healthy flows of its own that never
+        touch the fault. The fault, the fix and the traps are the small scenario's, so the only thing that changes
+        is how much flow the agent has to read past to find it, and comparing each one with its twin shows what
+        size alone does to the diagnosis and to how long it takes.
+    """,
 }
 
 WALKTHROUGHS = {
@@ -683,5 +690,33 @@ WALKTHROUGHS = {
         High CPU on its own isn't a fault. A bigger node would cost more and change nothing, and a lower
         compression level would cut CPU at the price of bigger archives that nobody asked for. The alert is at
         85% for five minutes, and it shouldn't fire.
+    """,
+    "S46": """
+        S01's slow consumer, renamed: S46 Source makes three FlowFiles a second and S46 Consumer, with one task on
+        a one second schedule, moves one, so `s46-backlog` grows by two a second and passes 500 about four
+        minutes in. Around it are 98 healthy processors in 17 small flows: chains of pass-through stages, lanes
+        that split and join, validations that send one FlowFile in 20 to a DLQ, and rate limits far above their
+        load. Each runs at one to three FlowFiles a second and none of them has a backlog.
+
+        The fix is S01's: four tasks on the consumer, or a 300 ms schedule. The filler adds tempting distractions,
+        the DLQs that receive a steady trickle above all, but nothing in it needs changing.
+    """,
+    "S47": """
+        S03's pipeline bottleneck, renamed, in a group of 100. Two FlowFiles a second go through S47 Enrich and
+        S47 Publish, which do four a second each, and S47 Transform between them, which does one, so only
+        `s47-to-transform` grows. The other 96 processors are healthy filler, as in S46.
+
+        Three or more tasks on Transform, or a 250 ms schedule, fixes it, and adding tasks to Enrich or Publish
+        changes nothing. In a group this size there are many more stages the agent could pick, so this is the
+        twin that tests most directly whether it still finds the one with the backlog in front of it.
+    """,
+    "S48": """
+        S24's fan-out into one task, renamed, in a group of 100. Click batches split into 100 clicks a second for
+        a sessionizer that does 50, and the backlog fills the queues back to `s48-splits`, two hops before the
+        cause, where the alert is. The other 90 processors, in 16 flows, are healthy filler, as in S46.
+
+        The fix is S24's: three tasks on S48 Sessionize, or a 0 sec schedule. Adding tasks to S48 Parse Click,
+        where the alert points, does nothing. With a cascade, the agent has to follow the backlog through the
+        group, so this one shows whether a larger flow makes it lose the trail.
     """,
 }

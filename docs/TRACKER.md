@@ -117,7 +117,7 @@ them.
 | NFH-92 | Ops | Replay every scenario: the oracle's ceiling on all 45, then an LLM baseline | In progress | |
 | NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | 8ca4244 |
 | NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
-| NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | Open | |
+| NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 
 ## Open tickets
@@ -282,6 +282,14 @@ Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a gr
 p23-siblings (~30 healthy groups beside three faulty ones), p24-healthy-500 (must stay quiet). Each fault scenario is
 the twin of a small one (same fault, design fix and traps) inside healthy filler from a deterministic generator, so
 `replay --compare --twins` separates the effect of size from that of a new fault.
+- 2026-11-06: `flows/scenarios/scale.py`: `twin(small, id, processors=N)` copies a scenario under a new id (its
+  processors, connections, KPIs, fixes and traps renamed S01→S46, s01-→s46-) and fills its group to N with healthy
+  flows of its own (chains, DistributeLoad lanes, DebugFlow 1-in-20 into a DLQ, ControlRate far above load; 1–3/s
+  each), seeded by the id. p21-wide-100 (wave 3): S46/S47/S48, twins of S01/S03/S24, 100 processors a group, 300 in
+  all, 126 KPIs, 554 KB. In the sim each twin shows at the same poll with the same readings as its twin, and its
+  design, acceptable and wrong fixes do what the twin's do (tests/test_large_flows.py); the README draws only the
+  fault's part. Oracle replay 3/3 worked; against the twins (`--compare --twins`) the same on every column, prompt
+  3.7k → 14.7k tokens (×4), replay wall time 3.6 s → 13.1 s. 568 pass.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the

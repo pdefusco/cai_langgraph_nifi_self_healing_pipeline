@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flows import packs  # noqa: E402
 from flows.builder.lib import ProcessGroup  # noqa: E402
 from flows.scenario_walkthroughs import PACKS, WALKTHROUGHS  # noqa: E402
+from flows.scenarios import scale  # noqa: E402
 from nifi_healer.actions import catalog  # noqa: E402
 from nifi_healer.eval import scorecard  # noqa: E402
 
@@ -570,12 +571,17 @@ def paragraphs(text: str) -> list:
 
 
 def scenario(s) -> list:
+    # A size twin is drawn and tabled without its filler, which one sentence sums up.
     group = ProcessGroup(s.id, s.group_name)
-    s.build(group)
+    (s.build.core if s.twin else s.build)(group)
     out = [f"### {s.id} {s.title}", "", meta(s), ""]
 
     for paragraph in paragraphs(WALKTHROUGHS[s.id]):
         out += [paragraph, ""]
+
+    if s.twin:
+        out += [f"Size twin of [{packs.SCENARIOS[s.twin].group_name}](#{anchor(packs.SCENARIOS[s.twin])}). "
+                + scale.summary(s) + " The diagram and tables show the fault's part only.", ""]
 
     out += diagram(s, group) + ["", f"**How it's graded.** {grading(s)}", "",
                                 "<details>",
