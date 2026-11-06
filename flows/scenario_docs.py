@@ -69,9 +69,10 @@ We only use processors that ship with NiFi, and nothing talks to a real outside 
 pipeline is done by UpdateAttribute processors that pass FlowFiles straight through, and a sink is usually an
 UpdateAttribute with its success relationship auto-terminated. Where we need something to fail we use a DebugFlow,
 which cycles through a fixed number of successes and failures, so a validator set to 19 and 1 fails exactly one
-FlowFile in 20. Dead-letter queues are LogAttribute processors logging at WARN. When nothing is routed to a DLQ yet we
-leave it disabled, because NiFi treats an enabled processor that needs input but has no incoming connection as
-invalid.
+FlowFile in 20. Dead-letter queues are LogAttribute processors logging at WARN, so each FlowFile they receive is a
+bulletin. The healthy filler of the large packs (p21–p24) rejects one in 20 by design, so its DLQs log at INFO: a
+bulletin there would show the deployment as Concerning Health. When nothing is routed to a DLQ yet we leave it
+disabled, because NiFi treats an enabled processor that needs input but has no incoming connection as invalid.
 
 For HTTP failures we point InvokeHTTP at one of two addresses. `10.255.255.1` isn't routable, so a connection attempt
 just hangs until the timeout. Nothing listens on `localhost:9999`, so calls there are refused straight away. S17's

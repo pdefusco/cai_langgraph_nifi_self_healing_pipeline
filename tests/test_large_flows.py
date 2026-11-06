@@ -17,7 +17,7 @@ import pytest
 
 from flows import packs
 from flows.build_all import check_pack
-from flows.builder.lib import ProcessGroup, check
+from flows.builder.lib import ProcessGroup, check, iter_processors
 from flows.scenarios import scale
 from flows.scenarios.base import action
 from nifi_healer.kpi import detectors
@@ -104,6 +104,25 @@ def test_the_filler_fills_the_group_and_never_touches_the_fault(scenario):
 
     for c in group.connections:
         assert (c["source"]["name"] in names) == (c["destination"]["name"] in names), c["name"]
+
+
+@pytest.mark.parametrize("name", WAVE_3)
+def test_only_the_faults_dlqs_raise_bulletins(name):
+    # A WARN bulletin is Concerning Health in CDF: the filler's DLQs, which
+    # reject one in 20 by design, log at INFO; a twin's own DLQs at WARN, as its twin's do (NFH-98).
+    faults = set()
+
+    for scenario in packs.PACKS[name].scenarios:
+        if scenario.twin:
+            core = ProcessGroup(scenario.id, scenario.group_name)
+            scenario.build.core(core)
+            faults |= {p["name"] for p in core.processors.values()}
+
+    levels = {p["name"]: p["properties"]["Log Level"] for _, _, p in iter_processors(packs.build(name))
+              if p["type"].endswith(".LogAttribute")}
+
+    assert any(level == "info" for level in levels.values())
+    assert levels == {n: "warn" if n in faults else "info" for n in levels}
 
 
 @pytest.mark.parametrize("scenario", TWINS, ids=lambda s: s.id)

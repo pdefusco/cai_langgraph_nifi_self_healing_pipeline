@@ -16,7 +16,8 @@ other packs:
 
   chain     a source, a few pass-through stages and a sink
   lanes     a DistributeLoad over two to four lanes that join again
-  validate  a DebugFlow that fails 1 in 20 into a connected DLQ
+  validate  a DebugFlow that fails 1 in 20 into a connected DLQ, which
+            logs at INFO: a WARN bulletin would be Concerning Health
   rate      a ControlRate far above its load
 
 Each source makes one to three 1 KB FlowFiles a second, far inside the
@@ -281,7 +282,8 @@ def _validate(flow, size, rng) -> None:
     gen = flow.source(rng)
     parse = flow.place(stage, "parse", "Parse", period="0 sec")
     check = flow.place(debug_flow, "check", "Check", successes=19, failures=1, period="0 sec", tasks=1)
-    reject = flow.place(lambda pg, key, name: dlq(pg, name, key=key), "dlq", "Reject DLQ")
+    # At INFO: a healthy reject rate is no bulletin, so the deployment stays Good Health (NFH-98).
+    reject = flow.place(lambda pg, key, name: dlq(pg, name, key=key, level="info"), "dlq", "Reject DLQ")
     fmt = flow.place(stage, "format", "Format", period="0 sec")
     flow.connect(gen, parse)
     flow.connect(parse, check)

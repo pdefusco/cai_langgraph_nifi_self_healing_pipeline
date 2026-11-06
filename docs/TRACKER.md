@@ -120,6 +120,7 @@ them.
 | NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
+| NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | In progress | |
 
 ## Open tickets
 
@@ -368,6 +369,19 @@ processors is now shown only around the fault.
   1st 80% → 60% (S47 on its second try, S03 on its first; ±20 pts luck with 5 pairs). The one miss is the same on
   both sides, S48 and S24, the right lever with too little. Diagnose time 113 s at 3.7k, 120 s at 3.7k, 76 s at
   4.4k: the endpoint's queue again. A wide twin now costs what its small twin does, with no loss.
+
+### NFH-98 · Fix · The large packs' filler raises WARN bulletins
+Live, p24-healthy-500 (controls only) was Concerning Health from a minute after it started: an active "Warning Or
+Error Bulletin", from LogAttribute dumps of FlowFile attributes. The filler's validate flows reject one FlowFile in 20
+into a DLQ by design, and every DLQ is `common.dlq()`, a LogAttribute at WARN, so each reject is a bulletin: 20
+groups, a steady trickle, and CDF's health could never change. The app reads KPIs, not bulletins, so it opened
+nothing; but on p21–p23 the filler's bulletins would bury a twin's own.
+- 2026-11-06: `common.dlq(level=)`, "warn" by default; the filler's Reject DLQs log at "info", so a healthy reject
+  rate is no bulletin, and a twin's own DLQs stay at WARN as its twin's do (S49 Unparsed DLQ, S50 DLQ, S52 DLQ, S53
+  Parse DLQ). 20/20/12/4 DLQs move in p24/p22/p21/p23; waves 1–2 are unchanged. A test checks every wave-3
+  LogAttribute is WARN only in a twin's fault. README regenerated. 664 pass. Next, live: p24 to the rebuilt flow (01
+  `--new-baseline`, 06 `--flow-only`), which should go Good Health.
+
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
 inventory see only a group's own processors. Needed before p25-nested.

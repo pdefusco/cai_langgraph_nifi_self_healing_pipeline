@@ -53,7 +53,7 @@ def sink(pg: ProcessGroup, key: str, name: str, *, period: str = "1 sec", tasks:
                  scheduled_state=scheduled_state)
 
 
-def dlq(pg: ProcessGroup, name: str, *, connected: bool = True, key: str = "dlq") -> dict:
+def dlq(pg: ProcessGroup, name: str, *, connected: bool = True, key: str = "dlq", level: str = "warn") -> dict:
     """
     A dead-letter sink: LogAttribute, so a dead-lettered FlowFile leaves a
     log line with its attributes and does not fill a queue forever.
@@ -62,10 +62,14 @@ def dlq(pg: ProcessGroup, name: str, *, connected: bool = True, key: str = "dlq"
     the same group, with "DLQ" in its name. An unconnected DLQ is
     DISABLED, because NiFi marks an enabled processor with no upstream
     connection invalid; the action enables it when it connects it.
+
+    At WARN each FlowFile it logs is a bulletin, which CDF shows as
+    Concerning Health; a healthy flow that rejects a few by design logs
+    at "info" (NFH-98).
     """
 
     return pg.processor(
-        key, name, "LogAttribute", {"Log Level": "warn"},
+        key, name, "LogAttribute", {"Log Level": level},
         period="0 sec", tasks=1, auto_terminate=("success",),
         scheduled_state="ENABLED" if connected else "DISABLED",
     )
