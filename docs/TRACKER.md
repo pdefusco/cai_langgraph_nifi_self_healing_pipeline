@@ -73,14 +73,14 @@ them.
 | NFH-48 | Pack | p19-daily-cycle: S42–S43 (control) | Built | d8b6da4 |
 | NFH-49 | Pack | p20-big-healthy: S44–S45 (control) | Built | d8b6da4 |
 | NFH-50 | Ops | Phase 4 M6: live rollout and the review pass | In progress | |
-| NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | In progress | f9b7a34 |
+| NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | Done | f9b7a34, a9e2d0a |
 | NFH-52 | Feature | Scorecard refreshes when its tab opens | Parked | |
 | NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
 | NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | e93d361 |
 | NFH-55 | Feature | Refresh waiting reviews automatically when something that affects them changes | Planned | |
 | NFH-56 | Fix | Flow definitions over 64 KB can't be read (p11, p20) | Done | bd4c0cf, eaed1d0, 6aee1f8 |
 | NFH-57 | Feature | "Dismiss: platform problem" for a review that failed for reasons other than the diagnosis | Parked | |
-| NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | In progress | |
+| NFH-58 | Feature | A form instead of JSON for editing a proposal's steps | Done | a9e2d0a |
 | NFH-59 | Fix | Credit the first fix of a two-fault scenario by the KPI it targeted | Parked | |
 | NFH-60 | Feature | Capacity arithmetic in the agent's prompt | Done | 8e7325a |
 | NFH-61 | Feature | Validation checks a tasks or run-schedule change against the intake, and sends a short one back | Done | 2ee434c |
@@ -187,6 +187,7 @@ cosmetic and id fields behind "show all fields". Display only.
   gone; the diff stays on the proposal's validation report, where the executor checks it. A plan without sentences lists its diff
   as path: before → after. Reviews drafted before the restart keep the sentences they were drafted with
   (`schedulingPeriod '1 sec' -> '250 ms'`); new ones read the new way.
+- 2026-11-06: the user pulled, restarted and validated it live. Done.
 
 ### NFH-52 · Feature · Scorecard refreshes when its tab opens
 The Scorecard renders only on page load and on its own Refresh button.
@@ -224,6 +225,7 @@ JSON".
   names come from the whole group's inventory, recorded at diagnosis (`context["targets"]`), so the form costs no
   CDF read; a review drafted before this offers only the names its steps hold, and any name can be typed.
   **Submit edit** re-validates the form's steps.
+- 2026-11-06: the user pulled, restarted and validated it live. Done.
 
 ### NFH-59 · Fix · Credit a two-fault first fix by its own KPI
 S32 needs a parameter fix and then a flow edit, so two proposals. The outcome check judges the first by every KPI that
