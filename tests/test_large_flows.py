@@ -17,7 +17,7 @@ import pytest
 
 from flows import packs
 from flows.build_all import check_pack
-from flows.builder.lib import ProcessGroup, check, iter_processors
+from flows.builder.lib import ProcessGroup, check, iter_processors, walk_groups
 from flows.scenarios import scale
 from flows.scenarios.base import action
 from nifi_healer.kpi import detectors
@@ -99,11 +99,14 @@ def test_the_filler_fills_the_group_and_never_touches_the_fault(scenario):
     names = {p["name"] for p in core.processors.values()}
     target = scenario.build.processors
 
-    assert 0.95 * target <= len(group.processors) <= target
-    assert scenario.build.shapes and (target < 50 or len(set(scenario.build.shapes)) == len(scale.SHAPES))
+    assert 0.95 * target <= scale.count(group) <= target
+    assert scenario.build.shapes and (target < 50 or set(scale.SHAPES) <= set(scenario.build.shapes))
 
-    for c in group.connections:
+    # Nested (NFH-96): the fault is in the deepest group, and a crossing runs into each group below the top.
+    for c in (c for _, inner in walk_groups(group.to_dict()) for c in inner.get("connections") or []):
         assert (c["source"]["name"] in names) == (c["destination"]["name"] in names), c["name"]
+
+    assert scenario.build.shapes.count("crossing") == getattr(scenario.build, "depth", 1) - 1
 
 
 @pytest.mark.parametrize("name", WAVE_3)

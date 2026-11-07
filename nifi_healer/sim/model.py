@@ -10,6 +10,9 @@ groups.
 Validity follows NiFi: an enabled processor with an unhandled
 relationship, a required input that is not connected, or a broken
 property never starts. It is listed in `problems` and does not run.
+
+Input and output ports, the ways between a group and the groups in it,
+are compiled as processors that pass everything on (`PORTS`).
 """
 
 import json
@@ -31,6 +34,10 @@ _DURATION_UNITS = {
 _SIZE_UNITS = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3, "tb": 1024 ** 4}
 
 _PARAMETER = re.compile(r"#\{([^}]+)\}")
+
+# Ports are compiled as processors of these kinds: what reaches one goes
+# on through its connections, which select no relationship ("").
+PORTS = ("INPUT_PORT", "OUTPUT_PORT")
 
 
 def parse_duration(text, default: float = 0.0) -> float:
@@ -103,8 +110,12 @@ class Proc:
         return self.enabled and not self.problems
 
     @property
+    def is_port(self) -> bool:
+        return self.kind in PORTS
+
+    @property
     def is_source(self) -> bool:
-        return self.kind in ("GenerateFlowFile", "ListenHTTP") or not self.inputs
+        return self.kind in ("GenerateFlowFile", "ListenHTTP") or not (self.inputs or self.is_port)
 
 
 @dataclass
@@ -166,6 +177,15 @@ def compile_flow(definition: dict, parameters: dict | None = None) -> Model:
                 yield_seconds=parse_duration(raw.get("yieldDuration"), 1.0),
             )
 
+        for raw in (group.get("inputPorts") or []) + (group.get("outputPorts") or []):
+            processors[raw["identifier"]] = Proc(
+                id=raw["identifier"], name=raw.get("name") or "", kind=raw["type"],
+                group=group["identifier"], group_name=group.get("name") or "", properties={},
+                period=0.0, cron=None, tasks=1, enabled=raw.get("scheduledState") != "DISABLED",
+                execution_node="ALL", auto_terminated=set(), retried=set(), retry_count=0,
+                backoff="PENALIZE_FLOWFILE", max_backoff=0.0, penalty=0.0, yield_seconds=0.0,
+            )
+
     connections = {}
 
     for _, group, raw in iter_connections(definition):
@@ -187,7 +207,7 @@ def compile_flow(definition: dict, parameters: dict | None = None) -> Model:
             processors[conn.destination].inputs.append(conn.id)
 
         if conn.source in processors:
-            for rel in conn.relationships:
+            for rel in conn.relationships if not processors[conn.source].is_port else [""]:
                 processors[conn.source].outputs.setdefault(rel, []).append(conn.id)
 
     problems = []
@@ -202,6 +222,12 @@ def compile_flow(definition: dict, parameters: dict | None = None) -> Model:
 
 
 def _validate(proc: Proc, processors: dict) -> None:
+    if proc.is_port:
+        if proc.enabled and not (proc.inputs and proc.outputs):
+            proc.problems.append("port is not connected on both sides")
+
+        return
+
     spec = PROCESSORS.get(proc.kind)
 
     if spec is None:

@@ -41,7 +41,7 @@ import statistics
 
 import config
 from flows import packs
-from flows.builder.lib import ProcessGroup
+from flows.builder.lib import ProcessGroup, walk_groups
 from nifi_healer.actions import catalog
 from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import settled
@@ -80,14 +80,27 @@ GROUPINGS = {
 }
 
 
+def _name(target) -> str:
+    """A target's name: "Sub/Name" is Name."""
+
+    return str(target or "").rsplit("/", 1)[-1]
+
+
 def step_key(step: dict) -> tuple:
-    """A step's identity; a relationship may be one or a list of them, in any order."""
+    """
+    A step's identity; a relationship may be one or a list of them, in any
+    order, and a target named by its path, "Sub/Name", is its name (names
+    are unique in a pack, NFH-96).
+    """
 
     def part(field):
         if field == "relationship":
             return tuple(catalog.relationships_of(step))
 
         value = step.get(field)
+
+        if field == "target" and isinstance(value, str):
+            value = _name(value)
 
         return "" if value in (None, "") else str(value)
 
@@ -112,7 +125,7 @@ def _processors(scenario_id: str) -> dict:
     group = ProcessGroup(scenario.id, scenario.group_name)
     scenario.build(group)
 
-    return {p["name"]: p for p in group.processors.values()}
+    return {p["name"]: p for _, inner in walk_groups(group.to_dict()) for p in inner.get("processors") or []}
 
 
 def _size(step: dict, now: tuple) -> tuple:
@@ -142,7 +155,7 @@ def direction(ref: dict, scenario=None) -> int:
 
         return -1 if wanted[0] < now[0] or wanted[1] < now[1] else 1
 
-    processor = _processors(getattr(scenario, "id", "")).get(ref.get("target"), {})
+    processor = _processors(getattr(scenario, "id", "")).get(_name(ref.get("target")), {})
     now, wanted = catalog.magnitude(processor.get(_DEPLOYED.get(kind))), catalog.magnitude(ref.get("value"))
 
     if now is None or wanted is None or now == wanted:
@@ -179,7 +192,7 @@ def reaches(step: dict, ref: dict, scenario=None) -> bool:
 
     if kind == "ROUTE_RELATIONSHIP_TO_DLQ":
         # The right relationships to another stage's DLQ save the data where nobody looks for it.
-        return step.get("dlq") == ref.get("dlq")
+        return _name(step.get("dlq")) == _name(ref.get("dlq"))
 
     return True
 

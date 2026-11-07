@@ -193,7 +193,7 @@ class OracleLLM:
         if prompts.CRITIC_SYSTEM in text:  # the design fix agrees with the evidence
             return type("Reply", (), {"content": json.dumps({"objections": []})})()
 
-        found = re.search(r"\b(INC-[\d-]+-(S\d\d)-\w+)", text)
+        found = re.search(r"\b(INC-[\d-]+-(S\d{2,3})-\w+)", text)
         scenario = packs.SCENARIOS.get(found.group(2)) if found else None
         reply = {"diagnosis": f"the design fault of {scenario.title if scenario else 'an unknown scenario'}",
                  "root_cause_component": "", "steps": self.steps(scenario, found.group(1)) if scenario else
@@ -676,7 +676,7 @@ def detection(snapshot: dict, since: float = 0.0) -> dict:
 
     return {"runs": len({t["run"] for t in trials}), "faults": len(faults),
             "detected": sum(bool(t["incident"]) for t in faults),
-            "missed": sorted({t["scenario"] for t in faults if not t["incident"]}),
+            "missed": sorted({t["scenario"] for t in faults if not t["incident"]}, key=packs.by_id),
             "controls": len(controls), "quiet": sum(not t["incident"] for t in controls),
             "watched": len(watched), "cleared": len(cleared),
             "fixes_to_clear": statistics.median(cleared) if cleared else None}
@@ -1026,7 +1026,7 @@ def show(snapshot: dict, ids=()) -> str:
 
     rows = []
 
-    for case in sorted(cases(snapshot), key=lambda c: (c["scenario"], c["round"])):
+    for case in sorted(cases(snapshot), key=lambda c: (packs.by_id(c["scenario"]), c["round"])):
         if ids and case["scenario"] not in ids:
             continue
 

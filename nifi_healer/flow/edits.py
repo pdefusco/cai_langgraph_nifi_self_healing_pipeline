@@ -7,7 +7,8 @@ Catalog steps applied to a flow definition, deterministically.
 
 Only FLOW_EDIT steps are handled here (parameters and sizing are not in
 the flow). Every edit works on a copy, touches only the incident's
-process group, and must change something: a step that is already true
+process group and the groups inside it (a target is found in any of
+them by name, or by its path, "Sub/Name"), and must change something: a step that is already true
 of the flow is an error, so a proposal cannot pass review by doing
 nothing. Component identifiers are kept, so KPIs (keyed by component
 id) and queued FlowFiles survive the version change.
@@ -27,7 +28,7 @@ import json
 from flows.builder.lib import check, component_id, walk_groups
 from flows.builder.processors import kind_of, relationships
 from nifi_healer.actions import catalog
-from nifi_healer.flow.inventory import editable_properties, find_group
+from nifi_healer.flow.inventory import editable_properties, find_group, subgroups
 from nifi_healer.sim.model import compile_flow
 
 
@@ -35,24 +36,50 @@ class EditError(ValueError):
     """A step that cannot be applied to this flow."""
 
 
+def _find(group: dict, name: str, kind: str) -> tuple:
+    """
+    (the group it is in, the processor or connection named `name`) in
+    `group` or a group inside it; `name` may be a path below `group`,
+    "Sub/Name", when a bare name is in more than one of them.
+    """
+
+    found, known = [], []
+
+    for path, inner in subgroups(group):
+        for item in inner.get(kind) or []:
+            if kind == "connections" and not item.get("name"):
+                continue
+
+            full = f"{path}/{item.get('name') or ''}" if path else item.get("name") or ""
+            known.append(full)
+
+            if item.get("name") == name or full == name:
+                found.append((full, inner, item))
+
+    if len(found) == 1:
+        return found[0][1], found[0][2]
+
+    noun = kind[:-1]
+
+    if found:
+        raise EditError(f"{name!r} names more than one {noun} in {group.get('name')!r}: "
+                        f"{', '.join(sorted(f[0] for f in found))}; name one by its path")
+
+    raise EditError(f"no {noun} named {name!r} in {group.get('name')!r} ({kind}: {', '.join(sorted(known))})")
+
+
 def _processor(group: dict, name: str) -> dict:
-    for processor in group.get("processors") or []:
-        if processor.get("name") == name:
-            return processor
-
-    names = ", ".join(sorted(p.get("name") or "" for p in group.get("processors") or []))
-
-    raise EditError(f"no processor named {name!r} in {group.get('name')!r} (processors: {names})")
+    return _find(group, name, "processors")[1]
 
 
 def _connection(group: dict, name: str) -> dict:
-    for connection in group.get("connections") or []:
-        if connection.get("name") == name:
-            return connection
+    return _find(group, name, "connections")[1]
 
-    names = ", ".join(sorted(c.get("name") for c in group.get("connections") or [] if c.get("name")))
 
-    raise EditError(f"no connection named {name!r} in {group.get('name')!r} (connections: {names})")
+def _path(top: dict, group: dict) -> str:
+    """`group` as shown in the inventory: its path below `top`, or `top`'s name."""
+
+    return next((path for path, inner in subgroups(top) if inner is group), "") or top.get("name") or ""
 
 
 # The settings a step sets, as the NiFi UI names them.
@@ -101,9 +128,9 @@ def _endpoint(group: dict, processor: dict) -> dict:
 # ---------------------------------------------------------------------
 
 
-def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
-    source = _processor(group, step["target"])
-    dlq = _processor(group, step["dlq"])
+def _route_to_dlq(top: dict, step: dict, changes: list) -> None:
+    group, source = _find(top, step["target"], "processors")
+    there, dlq = _find(top, step["dlq"], "processors")
     wanted = set(catalog.relationships_of(step))
     label = source["name"]
 
@@ -112,6 +139,14 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
 
     if dlq is source:
         raise EditError("a processor cannot be its own DLQ")
+
+    if there is not group:
+        # A connection joins components of one process group (and its
+        # children's ports): the DLQ must be beside the source.
+        beside = sorted(p["name"] for p in group.get("processors") or [] if "DLQ" in (p.get("name") or "").upper())
+        raise EditError(f"{dlq['name']} is in {_path(top, there)!r}, {label} in {_path(top, group)!r}: "
+                        "a connection only joins processors of one process group, so the DLQ must be in "
+                        f"the source's (DLQs there: {', '.join(beside) or 'none'})")
 
     has = relationships(kind_of(source), source.get("properties"))
     unknown = sorted(wanted - set(has))
@@ -142,7 +177,8 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
     if target is None:
         name = f"{source['name'].split(' ', 1)[0].lower()}-to-dlq"
 
-        if any(c.get("name") == name for c in connections):
+        # Unique in the whole incident group, so it can be named bare.
+        if any(c.get("name") == name for _, inner in subgroups(top) for c in inner.get("connections") or []):
             name = f"{name}-{len(connections)}"
 
         target = {

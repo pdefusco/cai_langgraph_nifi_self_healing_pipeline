@@ -12,7 +12,7 @@ paragraph don't matter.
 When a scenario's numbers change, change its walkthrough too.
 """
 
-from flows.scenarios import p23_siblings, p24_healthy_500, scale
+from flows.scenarios import p23_siblings, p24_healthy_500, p25_nested, scale
 
 PACKS = {
     "p1-throughput": """
@@ -127,6 +127,14 @@ PACKS = {
         The largest control: 500 healthy processors in 20 groups of 25, with no fault anywhere. It measures false
         alarms, and the poll and prompt load, at the biggest size we test. The controls are generated, so their
         walkthroughs are too.
+    """,
+    "p25-nested": """
+        Customer flows nest process groups two or three levels deep and pass FlowFiles between them through input
+        and output ports. Here three faults we already have sit whole one or two groups down, in "Region" and in
+        it "Site", with healthy filler on every level and a crossing into each group: a source above, the input
+        port, a few stages, the output port and a sink above again. The agent's inventory shows the groups inside
+        by their path, its edits find a processor wherever it is in them, and a route to a DLQ must stay inside
+        the processor's own group, as NiFi requires. S101 and S102 are nested controls.
     """,
 }
 
@@ -780,8 +788,33 @@ WALKTHROUGHS = {
         enabling the tokenizer, and the traps are too: more tasks on the authorizer, or a higher threshold, change
         nothing.
     """,
+    "S98": """
+        S01's slow consumer, renamed, one group down: S98 Source and S98 Consumer are in S98 Region, inside the
+        scenario's group. The source makes three FlowFiles a second and the consumer, with one task on a one second
+        schedule, moves one, so `s98-backlog` grows by two a second and passes 500 about four minutes in. A healthy
+        crossing goes down into S98 Region through S98 In Region and back up through S98 Out Region, beside the
+        fault but never through it.
+
+        The fix is S01's: four tasks on S98 Consumer, or a 300 ms schedule, made where it is, in S98 Region. The
+        ports carry FlowFiles and have nothing to change.
+    """,
+    "S99": """
+        S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. Nine attempts in ten fail and
+        go straight back into S99 Validator through `s99-failure-loop`, which passes 100, and `s99-input` backs up
+        behind it. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
+
+        The fix is S09's: route the validator's failures to S99 DLQ. The filler has DLQs of its own higher up, and
+        a route to one of them is refused, because a connection can only join processors in one group.
+    """,
+    "S100": """
+        S14's auto-terminated failures, renamed, two groups down in S100 Region / S100 Site: one record in five
+        fails S100 Validator and vanishes. Nothing queues, so the only sign is the gap between what goes into the
+        validator and what comes out, three levels below the group the incident names.
+
+        The fix is S14's: route the failures to S100 DLQ, which is beside the validator in S100 Site.
+    """,
 }
 
-# The controls of p23 and p24 are filler alone, so their walkthroughs are generated.
-WALKTHROUGHS.update({s.id: scale.walkthrough(s) for pack in (p23_siblings.PACK, p24_healthy_500.PACK)
+# The controls of p23 to p25 are filler alone, so their walkthroughs are generated.
+WALKTHROUGHS.update({s.id: scale.walkthrough(s) for pack in (p23_siblings.PACK, p24_healthy_500.PACK, p25_nested.PACK)
                      for s in pack.scenarios if s.kind == "control"})

@@ -44,7 +44,9 @@ def test_a_wide_twin_is_scoped_to_its_small_twin_and_its_decoy():
         assert bool(decoy) == bool(scenario.build.decoy)
         assert scoped["dlqs"] == [rename(n) for n in few["dlqs"]]
         assert scoped["outside"]["processors"] == len(whole["processors"]) - len(processors)
-        assert scoped["outside"]["farther"] == 0 and scoped["outside"]["flows"] >= 15
+        # Every flow of filler is left out, each one flow, a crossing through its ports too (NFH-96).
+        assert scoped["outside"]["farther"] == 0
+        assert scoped["outside"]["flows"] == len(scenario.build.shapes), scenario.id
         # A tenth of the text, or less.
         assert len(render(scoped)) < len(render(whole)) / 10 + len(render(few))
 

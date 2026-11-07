@@ -102,7 +102,7 @@ CATALOG = {a.name: a for a in (
     ActionType("ROUTE_RELATIONSHIP_TO_DLQ", FLOW_EDIT, "processor", ("relationship", "dlq"), (),
                "medium",
                "Route one relationship (or a list of them) of a processor to an existing "
-               "dead-letter processor in the same process group (its name contains DLQ). "
+               "dead-letter processor in the same process group as the processor (its name contains DLQ). "
                "Self-loops and auto-termination of those relationships are removed, and the DLQ "
                "is enabled."),
     ActionType("SET_SCHEDULED_STATE", FLOW_EDIT, "processor", ("value",), (), "medium",

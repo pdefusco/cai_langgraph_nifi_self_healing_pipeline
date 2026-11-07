@@ -419,9 +419,19 @@ def summary(p: dict) -> tuple:
     return [], set()
 
 
+def inside(group) -> list:
+    """The group and every group inside it, parents first (NFH-96)."""
+
+    return [group] + [g for child in group.groups for g in inside(child)]
+
+
 def diagram(s, group) -> list:
-    procs = list(group.processors.values())
+    groups = inside(group)
+    procs = [p for g in groups for p in g.processors.values()]
+    links = [c for g in groups for c in g.connections]
+    ports = [p for g in groups for p in list(g.input_ports.values()) + list(g.output_ports.values())]
     ids = {p["name"]: f"p{i}" for i, p in enumerate(procs)}
+    ids.update({p["name"]: f"q{i}" for i, p in enumerate(ports)})
     fixes = list(s.faults or s.expected)
     named = fixes + list(s.acceptable)
     fix_procs, fix_links, dropped = set(), set(), []
@@ -430,14 +440,14 @@ def diagram(s, group) -> list:
         kind, target = a["action"], a.get("target", "")
 
         if kind in ("SET_BACKPRESSURE", "SET_FLOWFILE_EXPIRATION"):
-            fix_links.update(i for i, c in enumerate(group.connections) if c["name"] == target)
+            fix_links.update(i for i, c in enumerate(links) if c["name"] == target)
         elif kind == "UPDATE_PARAMETER":
             ref = f"#{{{a['parameter']}}}"
             fix_procs.update(p["name"] for p in procs if any(ref in str(v) for v in p["properties"].values()))
         elif kind == "ROUTE_RELATIONSHIP_TO_DLQ":
             fix_procs.add(target)
             routed = set(relationships(a))
-            fix_links.update(i for i, c in enumerate(group.connections) if c["source"]["name"] == target
+            fix_links.update(i for i, c in enumerate(links) if c["source"]["name"] == target
                              and routed & set(c["selectedRelationships"]))
             source = next((p for p in procs if p["name"] == target), None)
 
@@ -447,6 +457,7 @@ def diagram(s, group) -> list:
             fix_procs.add(target)
 
     out = ["```mermaid", f"flowchart {'LR' if len(procs) <= 6 else 'TD'}"]
+    nodes = {}
 
     for p in procs:
         lines, covered = summary(p)
@@ -465,17 +476,32 @@ def diagram(s, group) -> list:
 
         head = [f"<b>{p['name']}</b>", p["type"].rsplit(".", 1)[-1], schedule(p)]
         text = "<br/>".join(label(line) for line in head + lines if line)
-        out.append(f'    {ids[p["name"]]}["{text}"]')
+        nodes[p["name"]] = f'{ids[p["name"]]}["{text}"]'
+
+    for p in ports:
+        nodes[p["name"]] = f'{ids[p["name"]]}[/"{label(p["name"])}"/]'
+
+    # A group inside is a subgraph, its ports and processors in it.
+    def draw(g, indent):
+        out.extend(f"{indent}{nodes[item['name']]}" for item in list(g.input_ports.values())
+                   + list(g.output_ports.values()) + list(g.processors.values()))
+
+        for child in g.groups:
+            out.append(f'{indent}subgraph g{groups.index(child)}["{label(child.name)}"]')
+            draw(child, indent + "    ")
+            out.append(f"{indent}end")
+
+    draw(group, "    ")
 
     for name, relationship in dropped:
         out.append(f'    {ids[name]}_{relationship.lower().replace(" ", "_")}(["dropped"])')
 
-    for c in group.connections:
+    for c in links:
         source, destination = ids[c["source"]["name"]], ids[c["destination"]["name"]]
         objects, size = c["backPressureObjectThreshold"], c["backPressureDataSizeThreshold"]
         lines = [c["name"]]
         lines += [", ".join(f"relationship {r}" if r.isdigit() else r for r in c["selectedRelationships"])] \
-            if c["selectedRelationships"] != ["success"] else []
+            if c["selectedRelationships"] not in (["success"], []) else []
         lines += [f"limit {objects:,}"] if objects != DEFAULT_CONNECTION["objects"] else []
         lines += [f"limit {size}"] if size != DEFAULT_CONNECTION["size"] else []
         lines += [f"expires after {c['flowFileExpiration']}"] \
@@ -485,7 +511,7 @@ def diagram(s, group) -> list:
         out.append(f'    {source} -->|"{"<br/>".join(label(line) for line in lines)}"| {destination}')
 
     for i, (name, relationship) in enumerate(dropped):
-        fix_links.add(len(group.connections) + i)
+        fix_links.add(len(links) + i)
         out.append(f'    {ids[name]} -.->|"{label(relationship)}"| {ids[name]}_{relationship.lower().replace(" ", "_")}')
 
     out += [f"    {style}" for style in STYLES]
@@ -533,7 +559,7 @@ def processors(group) -> list:
     out = ["| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |",
            "|---|---|---|---|---|---|---|"]
 
-    for p in group.processors.values():
+    for p in (p for g in inside(group) for p in g.processors.values()):
         schedule = f"**cron `{p['schedulingPeriod']}`**" if p["schedulingStrategy"] == "CRON_DRIVEN" \
             else p["schedulingPeriod"]
         state = "**DISABLED**" if p["scheduledState"] == "DISABLED" else "enabled"
@@ -547,7 +573,7 @@ def processors(group) -> list:
 def connections(group) -> list:
     out = ["| Connection | From | To | Relationships | Back pressure | Notes |", "|---|---|---|---|---|---|"]
 
-    for c in group.connections:
+    for c in (c for g in inside(group) for c in g.connections):
         source, destination = c["source"]["name"], c["destination"]["name"]
         objects, size = c["backPressureObjectThreshold"], c["backPressureDataSizeThreshold"]
         limit = f"{objects:,}" if objects == DEFAULT_CONNECTION["objects"] else f"**{objects:,}**"
@@ -591,8 +617,8 @@ def scenario(s) -> list:
         return out
 
     out += ["<details>",
-            f"<summary>Settings: {plural(len(group.processors), 'processor')}, "
-            f"{plural(len(group.connections), 'connection')}</summary>", ""]
+            f"<summary>Settings: {plural(scale.count(group), 'processor')}, "
+            f"{plural(sum(len(g.connections) for g in inside(group)), 'connection')}</summary>", ""]
 
     if s.parameters:
         out += ["Parameters as deployed: " + ", ".join(f"`{k}` = `{v}`" for k, v in s.parameters.items()) + ".", ""]

@@ -30,7 +30,7 @@ class FixLLM:
     def invoke(self, messages):
         text = prompts.text_of(messages[1])
         self.prompts.append(text)
-        scenario = packs.SCENARIOS[re.search(r"\bINC-[\d-]+-(S\d\d)-", text).group(1)]
+        scenario = packs.SCENARIOS[re.search(r"\bINC-[\d-]+-(S\d{2,3})-", text).group(1)]
 
         return type("Reply", (), {"content": json.dumps({
             "diagnosis": f"{scenario.group_name} is at fault", "root_cause_component": "",

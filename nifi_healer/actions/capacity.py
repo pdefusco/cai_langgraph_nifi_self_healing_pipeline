@@ -98,6 +98,25 @@ def _inbound(inv: dict, name: str) -> list:
     return [c for c in inv["connections"] if c["destination"] == name and not c["self_loop"]]
 
 
+def _ports(inv: dict) -> set:
+    return {p["name"] for p in inv.get("ports") or []}
+
+
+def _feeds(inv: dict, name: str, seen: frozenset = frozenset()) -> list:
+    """The connections that feed `name` from a processor: into it, or into a port on the way to it (NFH-96)."""
+
+    ports, found = _ports(inv), []
+
+    for connection in _inbound(inv, name):
+        if connection["source"] not in ports:
+            found.append(connection)
+
+        elif connection["source"] not in seen:
+            found += _feeds(inv, connection["source"], seen | {connection["source"]})
+
+    return found
+
+
 def _backlog(rows: dict, connection: dict, signalled: set) -> bool | None:
     """
     Whether a backlog waits in this queue; None when it has no readings, or
@@ -131,9 +150,24 @@ def _copies(processor: dict) -> int | None:
         return None
 
 
-def _onward(inv: dict, name: str) -> list:
+def _out(inv: dict, name: str) -> list:
     return [c for c in inv["connections"] if c["source"] == name and not c["self_loop"]
             and c["destination"] not in inv["dlqs"]]
+
+
+def _onward(inv: dict, name: str, seen: frozenset = frozenset()) -> list:
+    """The ways on from `name` to a processor, but a DLQ: past a port, those from the port."""
+
+    ports, found = _ports(inv), []
+
+    for connection in _out(inv, name):
+        if connection["destination"] not in ports:
+            found.append(connection)
+
+        elif connection["destination"] not in seen:
+            found += _onward(inv, connection["destination"], seen | {connection["destination"]})
+
+    return found
 
 
 def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) -> list | None:
@@ -151,7 +185,7 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
     processors = {p["name"]: p for p in inv["processors"]}
     found = []
 
-    for connection in _inbound(inv, name):
+    for connection in _feeds(inv, name):
         upstream = processors.get(connection["source"])
 
         if upstream is None or upstream["name"] in seen:
@@ -162,7 +196,7 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
 
         copies = _copies(upstream)
 
-        if upstream["kind"] in REGROUPING and not (copies and _inbound(inv, upstream["name"])
+        if upstream["kind"] in REGROUPING and not (copies and _feeds(inv, upstream["name"])
                                                     and readings.held(inv, rows, upstream["name"])):
             if ("processor", upstream["name"], "flowfiles_out") not in rows:
                 return None
@@ -170,7 +204,7 @@ def _sources(inv: dict, rows: dict, name: str, seen: frozenset = frozenset()) ->
             found.append((upstream, 1))
             continue
 
-        if not _inbound(inv, upstream["name"]):
+        if not _feeds(inv, upstream["name"]):
             found.append((upstream, 1))
             continue
 
@@ -199,7 +233,7 @@ def _behind(inv: dict, rows: dict, name: str, seen: frozenset = frozenset(), fac
     processors = {p["name"]: p for p in inv["processors"]}
     total = 0.0
 
-    for connection in _inbound(inv, name):
+    for connection in _feeds(inv, name):
         upstream = processors.get(connection["source"])
 
         if upstream is None or upstream["name"] in seen \
@@ -212,7 +246,7 @@ def _behind(inv: dict, rows: dict, name: str, seen: frozenset = frozenset(), fac
             continue
 
         if factor * copies > 1:
-            for feeding in _inbound(inv, upstream["name"]):
+            for feeding in _feeds(inv, upstream["name"]):
                 row = rows.get(("connection", feeding["name"], "queued_count")) or {}
                 total += factor * copies * (row.get("latest") or 0.0)
 
@@ -267,7 +301,7 @@ def _intake(inv: dict, rows: dict, name: str, nodes: int) -> float | None:
 def _blocked(inv: dict, rows: dict, name: str) -> bool:
     """Whether a queue it sends to is measured at back pressure: then it does what the stage after it lets through."""
 
-    return any(readings.full(rows.get(("connection", c["name"], "queued_count")), c) for c in _onward(inv, name))
+    return any(readings.full(rows.get(("connection", c["name"], "queued_count")), c) for c in _out(inv, name))
 
 
 def _capacity(inv: dict, before: dict, after: dict, rows: dict, backlog: bool, nodes: int) -> tuple:

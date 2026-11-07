@@ -17,7 +17,7 @@ from flows.scenarios import (p1_throughput, p2_backpressure, p3_errors, p4_datal
                              p10_iot, p11_payments, p12_warehouse, p13_billing, p14_capacity,
                              p15_bursts, p16_slow_burn, p17_nightly_batch, p18_noisy_bursts,
                              p19_daily_cycle, p20_big_healthy, p21_wide_100, p22_wide_250,
-                             p23_siblings, p24_healthy_500)
+                             p23_siblings, p24_healthy_500, p25_nested)
 
 PACKS = {
     pack.name: pack
@@ -46,6 +46,7 @@ PACKS = {
         p22_wide_250.PACK,
         p23_siblings.PACK,
         p24_healthy_500.PACK,
+        p25_nested.PACK,
     )
 }
 
@@ -66,6 +67,14 @@ def pack_of(scenario_id: str):
             return pack
 
     raise KeyError(scenario_id)
+
+
+def by_id(scenario_id: str) -> tuple:
+    """A sort key for scenario ids in number order: S99 before S100."""
+
+    digits = "".join(ch for ch in str(scenario_id) if ch.isdigit())
+
+    return int(digits or 0), str(scenario_id)
 
 
 def scenario_for_group(group_name: str):

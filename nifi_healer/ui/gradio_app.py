@@ -25,7 +25,7 @@ import traceback
 import gradio as gr
 
 import config
-from flows.packs import SCENARIOS
+from flows.packs import SCENARIOS, by_id
 from nifi_healer import fleet
 from nifi_healer.actions import catalog
 from nifi_healer.agent import autonomy, graph
@@ -119,7 +119,7 @@ def _claim_data_dir() -> None:
     """
 
     me = {"host": socket.gethostname(), "pid": os.getpid(), "started": time.time(),
-          "scenarios": sorted(SCENARIOS)}
+          "scenarios": sorted(SCENARIOS, key=by_id)}
 
     try:
         with open(_owner_file(), "w") as handle:

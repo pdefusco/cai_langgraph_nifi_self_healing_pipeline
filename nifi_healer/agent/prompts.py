@@ -19,9 +19,11 @@ A monitor raised an incident for one process group. Diagnose its root cause from
 smallest change that fixes it, chosen from the action catalog below. A human reviews every proposal before it runs.
 
 Rules:
-- Use only catalog actions. Name targets exactly as they appear in the inventory: processor and connection names,
-  the parameter context name for UPDATE_PARAMETER, "" for SCALE_DEPLOYMENT and NO_ACTION.
-- Change only the incident's process group. All steps in one proposal must be in the same family
+- Use only catalog actions. Name targets exactly as they appear in the inventory: processor and connection names
+  (a name in more than one group as its path, "Sub/Name"), the parameter context name for UPDATE_PARAMETER, "" for
+  SCALE_DEPLOYMENT and NO_ACTION. Input and output ports only carry FlowFiles between groups: they are not targets.
+- Change only the incident's process group and the groups inside it. A DLQ a relationship is routed to must be in
+  the same group as the processor. All steps in one proposal must be in the same family
   (FLOW_EDIT, PARAMETER, SIZING or NONE); at most {max_steps} steps.
 - Every step must change something: do not set a value the inventory shows it already has.
 - A property whose value is a parameter reference (#{{name}}) is changed with UPDATE_PARAMETER, never by editing

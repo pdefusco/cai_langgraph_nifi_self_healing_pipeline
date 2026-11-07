@@ -42,6 +42,14 @@ STATUS_MARK = {"ok": "ok", "breaching": "BREACHING", "warning": "warning", "imba
 _SEVERITY = {"breaching": 4, "imbalance": 4, "alert": 4, "warning": 3, "missing": 1, "ok": 0}
 
 
+def scenario_order(scenario_id: str) -> tuple:
+    """Scenario ids in number order, S99 before S100 (flows.packs.by_id, without loading the packs)."""
+
+    digits = "".join(ch for ch in str(scenario_id) if ch.isdigit())
+
+    return int(digits or 0), str(scenario_id)
+
+
 def clock(t: float | None) -> str:
     if not t:
         return ""
@@ -269,7 +277,7 @@ def group_rows(snapshot: dict, store) -> list:
             if summary.get("scenario"):
                 by_scenario.setdefault(summary["scenario"], []).append(summary)
 
-        for scenario in sorted(by_scenario):
+        for scenario in sorted(by_scenario, key=scenario_order):
             summaries = by_scenario[scenario]
             status = max((s.get("status") or "ok" for s in summaries if not s.get("rollup")),
                          key=lambda s: _SEVERITY.get(s, 2), default="ok")

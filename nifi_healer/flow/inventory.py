@@ -35,15 +35,23 @@ def find_group(definition: dict, group_name: str) -> dict | None:
 
 
 def references(group: dict) -> set:
-    """Parameter names the group's processors reference."""
+    """Parameter names the processors of the group and the groups inside it reference."""
 
     found = set()
 
-    for processor in group.get("processors") or []:
-        for value in (processor.get("properties") or {}).values():
-            found.update(_REFERENCE.findall(str(value or "")))
+    for _, inner in walk_groups(group):
+        for processor in inner.get("processors") or []:
+            for value in (processor.get("properties") or {}).values():
+                found.update(_REFERENCE.findall(str(value or "")))
 
     return found
+
+
+def subgroups(group: dict):
+    """Yield (path below `group`, "" for itself, as "Sub/Sub2"; group) for it and every group inside it."""
+
+    for names, inner in walk_groups(group):
+        yield "/".join(names[1:]), inner
 
 
 def editable_properties(processor: dict) -> list:
@@ -75,12 +83,60 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
     if group is None:
         return {"group": group_name, "error": f"no process group named {group_name!r}"}
 
+    processors, connections, ports = [], [], []
+
+    for path, inner in subgroups(group):
+        for raw in (inner.get("inputPorts") or []) + (inner.get("outputPorts") or []):
+            ports.append({"name": raw.get("name"), "kind": raw.get("type"), "path": path})
+
+        for c in inner.get("connections") or []:
+            connections.append({
+                "name": connection_label(c),
+                "named": bool(c.get("name")),
+                "path": path,
+                "source": c["source"]["name"],
+                "destination": c["destination"]["name"],
+                "relationships": list(c.get("selectedRelationships") or []),
+                "object_threshold": c.get("backPressureObjectThreshold"),
+                "size_threshold": c.get("backPressureDataSizeThreshold"),
+                "expiration": c.get("flowFileExpiration"),
+                "self_loop": c["source"]["id"] == c["destination"]["id"],
+            })
+
+        processors += _processors(inner, path)
+
+    names = {p["name"] for p in processors}
+    parameters = []
+    used = references(group)
+
+    for parameter_group in parameter_groups or []:
+        for parameter in parameter_group.get("parameters") or []:
+            if parameter.get("name") in used:
+                parameters.append({
+                    "context": parameter_group.get("name"),
+                    "name": parameter.get("name"),
+                    "value": MASK if parameter.get("sensitive") else parameter.get("value"),
+                    "sensitive": bool(parameter.get("sensitive")),
+                })
+
+    return {
+        "group": group_name,
+        "processors": processors,
+        "connections": connections,
+        "ports": ports,
+        "dlqs": sorted(n for n in names if "DLQ" in n.upper()),
+        "parameters": parameters,
+    }
+
+
+def _processors(group: dict, path: str) -> list:
+    """The processors directly in `group`, `path` below the incident's group."""
+
     connections = group.get("connections") or []
     processors = []
 
     for raw in group.get("processors") or []:
         kind = kind_of(raw)
-        spec = PROCESSORS.get(kind)
         routed = {}
 
         for connection in connections:
@@ -90,6 +146,7 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
 
         processors.append({
             "name": raw.get("name"),
+            "path": path,
             "kind": kind,
             "state": raw.get("scheduledState"),
             "concurrent_tasks": raw.get("concurrentlySchedulableTaskCount"),
@@ -109,37 +166,7 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
             "editable_properties": editable_properties(raw),
         })
 
-    names = {p["name"] for p in processors}
-    parameters = []
-    used = references(group)
-
-    for parameter_group in parameter_groups or []:
-        for parameter in parameter_group.get("parameters") or []:
-            if parameter.get("name") in used:
-                parameters.append({
-                    "context": parameter_group.get("name"),
-                    "name": parameter.get("name"),
-                    "value": MASK if parameter.get("sensitive") else parameter.get("value"),
-                    "sensitive": bool(parameter.get("sensitive")),
-                })
-
-    return {
-        "group": group_name,
-        "processors": processors,
-        "connections": [{
-            "name": connection_label(c),
-            "named": bool(c.get("name")),
-            "source": c["source"]["name"],
-            "destination": c["destination"]["name"],
-            "relationships": list(c.get("selectedRelationships") or []),
-            "object_threshold": c.get("backPressureObjectThreshold"),
-            "size_threshold": c.get("backPressureDataSizeThreshold"),
-            "expiration": c.get("flowFileExpiration"),
-            "self_loop": c["source"]["id"] == c["destination"]["id"],
-        } for c in connections],
-        "dlqs": sorted(n for n in names if "DLQ" in n.upper()),
-        "parameters": parameters,
-    }
+    return processors
 
 
 def targets(inv: dict) -> dict:
@@ -167,15 +194,36 @@ def targets(inv: dict) -> dict:
 SCOPE_PROCESSORS = 60
 
 
+def _through(inv: dict, name: str, side: str, ports: set, seen=frozenset()) -> set:
+    """The processor `name` is, or those a port of `ports` reaches on `side` ("source" upstream, "destination" down)."""
+
+    if name not in ports:
+        return {name}
+
+    other = "destination" if side == "source" else "source"
+
+    return {found for c in inv["connections"] if c[other] == name and name not in seen
+            for found in _through(inv, c[side], side, ports, seen | {name})}
+
+
 def _neighbours(inv: dict) -> dict:
-    """{processor: the processors a connection joins it to, either way}; a self-loop joins nothing."""
+    """
+    {processor: the processors a connection joins it to, either way, through
+    ports}; a self-loop joins nothing.
+    """
 
     near = {p["name"]: set() for p in inv["processors"]}
+    ports = {p["name"] for p in inv.get("ports") or []}
 
     for c in inv["connections"]:
-        if not c["self_loop"] and c["source"] in near and c["destination"] in near:
-            near[c["source"]].add(c["destination"])
-            near[c["destination"]].add(c["source"])
+        if c["self_loop"]:
+            continue
+
+        for source in _through(inv, c["source"], "source", ports):
+            for destination in _through(inv, c["destination"], "destination", ports):
+                if source in near and destination in near:
+                    near[source].add(destination)
+                    near[destination].add(source)
 
     return near
 
@@ -214,9 +262,10 @@ def scope(inv: dict, seeds, budget: int = SCOPE_PROCESSORS) -> dict:
         return inv
 
     near, dlqs, seeds = _neighbours(inv), set(inv["dlqs"]), set(seeds)
+    ports = {p["name"] for p in inv.get("ports") or []}
     start = {s for s in seeds if s in near}
     start |= {end for c in inv["connections"] if c["name"] in seeds
-              for end in (c["source"], c["destination"]) if end in near}
+              for side in ("source", "destination") for end in _through(inv, c[side], side, ports) if end in near}
 
     if not start:
         return inv
@@ -239,18 +288,33 @@ def scope(inv: dict, seeds, budget: int = SCOPE_PROCESSORS) -> dict:
     shown = set(kept) - dlqs
     farther = [f for f in flows if any(near[n] & shown for n in f)]
     processors = [p for p in inv["processors"] if p["name"] in kept]
-    connections = [c for c in inv["connections"] if c["source"] in kept and c["destination"] in kept]
+
+    def shown_end(name, side):
+        return bool(_through(inv, name, side, ports) & kept)
+
+    connections = [c for c in inv["connections"]
+                   if shown_end(c["source"], "source") and shown_end(c["destination"], "destination")]
+    linked = {end for c in connections for end in (c["source"], c["destination"])}
     used = {name for p in processors for value in p["properties"].values()
             for name in _REFERENCE.findall(str(value or ""))}
+    paths = {p.get("path", "") for p in processors}
+    hidden = {}
+
+    # The groups inside whose own processors are all left out; the group itself is counted above.
+    for p in inv["processors"]:
+        if p.get("path", "") not in paths | {""}:
+            hidden[p.get("path", "")] = hidden.get(p.get("path", ""), 0) + 1
 
     return dict(
         inv,
         processors=processors,
         connections=connections,
+        ports=[p for p in inv.get("ports") or [] if p["name"] in linked],
         dlqs=[n for n in inv["dlqs"] if n in kept],
         parameters=[p for p in inv["parameters"] if p["name"] in used],
         outside={"processors": len(left), "connections": len(inv["connections"]) - len(connections),
-                 "flows": len(flows) - len(farther), "farther": len(farther), "hops": hops},
+                 "flows": len(flows) - len(farther), "farther": len(farther), "hops": hops}
+                | ({"groups": sorted(hidden.items())} if hidden else {}),
     )
 
 
@@ -270,19 +334,47 @@ def outside(inv: dict) -> str:
     if out["farther"]:
         where.append(f"what lies more than {out['hops']} connection(s) from the components the incident's KPIs read")
 
+    groups = "".join(f" {path} ({count} processor(s))," for path, count in out.get("groups") or [])
+
     return (f"Also in this group, not shown: {out['processors']} processor(s) and {out['connections']} "
-            "connection(s)" + (", in " + " and ".join(where) if where else "") + ".")
+            "connection(s)" + (", in " + " and ".join(where) if where else "") + "."
+            + (f" Groups inside it with none of their own processors shown:{groups.rstrip(',')}." if groups else ""))
+
+
+def _end(name: str, ports: dict) -> str:
+    return f'{ports[name].lower().replace("_", " ")} "{name}"' if name in ports else name
 
 
 def render(inv: dict) -> str:
-    """The inventory as plain text, one line per component."""
+    """
+    The inventory as plain text, one line per component; a group with
+    groups inside it, one block per group.
+    """
 
     if inv.get("error"):
         return inv["error"]
 
-    lines = [f"Process group: {inv['group']}"] + ([outside(inv)] if inv.get("outside") else []) + ["", "Processors:"]
+    lines = [f"Process group: {inv['group']}"] + ([outside(inv)] if inv.get("outside") else [])
+    paths = list(dict.fromkeys([p.get("path", "") for p in inv["processors"]] + [c.get("path", "") for c in inv["connections"]]))
 
-    for p in inv["processors"]:
+    if paths in ([], [""]):
+        return "\n".join(lines + _render_block(inv, inv["processors"], inv["connections"]) + _render_tail(inv))
+
+    lines.append("Groups inside it are shown by their path below it, as \"Sub / Sub2\".")
+
+    for path in paths:
+        lines += ["", f"Process group: {' / '.join([inv['group']] + ([path.replace('/', ' / ')] if path else []))}"]
+        lines += _render_block(inv, [p for p in inv["processors"] if p.get("path", "") == path],
+                               [c for c in inv["connections"] if c.get("path", "") == path])
+
+    return "\n".join(lines + _render_tail(inv))
+
+
+def _render_block(inv: dict, processors: list, connections: list) -> list:
+    lines = ["", "Processors:"]
+    ports = {p["name"]: p["kind"] for p in inv.get("ports") or []}
+
+    for p in processors:
         retry = (f" retry {','.join(p['retried'])} x{p['retry_count']} backoff={p['backoff']}"
                  f" max_backoff={p['max_backoff']}" if p["retried"] else "")
         lines.append(
@@ -303,17 +395,22 @@ def render(inv: dict) -> str:
 
     lines += ["", "Connections:"]
 
-    for c in inv["connections"]:
+    for c in connections:
         loop = " (self-loop)" if c["self_loop"] else ""
         lines.append(
-            f"- {c['name']}: {c['source']} -[{', '.join(c['relationships'])}]-> {c['destination']}{loop} "
+            f"- {c['name']}: {_end(c['source'], ports)} -[{', '.join(c['relationships'])}]-> "
+            f"{_end(c['destination'], ports)}{loop} "
             f"back_pressure={c['object_threshold']} objects / {c['size_threshold']} "
             f"expiration={c['expiration']}")
 
-    lines += ["", "Dead-letter processors: " + (", ".join(inv["dlqs"]) or "none")]
+    return lines
+
+
+def _render_tail(inv: dict) -> list:
+    lines = ["", "Dead-letter processors: " + (", ".join(inv["dlqs"]) or "none")]
 
     if inv["parameters"]:
         lines += ["", "Parameters referenced here:"]
         lines += [f"- {p['name']} = {p['value']!r} (context {p['context']})" for p in inv["parameters"]]
 
-    return "\n".join(lines)
+    return lines

@@ -13,9 +13,9 @@ they always match what gets deployed.
 
 ## How the scenarios are built
 
-The scenarios are grouped into 24 packs. Each pack is one NiFi flow definition and one CDF DataFlow
+The scenarios are grouped into 25 packs. Each pack is one NiFi flow definition and one CDF DataFlow
 deployment, named `nfh-<pack>`, running NiFi 2.6.0 on a single EXTRA_SMALL node unless the pack is about sizing.
-Inside the flow, each of the 97 scenarios gets its own process group, named after the scenario (for
+Inside the flow, each of the 102 scenarios gets its own process group, named after the scenario (for
 example `S22 Order Merge Deadlock`). The agent works on one process group at a time, so incidents, fixes and grading
 are all per scenario.
 
@@ -129,6 +129,7 @@ scenarios, and possibly their fixes, would change.
 | p22-wide-250 | `nfh-p22-wide-250` | EXTRA_SMALL × 1 | [S49 Order Merge Deadlock in 250 Processors](#s49-order-merge-deadlock-in-250-processors), [S50 Failure Self-Loop in 250 Processors](#s50-failure-self-loop-in-250-processors) |
 | p23-siblings | `nfh-p23-siblings` | EXTRA_SMALL × 1 | [S51 Slow Run Schedule Among Siblings](#s51-slow-run-schedule-among-siblings), [S52 Auto-terminated Failures Among Siblings](#s52-auto-terminated-failures-among-siblings), [S53 Stopped Lane Among Siblings](#s53-stopped-lane-among-siblings), [S54 Healthy Invoices Group](#s54-healthy-invoices-group), [S55 Healthy Refunds Group](#s55-healthy-refunds-group), [S56 Healthy Customers Group](#s56-healthy-customers-group), [S57 Healthy Carts Group](#s57-healthy-carts-group), [S58 Healthy Contracts Group](#s58-healthy-contracts-group), [S59 Healthy Campaigns Group](#s59-healthy-campaigns-group), [S60 Healthy Assets Group](#s60-healthy-assets-group), [S61 Healthy Policies Group](#s61-healthy-policies-group), [S62 Healthy Stores Group](#s62-healthy-stores-group), [S63 Healthy Budgets Group](#s63-healthy-budgets-group), [S64 Healthy Devices Group](#s64-healthy-devices-group), [S65 Healthy Routes Group](#s65-healthy-routes-group), [S66 Healthy Bookings Group](#s66-healthy-bookings-group), [S67 Healthy Recipes Group](#s67-healthy-recipes-group), [S68 Healthy Returns Group](#s68-healthy-returns-group), [S69 Healthy Prices Group](#s69-healthy-prices-group), [S70 Healthy Coupons Group](#s70-healthy-coupons-group), [S71 Healthy Suppliers Group](#s71-healthy-suppliers-group), [S72 Healthy Leads Group](#s72-healthy-leads-group), [S73 Healthy Timesheets Group](#s73-healthy-timesheets-group), [S74 Healthy Claims Group](#s74-healthy-claims-group), [S75 Healthy Vendors Group](#s75-healthy-vendors-group), [S76 Healthy Ledger Group](#s76-healthy-ledger-group), [S77 Healthy Alerts Group](#s77-healthy-alerts-group) |
 | p24-healthy-500 | `nfh-p24-healthy-500` | EXTRA_SMALL × 1 | [S78 Healthy Invoices Group](#s78-healthy-invoices-group), [S79 Healthy Returns Group](#s79-healthy-returns-group), [S80 Healthy Inventory Group](#s80-healthy-inventory-group), [S81 Healthy Customers Group](#s81-healthy-customers-group), [S82 Healthy Coupons Group](#s82-healthy-coupons-group), [S83 Healthy Wishlists Group](#s83-healthy-wishlists-group), [S84 Healthy Contracts Group](#s84-healthy-contracts-group), [S85 Healthy Leads Group](#s85-healthy-leads-group), [S86 Healthy Payroll Group](#s86-healthy-payroll-group), [S87 Healthy Assets Group](#s87-healthy-assets-group), [S88 Healthy Claims Group](#s88-healthy-claims-group), [S89 Healthy Quotes Group](#s89-healthy-quotes-group), [S90 Healthy Stores Group](#s90-healthy-stores-group), [S91 Healthy Ledger Group](#s91-healthy-ledger-group), [S92 Healthy Audits Group](#s92-healthy-audits-group), [S93 Healthy Devices Group](#s93-healthy-devices-group), [S94 Healthy Meters Group](#s94-healthy-meters-group), [S95 Healthy Drivers Group](#s95-healthy-drivers-group), [S96 Healthy Bookings Group](#s96-healthy-bookings-group), [S97 Healthy Menus Group](#s97-healthy-menus-group) |
+| p25-nested | `nfh-p25-nested` | EXTRA_SMALL × 1 | [S98 Slow Consumer One Group Down](#s98-slow-consumer-one-group-down), [S99 Failure Self-Loop Two Groups Down](#s99-failure-self-loop-two-groups-down), [S100 Auto-terminated Failures Two Groups Down](#s100-auto-terminated-failures-two-groups-down), [S101 Healthy Groups One Down](#s101-healthy-groups-one-down), [S102 Healthy Groups Two Down](#s102-healthy-groups-two-down) |
 
 ## p1-throughput: Throughput
 
@@ -5475,3 +5476,382 @@ flowchart TD
 ```
 
 **How it's graded.** Nothing should fire. The alert would go off if the queue `s97-menus-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+## p25-nested: Faults in nested groups, below ports
+
+Deployed as `nfh-p25-nested` on EXTRA_SMALL × 1, in rollout wave 3.
+
+Customer flows nest process groups two or three levels deep and pass FlowFiles between them through input and output ports. Here three faults we already have sit whole one or two groups down, in "Region" and in it "Site", with healthy filler on every level and a crossing into each group: a source above, the input port, a few stages, the output port and a sink above again. The agent's inventory shows the groups inside by their path, its edits find a processor wherever it is in them, and a route to a DLQ must stay inside the processor's own group, as NiFi requires. S101 and S102 are nested controls.
+
+### S98 Slow Consumer One Group Down
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S01's slow consumer, renamed, one group down: S98 Source and S98 Consumer are in S98 Region, inside the scenario's group. The source makes three FlowFiles a second and the consumer, with one task on a one second schedule, moves one, so `s98-backlog` grows by two a second and passes 500 about four minutes in. A healthy crossing goes down into S98 Region through S98 In Region and back up through S98 Out Region, beside the fault but never through it.
+
+The fix is S01's: four tasks on S98 Consumer, or a 300 ms schedule, made where it is, in S98 Region. The ports carry FlowFiles and have nothing to change.
+
+Size twin of [S01 Slow Consumer](#s01-slow-consumer). S01's 2 processors, whole, in S98 Region; around them, 58 healthy ones in 11 small flows of their own: 4 chains, 2 lane fan-outs, 2 validations into a DLQ, 2 rate limits, one crossing into a group. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S98 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S98 Consumer</b><br/>UpdateAttribute<br/>1 task every 1 sec"]
+    p0 -->|"s98-backlog"| p1
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p1 fix
+```
+
+**How it's graded.** The alert fires when the queue `s98-backlog` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S98 Consumer. Whether a fix worked is decided by the size of the queue `s98-backlog`. The fix we grade as correct is setting the concurrent tasks on S98 Consumer to 4 or more. We also accept setting the run schedule of S98 Consumer to 300 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 2 processors, 1 connection</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S98 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `3`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S98 Consumer | UpdateAttribute | 1 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s98-backlog | S98 Source | S98 Consumer | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S99 Failure Self-Loop Two Groups Down
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. Nine attempts in ten fail and go straight back into S99 Validator through `s99-failure-loop`, which passes 100, and `s99-input` backs up behind it. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
+
+The fix is S09's: route the validator's failures to S99 DLQ. The filler has DLQs of its own higher up, and a route to one of them is refused, because a connection can only join processors in one group.
+
+Size twin of [S09 Failure Self-Loop](#s09-failure-self-loop). S09's 4 processors, whole, in S99 Region / S99 Site; around them, 76 healthy ones in 13 small flows of their own: 5 chains, 3 lane fan-outs, 2 validations into a DLQ, one rate limit, 2 crossings into a group. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S99 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S99 Validator</b><br/>DebugFlow<br/>1 task every 1 sec<br/>1 succeed, then 9 fail"]
+    p2["<b>S99 Publish</b><br/>UpdateAttribute"]
+    p3["<b>S99 DLQ</b><br/>LogAttribute<br/>DISABLED"]
+    p0 -->|"s99-input"| p1
+    p1 -->|"s99-failure-loop<br/>failure"| p1
+    p1 -->|"s99-valid"| p2
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p3 off
+    class p1 fix
+    linkStyle 1 stroke:#c2410c,stroke-width:3px
+```
+
+**How it's graded.** The alert fires when the queue `s99-failure-loop` holds more than 100 FlowFiles for a minute or when the queue `s99-input` holds more than 500 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s99-failure-loop`. The fix we grade as correct is routing failure from S99 Validator to S99 DLQ.
+
+<details>
+<summary>Settings: 4 processors, 3 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S99 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S99 Validator | DebugFlow | 1 sec | 1 | enabled |  | FlowFile Success Iterations: `1`<br>FlowFile Failure Iterations: `9`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S99 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S99 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s99-input | S99 Source | S99 Validator | success | 10,000 / 1 GB |  |
+| s99-failure-loop | S99 Validator | itself | failure | 10,000 / 1 GB | **self-loop** |
+| s99-valid | S99 Validator | S99 Publish | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S100 Auto-terminated Failures Two Groups Down
+
+*A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+S14's auto-terminated failures, renamed, two groups down in S100 Region / S100 Site: one record in five fails S100 Validator and vanishes. Nothing queues, so the only sign is the gap between what goes into the validator and what comes out, three levels below the group the incident names.
+
+The fix is S14's: route the failures to S100 DLQ, which is beside the validator in S100 Site.
+
+Size twin of [S14 Auto-terminated Failures](#s14-auto-terminated-failures). S14's 4 processors, whole, in S100 Region / S100 Site; around them, 71 healthy ones in 13 small flows of their own: 4 chains, 3 lane fan-outs, 3 validations into a DLQ, one rate limit, 2 crossings into a group. The diagram and tables show the fault's part only.
+
+```mermaid
+flowchart LR
+    p0["<b>S100 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p1["<b>S100 Validator</b><br/>DebugFlow<br/>4 succeed, then 1 fail"]
+    p2["<b>S100 Publish</b><br/>UpdateAttribute"]
+    p3["<b>S100 DLQ</b><br/>LogAttribute<br/>DISABLED"]
+    p1_failure(["dropped"])
+    p0 -->|"s100-input"| p1
+    p1 -->|"s100-valid"| p2
+    p1 -.->|"failure"| p1_failure
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p3 off
+    class p1 fix
+    class p1_failure gone
+    linkStyle 2 stroke:#c2410c,stroke-width:3px
+```
+
+**How it's graded.** No KPI alerts on this one, so the problem has to be spotted in the charts. We chart FlowFiles into S100 Validator and FlowFiles out of S100 Validator. Whether a fix worked is decided by FlowFiles out of S100 Validator. The fix we grade as correct is routing failure from S100 Validator to S100 DLQ.
+
+<details>
+<summary>Settings: 4 processors, 2 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S100 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
+| S100 Validator | DebugFlow | 0 sec | 1 | enabled | failure | FlowFile Success Iterations: `4`<br>FlowFile Failure Iterations: `1`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S100 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S100 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s100-input | S100 Source | S100 Validator | success | 10,000 / 1 GB |  |
+| s100-valid | S100 Validator | S100 Publish | success | 10,000 / 1 GB |  |
+
+</details>
+
+### S101 Healthy Groups One Down
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+40 healthy processors in 7 small flows of their own: 4 chains, 2 lane fan-outs, one crossing into a group. The group holds S101 Region, fed by a crossing through its input and output ports. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s101-inventory-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S101 Inventory Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S101 Inventory Stamp</b><br/>UpdateAttribute"]
+    p2["<b>S101 Inventory Route</b><br/>UpdateAttribute"]
+    p3["<b>S101 Inventory Tag</b><br/>UpdateAttribute"]
+    p4["<b>S101 Inventory Score</b><br/>UpdateAttribute"]
+    p5["<b>S101 Inventory Store</b><br/>UpdateAttribute"]
+    p6["<b>S101 Prices Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p7["<b>S101 Prices Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+    p8["<b>S101 Prices Lane 1</b><br/>UpdateAttribute"]
+    p9["<b>S101 Prices Lane 2</b><br/>UpdateAttribute"]
+    p10["<b>S101 Prices Join Lanes</b><br/>UpdateAttribute"]
+    p11["<b>S101 Prices Store</b><br/>UpdateAttribute"]
+    p12["<b>S101 Customers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p13["<b>S101 Customers Enrich</b><br/>UpdateAttribute"]
+    p14["<b>S101 Customers Validate</b><br/>UpdateAttribute"]
+    p15["<b>S101 Customers Mask</b><br/>UpdateAttribute"]
+    p16["<b>S101 Customers Annotate</b><br/>UpdateAttribute"]
+    p17["<b>S101 Customers Store</b><br/>UpdateAttribute"]
+    p18["<b>S101 Reviews Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p19["<b>S101 Reviews Store</b><br/>UpdateAttribute"]
+    subgraph g1["S101 Region"]
+        q0[/"S101 In Region"/]
+        q1[/"S101 Out Region"/]
+        p20["<b>S101 Reviews Dedupe</b><br/>UpdateAttribute"]
+        p21["<b>S101 Reviews Stamp</b><br/>UpdateAttribute"]
+        p22["<b>S101 Reviews Classify</b><br/>UpdateAttribute"]
+        p23["<b>S101 Coupons Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+        p24["<b>S101 Coupons Mask</b><br/>UpdateAttribute"]
+        p25["<b>S101 Coupons Parse</b><br/>UpdateAttribute"]
+        p26["<b>S101 Coupons Store</b><br/>UpdateAttribute"]
+        p27["<b>S101 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+        p28["<b>S101 Carts Balance</b><br/>DistributeLoad<br/>3 lanes, round robin"]
+        p29["<b>S101 Carts Lane 1</b><br/>UpdateAttribute"]
+        p30["<b>S101 Carts Lane 2</b><br/>UpdateAttribute"]
+        p31["<b>S101 Carts Lane 3</b><br/>UpdateAttribute"]
+        p32["<b>S101 Carts Join Lanes</b><br/>UpdateAttribute"]
+        p33["<b>S101 Carts Store</b><br/>UpdateAttribute"]
+        p34["<b>S101 Wishlists Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+        p35["<b>S101 Wishlists Stamp</b><br/>UpdateAttribute"]
+        p36["<b>S101 Wishlists Normalize</b><br/>UpdateAttribute"]
+        p37["<b>S101 Wishlists Convert</b><br/>UpdateAttribute"]
+        p38["<b>S101 Wishlists Mask</b><br/>UpdateAttribute"]
+        p39["<b>S101 Wishlists Store</b><br/>UpdateAttribute"]
+    end
+    p0 -->|"s101-inventory-1"| p1
+    p1 -->|"s101-inventory-2"| p2
+    p2 -->|"s101-inventory-3"| p3
+    p3 -->|"s101-inventory-4"| p4
+    p4 -->|"s101-inventory-5"| p5
+    p6 -->|"s101-prices-1"| p7
+    p7 -->|"s101-prices-2<br/>relationship 1"| p8
+    p8 -->|"s101-prices-3"| p10
+    p7 -->|"s101-prices-4<br/>relationship 2"| p9
+    p9 -->|"s101-prices-5"| p10
+    p10 -->|"s101-prices-6"| p11
+    p12 -->|"s101-customers-1"| p13
+    p13 -->|"s101-customers-2"| p14
+    p14 -->|"s101-customers-3"| p15
+    p15 -->|"s101-customers-4"| p16
+    p16 -->|"s101-customers-5"| p17
+    p18 -->|"s101-reviews-1"| q0
+    q1 -->|"s101-reviews-6"| p19
+    q0 -->|"s101-reviews-2"| p20
+    p20 -->|"s101-reviews-3"| p21
+    p21 -->|"s101-reviews-4"| p22
+    p22 -->|"s101-reviews-5"| q1
+    p23 -->|"s101-coupons-1"| p24
+    p24 -->|"s101-coupons-2"| p25
+    p25 -->|"s101-coupons-3"| p26
+    p27 -->|"s101-carts-1"| p28
+    p28 -->|"s101-carts-2<br/>relationship 1"| p29
+    p29 -->|"s101-carts-3"| p32
+    p28 -->|"s101-carts-4<br/>relationship 2"| p30
+    p30 -->|"s101-carts-5"| p32
+    p28 -->|"s101-carts-6<br/>relationship 3"| p31
+    p31 -->|"s101-carts-7"| p32
+    p32 -->|"s101-carts-8"| p33
+    p34 -->|"s101-wishlists-1"| p35
+    p35 -->|"s101-wishlists-2"| p36
+    p36 -->|"s101-wishlists-3"| p37
+    p37 -->|"s101-wishlists-4"| p38
+    p38 -->|"s101-wishlists-5"| p39
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s101-inventory-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+### S102 Healthy Groups Two Down
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+60 healthy processors in 10 small flows of their own: 3 chains, 3 lane fan-outs, 2 validations into a DLQ, 2 crossings into a group. The group holds S102 Region and in it S102 Site, each fed by a crossing through its input and output ports. Each source makes one to three FlowFiles a second, and every stage has room to spare. The alert, at 2,000 FlowFiles in `s102-carts-1`, should never fire, and the only right answer is no action.
+
+```mermaid
+flowchart TD
+    p0["<b>S102 Carts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S102 Carts Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+    p2["<b>S102 Carts Lane 1</b><br/>UpdateAttribute"]
+    p3["<b>S102 Carts Lane 2</b><br/>UpdateAttribute"]
+    p4["<b>S102 Carts Lane 3</b><br/>UpdateAttribute"]
+    p5["<b>S102 Carts Lane 4</b><br/>UpdateAttribute"]
+    p6["<b>S102 Carts Join Lanes</b><br/>UpdateAttribute"]
+    p7["<b>S102 Carts Store</b><br/>UpdateAttribute"]
+    p8["<b>S102 Wishlists Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p9["<b>S102 Wishlists Parse</b><br/>UpdateAttribute"]
+    p10["<b>S102 Wishlists Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+    p11["<b>S102 Wishlists Reject DLQ</b><br/>LogAttribute"]
+    p12["<b>S102 Wishlists Format</b><br/>UpdateAttribute"]
+    p13["<b>S102 Wishlists Store</b><br/>UpdateAttribute"]
+    p14["<b>S102 Suppliers Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p15["<b>S102 Suppliers Validate</b><br/>UpdateAttribute"]
+    p16["<b>S102 Suppliers Route</b><br/>UpdateAttribute"]
+    p17["<b>S102 Suppliers Store</b><br/>UpdateAttribute"]
+    p18["<b>S102 Contracts Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p19["<b>S102 Contracts Store</b><br/>UpdateAttribute"]
+    subgraph g1["S102 Region"]
+        q0[/"S102 In Region"/]
+        q1[/"S102 Out Region"/]
+        p20["<b>S102 Contracts Validate</b><br/>UpdateAttribute"]
+        p21["<b>S102 Contracts Classify</b><br/>UpdateAttribute"]
+        p22["<b>S102 Contracts Annotate</b><br/>UpdateAttribute"]
+        p23["<b>S102 Tickets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+        p24["<b>S102 Tickets Balance</b><br/>DistributeLoad<br/>2 lanes, round robin"]
+        p25["<b>S102 Tickets Lane 1</b><br/>UpdateAttribute"]
+        p26["<b>S102 Tickets Lane 2</b><br/>UpdateAttribute"]
+        p27["<b>S102 Tickets Join Lanes</b><br/>UpdateAttribute"]
+        p28["<b>S102 Tickets Store</b><br/>UpdateAttribute"]
+        p29["<b>S102 Leads Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+        p30["<b>S102 Leads Parse</b><br/>UpdateAttribute"]
+        p31["<b>S102 Leads Check</b><br/>DebugFlow<br/>19 succeed, then 1 fail"]
+        p32["<b>S102 Leads Reject DLQ</b><br/>LogAttribute"]
+        p33["<b>S102 Leads Format</b><br/>UpdateAttribute"]
+        p34["<b>S102 Leads Store</b><br/>UpdateAttribute"]
+        p35["<b>S102 Campaigns Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+        p36["<b>S102 Campaigns Validate</b><br/>UpdateAttribute"]
+        p37["<b>S102 Campaigns Format</b><br/>UpdateAttribute"]
+        p38["<b>S102 Campaigns Store</b><br/>UpdateAttribute"]
+        p39["<b>S102 Payroll Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+        p40["<b>S102 Payroll Store</b><br/>UpdateAttribute"]
+        subgraph g2["S102 Site"]
+            q2[/"S102 In Site"/]
+            q3[/"S102 Out Site"/]
+            p41["<b>S102 Payroll Mask</b><br/>UpdateAttribute"]
+            p42["<b>S102 Payroll Normalize</b><br/>UpdateAttribute"]
+            p43["<b>S102 Payroll Validate</b><br/>UpdateAttribute"]
+            p44["<b>S102 Timesheets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+            p45["<b>S102 Timesheets Balance</b><br/>DistributeLoad<br/>4 lanes, round robin"]
+            p46["<b>S102 Timesheets Lane 1</b><br/>UpdateAttribute"]
+            p47["<b>S102 Timesheets Lane 2</b><br/>UpdateAttribute"]
+            p48["<b>S102 Timesheets Lane 3</b><br/>UpdateAttribute"]
+            p49["<b>S102 Timesheets Lane 4</b><br/>UpdateAttribute"]
+            p50["<b>S102 Timesheets Join Lanes</b><br/>UpdateAttribute"]
+            p51["<b>S102 Timesheets Store</b><br/>UpdateAttribute"]
+            p52["<b>S102 Assets Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+            p53["<b>S102 Assets Score</b><br/>UpdateAttribute"]
+            p54["<b>S102 Assets Parse</b><br/>UpdateAttribute"]
+            p55["<b>S102 Assets Dedupe</b><br/>UpdateAttribute"]
+            p56["<b>S102 Assets Validate</b><br/>UpdateAttribute"]
+            p57["<b>S102 Assets Stamp</b><br/>UpdateAttribute"]
+            p58["<b>S102 Assets Mask</b><br/>UpdateAttribute"]
+            p59["<b>S102 Assets Store</b><br/>UpdateAttribute"]
+        end
+    end
+    p0 -->|"s102-carts-1"| p1
+    p1 -->|"s102-carts-2<br/>relationship 1"| p2
+    p2 -->|"s102-carts-3"| p6
+    p1 -->|"s102-carts-4<br/>relationship 2"| p3
+    p3 -->|"s102-carts-5"| p6
+    p1 -->|"s102-carts-6<br/>relationship 3"| p4
+    p4 -->|"s102-carts-7"| p6
+    p1 -->|"s102-carts-8<br/>relationship 4"| p5
+    p5 -->|"s102-carts-9"| p6
+    p6 -->|"s102-carts-10"| p7
+    p8 -->|"s102-wishlists-1"| p9
+    p9 -->|"s102-wishlists-2"| p10
+    p10 -->|"s102-wishlists-3<br/>failure"| p11
+    p10 -->|"s102-wishlists-4"| p12
+    p12 -->|"s102-wishlists-5"| p13
+    p14 -->|"s102-suppliers-1"| p15
+    p15 -->|"s102-suppliers-2"| p16
+    p16 -->|"s102-suppliers-3"| p17
+    p18 -->|"s102-contracts-1"| q0
+    q1 -->|"s102-contracts-6"| p19
+    q0 -->|"s102-contracts-2"| p20
+    p20 -->|"s102-contracts-3"| p21
+    p21 -->|"s102-contracts-4"| p22
+    p22 -->|"s102-contracts-5"| q1
+    p23 -->|"s102-tickets-1"| p24
+    p24 -->|"s102-tickets-2<br/>relationship 1"| p25
+    p25 -->|"s102-tickets-3"| p27
+    p24 -->|"s102-tickets-4<br/>relationship 2"| p26
+    p26 -->|"s102-tickets-5"| p27
+    p27 -->|"s102-tickets-6"| p28
+    p29 -->|"s102-leads-1"| p30
+    p30 -->|"s102-leads-2"| p31
+    p31 -->|"s102-leads-3<br/>failure"| p32
+    p31 -->|"s102-leads-4"| p33
+    p33 -->|"s102-leads-5"| p34
+    p35 -->|"s102-campaigns-1"| p36
+    p36 -->|"s102-campaigns-2"| p37
+    p37 -->|"s102-campaigns-3"| p38
+    p39 -->|"s102-payroll-1"| q2
+    q3 -->|"s102-payroll-6"| p40
+    q2 -->|"s102-payroll-2"| p41
+    p41 -->|"s102-payroll-3"| p42
+    p42 -->|"s102-payroll-4"| p43
+    p43 -->|"s102-payroll-5"| q3
+    p44 -->|"s102-timesheets-1"| p45
+    p45 -->|"s102-timesheets-2<br/>relationship 1"| p46
+    p46 -->|"s102-timesheets-3"| p50
+    p45 -->|"s102-timesheets-4<br/>relationship 2"| p47
+    p47 -->|"s102-timesheets-5"| p50
+    p45 -->|"s102-timesheets-6<br/>relationship 3"| p48
+    p48 -->|"s102-timesheets-7"| p50
+    p45 -->|"s102-timesheets-8<br/>relationship 4"| p49
+    p49 -->|"s102-timesheets-9"| p50
+    p50 -->|"s102-timesheets-10"| p51
+    p52 -->|"s102-assets-1"| p53
+    p53 -->|"s102-assets-2"| p54
+    p54 -->|"s102-assets-3"| p55
+    p55 -->|"s102-assets-4"| p56
+    p56 -->|"s102-assets-5"| p57
+    p57 -->|"s102-assets-6"| p58
+    p58 -->|"s102-assets-7"| p59
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s102-carts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.

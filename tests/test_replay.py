@@ -51,6 +51,19 @@ class OutOfBoundsLLM:
             "rationale": "more is better", "citations": [], "confidence": 0.5, "expected_effect": "faster"})})()
 
 
+def test_oracle_fixes_the_faults_below_ports(replayed):
+    # NFH-96: S98–S100 sit one and two groups down; their design fixes are their twins', by bare name.
+    replay.run(["S98", "S99", "S100", "S101", "S102"], oracle=True)
+    snapshot = replay.load()
+    found = replay.cases(snapshot)
+
+    assert sorted((c["scenario"] for c in found), key=packs.by_id) == ["S98", "S99", "S100"]
+    assert all(c["match"] == sc.EXPECTED and c["applied"] and c["result"] == sc.WORKED for c in found), found
+    assert replay.detection(snapshot) == {"runs": 1, "faults": 3, "detected": 3, "missed": [],
+                                          "controls": 2, "quiet": 2, "watched": 0, "cleared": 0,
+                                          "fixes_to_clear": None}
+
+
 def test_oracle_run_scores_the_design_fixes(replayed):
     first = replay.run(["S01", "S02", "S19"], oracle=True)
     snapshot = replay.load()
@@ -395,9 +408,10 @@ def test_chosen_scenarios():
     assert replay.chosen(pack_names=["p1-throughput"]) == ["S01", "S02", "S03", "S04"]
     assert len(replay.chosen()) == sum(len(p.scenarios) for p in packs.PACKS.values() if p.wave < 3) > 21
     assert replay.chosen(pack_names=["p21-wide-100"]) == ["S46", "S47", "S48"]     # the third wave, by name
+    assert replay.chosen(["S100", "S98"]) == ["S98", "S100"]
 
     with pytest.raises(SystemExit):
-        replay.chosen(["S99"])
+        replay.chosen(["S999"])
 
 
 def test_it_waits_as_long_as_the_slowest_fault_takes_to_show():

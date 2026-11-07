@@ -459,7 +459,7 @@ def model(store, pack: str, entry: dict, now: float, span: str = DEFAULT_RANGE, 
     grid = store.history(crn, since, step)
     groups = []
 
-    for scenario in sorted({k["scenario"] for k in kpis}):
+    for scenario in sorted({k["scenario"] for k in kpis}, key=views.scenario_order):
         members = [k for k in kpis if k["scenario"] == scenario]
         sides = rollup.edges(members)
         flow = None

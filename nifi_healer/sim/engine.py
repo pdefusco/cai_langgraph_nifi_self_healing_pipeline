@@ -440,6 +440,15 @@ class Simulation:
         cpu["fixed"] += count * CHEAP_CPU / DT
         self._route(proc, {"success": (count, size)}, stat)
 
+    def _run_port(self, proc, spread, state, stat, cpu, avail, avg) -> None:
+        """A port: everything waiting goes on, as far as there is room, at no cost."""
+
+        count, size = self._take_inputs(proc, min(avail, self._out_room(proc, avg)))
+        stat["in"] += count
+        self._route(proc, {"": (count, size)}, stat)
+
+    _run_INPUT_PORT = _run_OUTPUT_PORT = _run_port
+
     def _run_DebugFlow(self, proc, spread, state, stat, cpu, avail, avg) -> None:
         successes = float(proc.properties.get("FlowFile Success Iterations") or 1)
         failures = float(proc.properties.get("FlowFile Failure Iterations") or 0)
@@ -743,6 +752,9 @@ class Simulation:
             values[("connection", conn.name, "percent_full")] = full * 100.0
 
         for pid, proc in self.model.processors.items():
+            if proc.is_port:
+                continue
+
             stat = stats[pid]
             values[("processor", proc.name, "flowfiles_in")] = stat["in"] / DT
             values[("processor", proc.name, "flowfiles_out")] = stat["count"] / DT

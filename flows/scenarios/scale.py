@@ -35,6 +35,16 @@ a trap says why it is not the fault, and a wrong fix changes it:
 
 A *control* (`control()`) is a group of filler and nothing else, family
 NONE: it must stay quiet however large the pack around it.
+
+A *nested twin* (`nest()`, NFH-96) puts the twin's fault one or two
+groups down, "Sxx Region" and in it "Sxx Site", whole, its source
+included, so it behaves as in the small scenario. Filler is shared out
+between the levels, and into each group a *crossing* runs: a source in
+the group above, an input port, a few stages, an output port and a sink
+above again, so the ports carry FlowFiles too. A control can be nested
+the same way.
+
+    S98 = scale.nest(p1_throughput.S01, "S98", depth=2, processors=60)
 """
 
 import dataclasses
@@ -66,10 +76,29 @@ class _Renamed:
         return self._pg.processor(key, self._rename(name), *args, **options)
 
     def connect(self, source, destination, relationships, name="", **options):
-        return self._pg.connect(source, destination, relationships, self._rename(name), **options)
+        return self._pg.connect(_unwrapped(source), _unwrapped(destination), relationships, self._rename(name),
+                                **options)
+
+    def group(self, label, name, *args, **options):
+        return _Renamed(self._pg.group(label, self._rename(name), *args, **options), self._rename)
+
+    def input_port(self, key, name):
+        return self._pg.input_port(key, self._rename(name))
+
+    def output_port(self, key, name):
+        return self._pg.output_port(key, self._rename(name))
 
     def __getattr__(self, attribute):
         return getattr(self._pg, attribute)
+
+
+def _unwrapped(end):
+    """A connection end, a child group's port's with the child unwrapped."""
+
+    if isinstance(end, tuple) and isinstance(end[0], _Renamed):
+        return end[0]._pg, end[1]
+
+    return end
 
 
 def renamer(old: str, new: str):
@@ -142,24 +171,135 @@ def twin(small: Scenario, scenario_id: str, *, processors: int, title: str = "",
     )
 
 
-class Filled:
-    """The build of a control: `processors` of filler and nothing else, its domains from DOMAINS[offset] on."""
+class Nested:
+    """The build of a nested twin: its groups, its twin's build, renamed, in the deepest, then filler and crossings."""
 
-    def __init__(self, scenario_id: str, processors: int, offset: int):
-        self.id, self.processors, self.offset = scenario_id, processors, offset
+    def __init__(self, small: Scenario, scenario_id: str, depth: int, processors: int):
+        self.small, self.id, self.depth, self.processors = small, scenario_id, depth, processors
+        self.rename = renamer(small.id, scenario_id)
+        self.decoy = ""
+        self.shapes = []
+
+    def core(self, pg) -> None:
+        self.small.build(_Renamed(pg, self.rename))
+
+    def __call__(self, pg) -> None:
+        groups = levels(pg, self.id, self.depth)
+        self.core(groups[-1])
+        self.shapes = fill_levels(groups, self.id, self.processors - count(groups[-1]))
+
+
+def nest(small: Scenario, scenario_id: str, *, depth: int, processors: int, title: str = "") -> Scenario:
+    """
+    `small`'s fault as scenario `scenario_id`, `depth` - 1 groups down
+    (2 or 3 levels), among about `processors` processors in all.
+    """
+
+    if not 2 <= depth <= len(LEVELS) + 1:
+        raise ValueError(f"{scenario_id}: depth is 2 or 3, the group and one or two inside it")
+
+    down = {2: "One Group Down", 3: "Two Groups Down"}[depth]
+
+    return dataclasses.replace(twin(small, scenario_id, processors=processors),
+                               title=title or f"{small.title} {down}",
+                               build=Nested(small, scenario_id, depth, processors))
+
+
+LEVELS = ("Region", "Site")
+CROSSING_STAGES = 3          # a crossing's stages inside its group, beside its source and sink above
+
+
+def count(pg) -> int:
+    """The processors in a group and the groups inside it."""
+
+    return len(pg.processors) + sum(count(child) for child in pg.groups)
+
+
+def levels(pg, scenario_id: str, depth: int) -> list:
+    """[pg, its "Sxx Region", that's "Sxx Site"], `depth` of them."""
+
+    groups = [pg]
+
+    for level in LEVELS[:depth - 1]:
+        groups.append(groups[-1].group(level.lower(), f"{scenario_id} {level}"))
+
+    return groups
+
+
+def fill_levels(groups: list, scenario_id: str, processors: int, offset: int = 0) -> list:
+    """
+    About `processors` healthy processors shared out between `groups`, a
+    crossing into each group but the first before its filler. Returns
+    the shapes built, a crossing as "crossing".
+    """
+
+    rng = random.Random(f"crossing:{scenario_id}")
+    left = processors - (CROSSING_STAGES + 2) * (len(groups) - 1)
+    share, n, built = left // len(groups), offset, []
+
+    for index, group in enumerate(groups):
+        if index:
+            _crossing(groups[index - 1], group, scenario_id, _domain(n), index, rng)
+            built.append("crossing")
+            n += 1
+
+        shapes = filler(group, scenario_id, share + (left - share * len(groups) if not index else 0),
+                        offset=n, seed=f":{index}" if index else "")
+        built += shapes
+        n += len(shapes)
+
+    return built
+
+
+def _crossing(parent, child, scenario_id: str, domain: str, index: int, rng) -> None:
+    """A source in `parent`, into `child` through an input port, CROSSING_STAGES stages, out to a sink in `parent`."""
+
+    key, level = f"x{index}", LEVELS[index - 1]
+    outer = _Flow(parent, key, f"{scenario_id} {domain}", _slug(scenario_id, domain), column=0)
+    inner = _Flow(child, key, outer.name, outer.slug, column=-1)
+    child.input_port(f"{key}.in", f"{scenario_id} In {level}")
+    child.output_port(f"{key}.out", f"{scenario_id} Out {level}")
+    outer.connect(outer.source(rng), (child, f"{key}.in"))
+    inner.links, after = outer.links, f"{key}.in"
+
+    for verb in rng.sample(VERBS, CROSSING_STAGES):
+        made = inner.place(stage, verb.lower(), verb, period="0 sec")
+        inner.connect(after, made, () if after == f"{key}.in" else ("success",))
+        after = made
+
+    inner.connect(after, f"{key}.out")
+    outer.links = inner.links
+    outer.connect((child, f"{key}.out"), outer.place(sink, "store", "Store", period="0 sec"), ())
+
+
+class Filled:
+    """
+    The build of a control: `processors` of filler and nothing else, its
+    domains from DOMAINS[offset] on; at `depth` 2 or 3, in groups inside it too.
+    """
+
+    def __init__(self, scenario_id: str, processors: int, offset: int, depth: int = 1):
+        self.id, self.processors, self.offset, self.depth = scenario_id, processors, offset, depth
         self.shapes = []
 
     def __call__(self, pg) -> None:
-        self.shapes = filler(pg, self.id, self.processors, offset=self.offset)
+        if self.depth == 1:
+            self.shapes = filler(pg, self.id, self.processors, offset=self.offset)
+
+        else:
+            self.shapes = fill_levels(levels(pg, self.id, self.depth), self.id, self.processors, self.offset)
 
 
 ALERT = 2000        # a control's alert, on its first flow's first queue: near empty when healthy
 
 
-def control(scenario_id: str, *, processors: int, offset: int = 0, title: str = "") -> Scenario:
-    """A healthy group of about `processors` processors of filler, as control `scenario_id`."""
+def control(scenario_id: str, *, processors: int, offset: int = 0, title: str = "", depth: int = 1) -> Scenario:
+    """
+    A healthy group of about `processors` processors of filler, as control
+    `scenario_id`; at `depth` 2 or 3, shared out with the groups inside it.
+    """
 
-    build = Filled(scenario_id, processors, offset)
+    build = Filled(scenario_id, processors, offset, depth)
     group = ProcessGroup(scenario_id, scenario_id)
     build(group)
     domain = _domain(offset)
@@ -168,11 +308,15 @@ def control(scenario_id: str, *, processors: int, offset: int = 0, title: str = 
     if "validate" in build.shapes:
         traps.insert(0, "The DLQs take one FlowFile in 20 from their validations by design: that is not data loss.")
 
+    if depth > 1:
+        traps.append("The input and output ports only carry FlowFiles between the groups; there is nothing to "
+                     "change on them, and the groups inside are as healthy as this one.")
+
     return Scenario(
         id=scenario_id,
         title=title or f"Healthy {domain} Group",
         symptom="healthy",
-        fault=f"None. {len(group.processors)} processors in {_flows(build.shapes)}, each far inside its capacity.",
+        fault=f"None. {count(group)} processors in {_flows(build.shapes)}, each far inside its capacity.",
         build=build,
         kpis=(Kpi(scenario_id, "connection", f"{_slug(scenario_id, domain)}-1", "queued_count", above=ALERT),),
         family="NONE",
@@ -190,14 +334,14 @@ def _slug(scenario_id: str, domain: str) -> str:
     return f"{scenario_id.lower()}-{domain.lower().replace(' ', '-')}"
 
 
-def filler(pg, scenario_id: str, count: int, *, offset: int = 0, column: int = 1) -> list:
+def filler(pg, scenario_id: str, count: int, *, offset: int = 0, column: int = 1, seed: str = "") -> list:
     """
     About `count` healthy processors in small flows of their own, each in
     its own column from `column` on, its names and shapes from DOMAINS
     and SHAPES at `offset` on. Returns the shapes built, in order.
     """
 
-    rng = random.Random(f"filler:{scenario_id}")
+    rng = random.Random(f"filler:{scenario_id}{seed}")
     built = []
 
     while count >= 3:
@@ -365,18 +509,30 @@ DECOYS = {
 
 
 SHAPE_NAMES = {"chain": ("chain", "chains"), "lanes": ("lane fan-out", "lane fan-outs"),
-               "validate": ("validation into a DLQ", "validations into a DLQ"), "rate": ("rate limit", "rate limits")}
+               "validate": ("validation into a DLQ", "validations into a DLQ"), "rate": ("rate limit", "rate limits"),
+               "crossing": ("crossing into a group", "crossings into a group")}
 DECOY_NAMES = {"batch": "a merge that batches", "retry": "a validator that retries its own failures"}
 
 
 def _shapes(shapes: list) -> str:
-    counts = {shape: shapes.count(shape) for shape in SHAPES if shape in shapes}
+    counts = {shape: shapes.count(shape) for shape in SHAPES + ("crossing",) if shape in shapes}
 
     return ", ".join(f"{n if n > 1 else 'one'} {SHAPE_NAMES[shape][n > 1]}" for shape, n in counts.items())
 
 
 def _flows(shapes: list) -> str:
     return "one small flow of its own" if len(shapes) == 1 else f"{len(shapes)} small flows of their own"
+
+
+def _nesting(scenario: Scenario) -> str:
+    """Where its groups are, for the README: "" for a flat one."""
+
+    depth = getattr(scenario.build, "depth", 1)
+    names = " and in it ".join(f"{scenario.id} {level}" for level in LEVELS[:depth - 1])
+
+    each = "each " if depth > 2 else ""
+
+    return f" The group holds {names}, {each}fed by a crossing through its input and output ports." if names else ""
 
 
 def summary(scenario: Scenario) -> str:
@@ -386,7 +542,7 @@ def summary(scenario: Scenario) -> str:
     whole, core = ProcessGroup(scenario.id, scenario.group_name), ProcessGroup(scenario.id, scenario.group_name)
     build(whole)
     build.core(core)
-    beside = len(whole.processors) - len(core.processors)
+    beside = count(whole) - count(core)
     decoy = ""
 
     if build.decoy:
@@ -395,7 +551,13 @@ def summary(scenario: Scenario) -> str:
         beside -= len(made.processors)
         decoy = f"a decoy of {len(made.processors)}, {scenario.id} {DECOY}, {DECOY_NAMES[build.decoy]}, and "
 
-    return (f"Beside {scenario.twin}'s {len(core.processors)} processors, {decoy}{beside} "
+    if isinstance(build, Nested):
+        where = " / ".join(f"{scenario.id} {level}" for level in LEVELS[:build.depth - 1])
+
+        return (f"{scenario.twin}'s {count(core)} processors, whole, in {where}; around them, {beside} healthy ones "
+                f"in {_flows(build.shapes)}: {_shapes(build.shapes)}.")
+
+    return (f"Beside {scenario.twin}'s {count(core)} processors, {decoy}{beside} "
             f"healthy ones in {_flows(build.shapes)}: {_shapes(build.shapes)}.")
 
 
@@ -406,7 +568,7 @@ def walkthrough(scenario: Scenario) -> str:
     scenario.build(group)
     alert = next(k for k in scenario.kpis if k.alert)
 
-    return (f"{len(group.processors)} healthy processors in {_flows(scenario.build.shapes)}: "
-            f"{_shapes(scenario.build.shapes)}. Each source makes one to three FlowFiles a second, and every "
-            f"stage has room to spare. The alert, at {alert.above:,.0f} FlowFiles in `{alert.component}`, should "
-            "never fire, and the only right answer is no action.")
+    return (f"{count(group)} healthy processors in {_flows(scenario.build.shapes)}: "
+            f"{_shapes(scenario.build.shapes)}.{_nesting(scenario)} Each source makes one to three FlowFiles a "
+            f"second, and every stage has room to spare. The alert, at {alert.above:,.0f} FlowFiles in "
+            f"`{alert.component}`, should never fire, and the only right answer is no action.")

@@ -484,6 +484,30 @@ handlers in the app log (show_fleet 122 s, refresh_history 111 s, most others 15
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
 inventory see only a group's own processors. Needed before p25-nested.
+- 2026-11-07: the builder's groups have input and output ports (`input_port`, `output_port`), and `connect` joins a
+  group's processors and ports to its direct children's ports, `(child, key)`; `check` refuses an end that isn't one
+  of those, a wrong `type`, or a port connected to nothing, and `processor_links` follows ports to give the
+  processor-to-processor links of a subtree. The simulator runs a port as a free pass-through (no CPU, no series),
+  so a hop through a port holds what a direct link does, and back pressure beyond a port holds the flow before it.
+  Every generated pack is byte-identical.
+- 2026-11-07: the agent sees and edits the groups inside the incident's. The inventory holds the whole subtree, each
+  processor and connection with its path ("Sub/Sub2"), and renders a `Process group: X / Sub` block per group with
+  port ends as `input port "Name"`; a flat group renders as before. `scope()` follows ports and names the child
+  groups it leaves out whole. An edit finds a target anywhere below the incident's group, bare or as "Sub/Name", and
+  refuses a name in two groups with their paths; a DLQ must be in the source's group (a connection only joins one
+  group's). The capacity check's upstream walk goes through ports. The prompt and the DLQ action's text say so, a
+  new PROMPT_VERSION. 692 pass.
+- 2026-11-07: everything that read a scenario's top-level group reads its subtree: `flow_edges` (identical for all 97
+  flat scenarios, a test pins them), the scorecard's deployed values (a "Sub/Name" target grades as Name), the docs'
+  diagram (a mermaid subgraph per child group, ports as nodes) and tables, and the large-flow summaries. Ids past S99
+  sort by number in the replay, the Scorecard and the Monitor; the replay's id regex takes three digits.
+- 2026-11-07: `scale.nest` builds a nested twin: the small twin's core whole, generator and DLQ included, in
+  "Sxx Region" (depth 2) or "Sxx Site" (depth 3), filler on every level, and per child group a healthy crossing
+  down through "Sxx In <Level>" and back up through "Sxx Out <Level>". `scale.control` takes `depth=`.
+  p25-nested (wave 3): S98 = S01 one group down (60 processors), S99 = S09 and S100 = S14 two down (80, 75),
+  S101–S102 nested controls (40, 60). The oracle replay on p25 detects all three faults, the controls stay quiet,
+  and each design fix applies two to three levels down and works. 715 pass. Not provisioned: live, it also tests
+  whether CDF takes a componentId 4–5 levels deep.
 
 ## Closed tickets
 

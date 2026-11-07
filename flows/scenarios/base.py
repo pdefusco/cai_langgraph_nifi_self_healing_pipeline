@@ -130,26 +130,30 @@ class Scenario:
         An entry takes nothing from another processor and sends to one; an
         exit sends to no other processor (a self-loop is not a way out),
         including a DLQ nothing is routed to yet. What leaves through
-        auto-terminated relationships is not counted.
+        auto-terminated relationships is not counted. The groups inside the
+        scenario's count as its own, a link through their ports as one
+        (NFH-96).
         """
 
         if self.id not in _EDGES:
-            from flows.builder.lib import ProcessGroup
+            from flows.builder.lib import ProcessGroup, processor_links, walk_groups
             from flows.builder.processors import SPLITTING, kind_of
 
             group = ProcessGroup(self.id, self.group_name)
             self.build(group)
-            names = {p["identifier"]: p["name"] for p in group.processors.values()}
-            links = [(c["source"]["id"], c["destination"]["id"]) for c in group.connections
-                     if c["source"]["id"] != c["destination"]["id"]]
+            built = group.to_dict()
+            inner = [g for _, g in walk_groups(built)]
+            processors = [p for g in inner for p in g.get("processors") or []]
+            names = {p["identifier"]: p["name"] for p in processors}
+            links = [(s, d) for s, d, _ in processor_links(built) if s != d]
             fed = {d for _, d in links}
             feeding = {s for s, _ in links}
             _EDGES[self.id] = {
                 "in": [n for i, n in names.items() if i in feeding and i not in fed],
                 "out": [n for i, n in names.items() if i not in feeding],
-                "split": [p["name"] for p in group.processors.values() if kind_of(p) in SPLITTING],
+                "split": [p["name"] for p in processors if kind_of(p) in SPLITTING],
                 "processors": list(names.values()),
-                "connections": [c["name"] for c in group.connections if c["name"]],
+                "connections": [c["name"] for g in inner for c in g.get("connections") or [] if c["name"]],
             }
 
         found = {side: list(names) for side, names in _EDGES[self.id].items()}

@@ -57,11 +57,13 @@ def bundle(artifact: str) -> dict:
 
 class ProcessGroup:
     """
-    One process group, built up with `processor()`, `connect()` and
-    `group()`, then serialised with `to_dict()`.
+    One process group, built up with `processor()`, `connect()`,
+    `group()`, `input_port()` and `output_port()`, then serialised with
+    `to_dict()`.
 
-    Processors are referred to by a short `key` unique within the group
-    ("gen", "sink"); the key only feeds the deterministic id.
+    Processors and ports are referred to by a short `key` unique within
+    the group ("gen", "sink"); the key only feeds the deterministic id. A
+    child group's port is referred to as (child, key).
     """
 
     def __init__(self, label: str, name: str, parent: "ProcessGroup | None" = None,
@@ -75,6 +77,8 @@ class ProcessGroup:
         self.parameter_context = parameter_context
         self.position = position
         self.processors = {}
+        self.input_ports = {}
+        self.output_ports = {}
         self.connections = []
         self.groups = []
 
@@ -144,22 +148,94 @@ class ProcessGroup:
         return processor
 
     # -----------------------------------------------------------------
+    # Ports
+    # -----------------------------------------------------------------
+
+    def _port(self, ports: dict, kind: str, key: str, name: str) -> dict:
+        if key in self.input_ports or key in self.output_ports or key in self.processors:
+            raise ValueError(f"{self.name}: duplicate key {key!r}")
+
+        port = {
+            "allowRemoteAccess": False,
+            "comments": "",
+            "componentType": kind,
+            "concurrentlySchedulableTaskCount": 1,
+            "groupIdentifier": self.identifier,
+            "identifier": component_id(f"port:{self.label}/{key}"),
+            "instanceIdentifier": None,
+            "name": name,
+            "portFunction": "STANDARD",
+            "position": {"x": -COLUMN_SPACING if kind == "INPUT_PORT" else COLUMN_SPACING * 4,
+                         "y": len(ports) * ROW_SPACING},
+            "scheduledState": "ENABLED",
+            "type": kind,
+        }
+
+        ports[key] = port
+
+        return port
+
+    def input_port(self, key: str, name: str) -> dict:
+        """A way in from the parent group: the parent connects to it as (this group, key)."""
+
+        return self._port(self.input_ports, "INPUT_PORT", key, name)
+
+    def output_port(self, key: str, name: str) -> dict:
+        """A way out to the parent group: the parent connects from it as (this group, key)."""
+
+        return self._port(self.output_ports, "OUTPUT_PORT", key, name)
+
+    # -----------------------------------------------------------------
     # Connections
     # -----------------------------------------------------------------
 
-    def endpoint(self, key: str) -> dict:
-        processor = self.processors[key]
+    def _end(self, end, side: str) -> tuple:
+        """
+        (component, its group, type) for a connection end: a key of this
+        group's processor or port, or (child, key) for a direct child's
+        port, its input port as a destination, its output port as a source.
+        """
+
+        if isinstance(end, tuple):
+            child, key = end
+
+            if child.parent is not self:
+                raise ValueError(f"{self.name}: {child.name} is not a direct child group")
+
+            ports = child.input_ports if side == "destination" else child.output_ports
+
+            if key not in ports:
+                raise ValueError(f"{child.name}: no {'input' if side == 'destination' else 'output'} port {key!r}")
+
+            return ports[key], child, ports[key]["type"]
+
+        if end in self.processors:
+            return self.processors[end], self, "PROCESSOR"
+
+        ports = self.input_ports if side == "source" else self.output_ports
+
+        if end in ports:
+            return ports[end], self, ports[end]["type"]
+
+        raise KeyError(end)
+
+    def endpoint(self, key, side: str = "source") -> dict:
+        component, group, kind = self._end(key, side)
 
         return {
             "comments": None,
-            "groupId": self.identifier,
-            "id": processor["identifier"],
+            "groupId": group.identifier,
+            "id": component["identifier"],
             "instanceIdentifier": None,
-            "name": processor["name"],
-            "type": "PROCESSOR",
+            "name": component["name"],
+            "type": kind,
         }
 
-    def connect(self, source: str, destination: str, relationships, name: str = "", *,
+    @staticmethod
+    def _end_label(end) -> str:
+        return f"{end[0].label}:{end[1]}" if isinstance(end, tuple) else end
+
+    def connect(self, source, destination, relationships=(), name: str = "", *,
                 object_threshold: int = 10000, size_threshold: str = "1 GB",
                 expiration: str = "0 sec",
                 load_balance: str = "DO_NOT_LOAD_BALANCE") -> dict:
@@ -167,13 +243,17 @@ class ProcessGroup:
             raise ValueError(f"{name}: unknown load balance strategy {load_balance!r}")
 
         relationships = sorted(relationships)
-        label = name or f"{source}->{destination}:{','.join(relationships)}"
+
+        if self.endpoint(source)["type"] != "PROCESSOR" and relationships:
+            raise ValueError(f"{name}: a port has no relationships to select")
+
+        label = name or f"{self._end_label(source)}->{self._end_label(destination)}:{','.join(relationships)}"
         bends = []
 
         # A self-loop with no bends is drawn on top of its processor in
         # the NiFi canvas; two bends make it visible.
-        if source == destination:
-            at = self.processors[source]["position"]
+        if source == destination and source in self.processors:
+            at =self.processors[source]["position"]
             bends = [{"x": at["x"] + 420.0, "y": at["y"] - 40.0},
                      {"x": at["x"] + 420.0, "y": at["y"] + 80.0}]
 
@@ -183,7 +263,7 @@ class ProcessGroup:
             "bends": bends,
             "comments": None,
             "componentType": "CONNECTION",
-            "destination": self.endpoint(destination),
+            "destination": self.endpoint(destination, "destination"),
             "flowFileExpiration": expiration,
             "groupIdentifier": self.identifier,
             "identifier": component_id(f"conn:{self.label}/{label}"),
@@ -236,13 +316,13 @@ class ProcessGroup:
             "funnels": [],
             "groupIdentifier": self.parent.identifier if self.parent else None,
             "identifier": self.identifier,
-            "inputPorts": [],
+            "inputPorts": list(self.input_ports.values()),
             "instanceIdentifier": None,
             "labels": [],
             "logFileSuffix": None,
             "maxConcurrentTasks": None,
             "name": self.name,
-            "outputPorts": [],
+            "outputPorts": list(self.output_ports.values()),
             "parameterContextName": self.parameter_context,
             "position": ({"x": float(self.position[0]), "y": float(self.position[1])}
                          if self.parent else None),
@@ -321,6 +401,44 @@ def iter_connections(definition: dict):
             yield path, group, connection
 
 
+def iter_ports(definition: dict):
+    for path, group in walk_groups(definition["flowContents"]):
+        for port in (group.get("inputPorts") or []) + (group.get("outputPorts") or []):
+            yield path, group, port
+
+
+def processor_links(group: dict) -> list:
+    """
+    (source id, destination id, [connection names on the way]) for every
+    processor-to-processor link in `group` and the groups inside it,
+    followed through ports; a link that leaves `group` is not one.
+    """
+
+    processors, leaving = {}, {}       # in definition order
+
+    for _, inner in walk_groups(group):
+        processors.update((p["identifier"], p) for p in inner.get("processors") or [])
+
+        for connection in inner.get("connections") or []:
+            leaving.setdefault(connection["source"]["id"], []).append(connection)
+
+    def ahead(connection, names, seen):
+        names = names + [connection.get("name") or ""]
+        end = connection["destination"]["id"]
+
+        if end in processors:
+            yield end, names
+
+        elif end not in seen:
+            for onward in leaving.get(end) or []:
+                yield from ahead(onward, names, seen | {end})
+
+    return [(source, end, names)
+            for source in processors
+            for connection in leaving.get(source) or []
+            for end, names in ahead(connection, [], frozenset())]
+
+
 # ---------------------------------------------------------------------
 # Checks
 # ---------------------------------------------------------------------
@@ -362,8 +480,43 @@ def check(definition: dict) -> dict:
         where = "/".join(path)
         names = {}
         local = {p["identifier"]: p for p in group.get("processors") or []}
+        inputs, outputs = group.get("inputPorts") or [], group.get("outputPorts") or []
+        children = group.get("processGroups") or []
 
-        for item in [group] + (group.get("processors") or []) + (group.get("connections") or []):
+        # What a connection in this group may start and end at: its own
+        # processors and ports, and the ports of the groups directly in it.
+        ends = {"source": {i: "PROCESSOR" for i in local}, "destination": {i: "PROCESSOR" for i in local}}
+        ends["source"].update((p["identifier"], "INPUT_PORT") for p in inputs)
+        ends["destination"].update((p["identifier"], "OUTPUT_PORT") for p in outputs)
+
+        for child in children:
+            ends["destination"].update((p["identifier"], "INPUT_PORT") for p in child.get("inputPorts") or [])
+            ends["source"].update((p["identifier"], "OUTPUT_PORT") for p in child.get("outputPorts") or [])
+
+        named = {p["identifier"]: p["name"] for p in list(local.values()) + inputs + outputs}
+        named.update((p["identifier"], p["name"]) for child in children
+                     for p in (child.get("inputPorts") or []) + (child.get("outputPorts") or []))
+        connected = {c[end]["id"] for c in group.get("connections") or [] for end in ("source", "destination")}
+
+        for kind, ports in (("input", inputs), ("output", outputs)):
+            for port in ports:
+                if port["groupIdentifier"] != group["identifier"]:
+                    problems.append(f"{where}/{port['name']}: groupIdentifier is not its group")
+
+                if port["identifier"] not in connected:
+                    problems.append(f"{where}: {kind} port {port['name']!r} is connected to nothing in its group")
+
+            if len({p["name"] for p in ports}) < len(ports):
+                problems.append(f"{where}: two {kind} ports with one name")
+
+        for child in children:
+            for port in (child.get("inputPorts") or []) + (child.get("outputPorts") or []):
+                if port["identifier"] not in connected:
+                    problems.append(f"{where}: {child.get('name')}'s port {port['name']!r} is connected to "
+                                    f"nothing in {group.get('name')}")
+
+        for item in ([group] + (group.get("processors") or []) + (group.get("connections") or [])
+                     + inputs + outputs):
             identifier = item.get("identifier")
 
             if identifier in ids and ids[identifier] is not item:
@@ -420,13 +573,20 @@ def check(definition: dict) -> dict:
             for end in ("source", "destination"):
                 endpoint = connection[end]
 
-                if endpoint["id"] not in local:
-                    problems.append(f"{where}/{label}: {end} is not a processor in this group")
+                if endpoint["id"] not in ends[end]:
+                    problems.append(f"{where}/{label}: {end} is not a processor or port it can "
+                                    f"{'start' if end == 'source' else 'end'} at in this group")
 
-                elif endpoint["name"] != local[endpoint["id"]]["name"]:
+                elif endpoint.get("type") != ends[end][endpoint["id"]]:
+                    problems.append(f"{where}/{label}: {end} type is not {ends[end][endpoint['id']]}")
+
+                elif endpoint["name"] != named[endpoint["id"]]:
                     problems.append(f"{where}/{label}: {end} name is stale")
 
             source = local.get(connection["source"]["id"])
+
+            if source is None and connection["selectedRelationships"]:
+                problems.append(f"{where}/{label}: a port has no relationships to select")
 
             if source is not None:
                 spec = PROCESSORS.get(source["type"].rsplit(".", 1)[-1])
