@@ -564,7 +564,7 @@ def test_a_run_that_moves_on_while_the_panel_renders_is_followed(agent, monkeypa
     monkeypatch.setattr(views, "review", render)
 
     out = gradio_app.follow_review(incident_id, key)
-    assert "The agent is diagnosing" in out[1] and out[-1] == views.review_key(store, incident_id)
+    assert "stopped before it proposed a fix" in out[1] and out[-1] == views.review_key(store, incident_id)
 
 
 def test_a_follow_that_lands_after_the_next_pick_is_dropped(agent, monkeypatch):

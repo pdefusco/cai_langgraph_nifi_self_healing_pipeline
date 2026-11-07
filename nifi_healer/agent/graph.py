@@ -24,12 +24,15 @@ go through their own pool (resume_in_background) so a reviewer's click
 returns while the deployment changes. A background run that pauses at
 review asks agent/autonomy.py whether its fix may approve itself. A run
 the LLM didn't answer leaves its incident NEW; retry_failed(), on every
-KPI poll, queues it again after config.LLM_RETRY_MINUTES.
+KPI poll, queues it again after config.LLM_RETRY_MINUTES. So does a run
+that raised: its incident goes back to NEW with why (run_failure()), and
+the retry continues from the step that raised (NFH-101).
 """
 
 import sqlite3
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -53,7 +56,8 @@ _running: dict = {}  # incident id -> Lock: one run of a thread at a time
 _waiting: dict = {}  # incident id -> Future, from submit() until the run ends
 _applying: dict = {}  # incident id -> Future, from resume_in_background() until the decision is applied
 _apply_failed: dict = {}  # incident id -> why its last background approval raised, until the next one
-_llm_failed: dict = {}  # incident id -> (runs in a row the LLM didn't answer, wall time of the last)
+_llm_failed: dict = {}  # incident id -> (runs in a row the LLM didn't answer or that raised, wall time of the last)
+_run_failed: dict = {}  # incident id -> why its last run raised, until a run ends without raising
 
 # Approvals applied at once; each one waits minutes for its deployment.
 APPLY_WORKERS = 4
@@ -124,6 +128,7 @@ def reset() -> None:
         _applying.clear()
         _apply_failed.clear()
         _llm_failed.clear()
+        _run_failed.clear()
 
 
 def _config(incident_id: str) -> dict:
@@ -198,7 +203,7 @@ def _noted(incident_id: str, values: dict) -> dict:
 
 
 def llm_failures(incident_id: str) -> int:
-    """Runs in a row of this incident the LLM didn't answer (kept in memory only)."""
+    """Runs in a row of this incident the LLM didn't answer, or that raised (kept in memory only)."""
 
     with _lock:
         return _llm_failed.get(incident_id, (0, 0.0))[0]
@@ -332,13 +337,49 @@ def _executor() -> ThreadPoolExecutor:
         return _pool
 
 
+def _stopped(incident_id: str, exc: Exception, doing: str = "run") -> None:
+    """
+    A run raised: log it with its traceback and put a DIAGNOSING incident
+    back to NEW, so the panel shows why and retry_failed() tries again on
+    the LLM's backoff. Left DIAGNOSING, it read "diagnosing" with nothing
+    running, and nothing ever ran it again (live, S50 on p22).
+    """
+
+    why = f"{type(exc).__name__}: {exc}"
+    nodes.log(f"{incident_id}: {doing} failed: {why}\n{traceback.format_exc()}")
+
+    with _lock:
+        _run_failed[incident_id] = why
+        _llm_failed[incident_id] = (_llm_failed.get(incident_id, (0, 0.0))[0] + 1, time.time())
+
+    try:
+        store = get_store()
+        incident = store.incident(incident_id)
+
+        if incident and incident["status"] == "DIAGNOSING":
+            store.update_incident(incident_id, time.time(), status="NEW")
+
+    except Exception as again:  # the panel still says the run stopped
+        nodes.log(f"{incident_id}: could not mark it NEW: {type(again).__name__}: {again}")
+
+
+def run_failure(incident_id: str) -> str:
+    """Why the incident's last run raised, or "" (kept in memory only)."""
+
+    with _lock:
+        return _run_failed.get(incident_id, "")
+
+
 def _run(incident_id: str) -> None:
     try:
         start(incident_id)
 
     except Exception as exc:  # a failed run must not kill the worker
-        nodes.log(f"{incident_id}: run failed: {type(exc).__name__}: {exc}")
+        _stopped(incident_id, exc)
         return
+
+    with _lock:
+        _run_failed.pop(incident_id, None)
 
     from nifi_healer.agent import autonomy  # it imports this module
 
@@ -354,7 +395,11 @@ def _rediagnose(incident_id: str, decision: dict) -> None:
         resume(incident_id, decision)
 
     except Exception as exc:  # a failed run must not kill the worker
-        nodes.log(f"{incident_id}: diagnosing again failed: {type(exc).__name__}: {exc}")
+        _stopped(incident_id, exc, "diagnosing again")
+        return
+
+    with _lock:
+        _run_failed.pop(incident_id, None)
 
 
 def submit(incident: dict, rediagnose: dict | None = None):

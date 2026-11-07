@@ -7,7 +7,7 @@ import pytest
 
 import config
 from nifi_healer import llm
-from nifi_healer.agent import autonomy, graph
+from nifi_healer.agent import autonomy, graph, nodes
 from nifi_healer.eval import replay, scorecard as sc
 from nifi_healer.ui import gradio_app, views
 
@@ -52,6 +52,41 @@ def test_a_timed_out_diagnosis_is_tried_again_later(agent):
     assert store.incident(incident["id"])["status"] == "PENDING_REVIEW" and graph.pending(incident["id"])
     assert graph.llm_failures(incident["id"]) == 0 and graph.retry_at(incident["id"]) is None
     assert graph.retry_failed(now=second + 3600) == 0
+
+
+def test_a_run_that_raises_goes_back_to_new_with_why_and_is_tried_again(agent, monkeypatch):
+    """Live, S50 on p22 stayed DIAGNOSING with nothing running it and a panel saying it was diagnosing (NFH-101)."""
+
+    _, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX)))
+    plan = nodes.executor.plan
+    monkeypatch.setattr(nodes.executor, "plan", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    graph.submit(incident).result()
+    due = graph.retry_at(incident["id"])
+    panel = views.review(store, client, incident["id"])
+
+    assert store.incident(incident["id"])["status"] == "NEW" and graph.run_failure(incident["id"]) == "RuntimeError: boom"
+    assert "**The last run stopped:** RuntimeError: boom" in panel["proposal"] and panel["can_diagnose"]
+    assert due == pytest.approx(time.time() + 60 * config.LLM_RETRY_MINUTES[0], abs=5)
+
+    # The retry continues at the step that raised: the LLM is not asked again.
+    monkeypatch.setattr(nodes.executor, "plan", plan)
+    assert graph.retry_failed(now=due) == 1
+    drain()
+
+    assert store.incident(incident["id"])["status"] == "PENDING_REVIEW" and graph.pending(incident["id"])
+    assert graph.run_failure(incident["id"]) == "" and graph.retry_at(incident["id"]) is None
+
+
+def test_a_diagnosing_incident_with_nothing_running_says_so(agent):
+    _, client, store, incidents, _ = agent("p1-throughput")
+    incident = incidents["S01"]
+    store.update_incident(incident["id"], time.time(), status="DIAGNOSING")
+    panel = views.review(store, client, incident["id"])
+
+    assert "stopped before it proposed a fix" in panel["proposal"] and panel["can_diagnose"]
 
 
 def test_the_wait_stops_growing_at_the_last_step(agent):

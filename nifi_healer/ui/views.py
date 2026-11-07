@@ -745,10 +745,13 @@ def review(store, client, incident_id: str | None) -> dict:
     run = graph.run_state(incident_id)
 
     if not payload and not proposal.get("diagnosis") and not proposal.get("steps"):
+        # DIAGNOSING with no run queued or running: one stopped before this app, or before NFH-101 set NEW.
         waiting = {"NEW": "Not diagnosed yet. Diagnose runs the agent (needs the LLM endpoint).",
-                   "DIAGNOSING": "The agent is diagnosing this incident."}
+                   "DIAGNOSING": "The agent's run stopped before it proposed a fix, and nothing is running it now. "
+                                 "Diagnose runs it again; so does an app restart."}
         text = waiting.get(incident["status"], "No proposal.")
-        stopped = graph.state(incident_id).get("error") if incident["status"] == "NEW" else ""
+        stopped = (graph.state(incident_id).get("error") or graph.run_failure(incident_id)
+                   if incident["status"] == "NEW" else "")
 
         if run and run[0] == "running":
             text = "The agent is diagnosing this incident; the proposal appears here when it is ready."

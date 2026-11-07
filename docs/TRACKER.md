@@ -123,6 +123,9 @@ them.
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
 | NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | Done | ac4eec8 |
 | NFH-100 | Fix | The Review Queue shows the last incident's panel for a few seconds after another is picked | Done | 4900800 |
+| NFH-101 | Fix | A run that raises leaves its incident DIAGNOSING, said to be diagnosing, and never run again | In progress | |
+| NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | In progress | |
+| NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | In progress | |
 
 ## Open tickets
 
@@ -441,6 +444,38 @@ follow saw the mismatch and drew S52 again. The decisions already refuse a panel
   pick's render whose incident is no longer the session's pick, before or after it renders, sends nothing.
 - 2026-11-06: the user pulled and restarted; picking between incidents is "significantly faster" and the stale panel
   is gone. Done.
+
+### NFH-101 · Fix · A run that raises leaves its incident DIAGNOSING
+Live, S50 on p22-wide-250 stayed DIAGNOSING for 46 minutes and more, its panel reading "The agent is diagnosing this
+incident." with nothing running it; S49, opened four minutes later, was diagnosed. The app log had
+`INC-…-S50-3926: run failed: IncompleteRead: …` (NFH-102). `_run` logged an exception and returned, so the
+incident kept DIAGNOSING; `retry_failed` re-queues only NEW incidents, and only `recover()` at the next app start
+would have run it again. Only diagnose_and_propose catches its own errors (an LLM's, setting NEW).
+- 2026-11-07: a run or a re-diagnosis that raises logs its traceback, puts a DIAGNOSING incident back to NEW and
+  counts as an LLM failure, so `retry_failed` runs it again on the same backoff (5, 15, 30 min) from the step that
+  raised, its checkpoint kept. The panel says "The last run stopped: IncompleteRead: …" and when it tries again,
+  as for an LLM timeout. A DIAGNOSING incident nothing is running (one left by an app before this) says "The
+  agent's run stopped before it proposed a fix, and nothing is running it now. Diagnose runs it again; so does an
+  app restart." 675 pass.
+
+### NFH-102 · Fix · A console download cut off mid-body raises
+The console catalog download (NFH-56's fallback for definitions over 64 KiB) caught HTTP errors, `OSError` and
+`ValueError`. Live on p22, whose definition is 1.2 MB, the body stopped at 1,043,456 bytes (1 MiB less 1 KiB) twice:
+once in the poller's processor kinds and once in S50's gather_context. `http.client.IncompleteRead` is neither, so
+it raised through `flow_definition`, and S50's run ended (NFH-101). A read-only probe of the same version from a
+laptop had read it whole.
+- 2026-11-07: `_console_get` tries a GET whose answer is cut off (`http.client.HTTPException`) 3 times, 2 s apart,
+  signed again each time, then returns an error dict ("The CDP console's answer was cut off (3 tries).") as any
+  other failed read. 675 pass.
+
+### NFH-103 · Fix · A flow definition is downloaded on every read
+Nothing kept a flow definition, though a version never changes. An agent run read the deployed version's in
+gather_context and again in each `executor.plan`, per attempt; the poller once per version; the Review panel on each
+render (NFH-100). On p22 each read is a 1.2 MB console download, the read NFH-102 saw cut off, and the slow
+handlers in the app log (show_fleet 122 s, refresh_history 111 s, most others 15–40 s) are probably these too.
+- 2026-11-07: the LiveClient keeps the last 32 definitions it read, by version CRN, as JSON text, and parses a fresh
+  copy for each caller, so no caller's edit reaches another. A failed read is not kept. The mock is unchanged (its
+  reads are local). 675 pass.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
