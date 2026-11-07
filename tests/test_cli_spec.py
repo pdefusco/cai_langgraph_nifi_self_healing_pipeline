@@ -1,12 +1,14 @@
 """Every command line this project builds is one the installed cdpcli accepts."""
 
 import base64
+import http.client
 import json
 
 import pytest
 
+import config
 from flows import packs
-from nifi_healer.cdp import cli_spec, guardrails
+from nifi_healer.cdp import cli_spec, client as client_module, guardrails
 from nifi_healer.cdp.client import Client
 from nifi_healer.cdp.mock_client import parse_options
 from nifi_healer import provisioning
@@ -128,6 +130,99 @@ def test_a_failed_fallback_says_why():
 
     assert found["error"] == CUT["error"] and found["stderr"] == CUT["stderr"]
     assert "NFH-56" in found["hint"] and found["detail"] == "The CDP console answered 403. Forbidden"
+
+
+class LiveCatalog(client_module.LiveClient):
+    """A LiveClient whose get-flow-version answers from a list, one per read."""
+
+    def __init__(self, *answers):
+        super().__init__()
+        self.answers, self.reads = list(answers), 0
+
+    def run(self, args):
+        self.reads += 1
+        return self.answers.pop(0)
+
+
+def test_a_live_client_reads_a_version_once(monkeypatch):
+    monkeypatch.setattr(config, "CDP_WORKERS", 0)
+    missing = {"error": "The CDP CLI returned an error.", "return_code": 254}
+    client = LiveCatalog(missing, DEFINITION)
+
+    assert client.flow_definition(VERSION_CRN) == missing     # not kept: the next read asks again
+    first = client.flow_definition(VERSION_CRN)
+    first["flowContents"]["processors"].append({"name": "an edit"})
+
+    assert client.flow_definition(VERSION_CRN) == DEFINITION and client.reads == 2
+
+
+def test_the_live_client_keeps_the_newest_definitions(monkeypatch):
+    monkeypatch.setattr(config, "CDP_WORKERS", 0)
+    monkeypatch.setattr(client_module, "DEFINITIONS_KEPT", 2)
+    client = LiveCatalog(*[DEFINITION] * 4)
+
+    for crn in ("crn:a", "crn:b", "crn:a", "crn:c", "crn:a", "crn:b"):
+        client.flow_definition(crn)
+
+    assert client.reads == 4 and list(client._definitions) == ["crn:a", "crn:b"]
+
+
+class Answer:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        if isinstance(self.body, Exception):
+            raise self.body
+
+        return self.body
+
+
+class Signer:
+    def add_auth(self, request):
+        request.headers["x-altus-auth"] = "signed"
+
+
+@pytest.fixture
+def console(monkeypatch):
+    """The console answers with each body in turn; returns the requests made."""
+
+    monkeypatch.setattr(config, "CDP_WORKERS", 0)
+    monkeypatch.setattr(client_module, "CONSOLE_RETRY_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(client_module.LiveClient, "_signer", staticmethod(lambda: Signer()))
+    requests, bodies = [], []
+
+    def urlopen(request, timeout):
+        requests.append(request)
+        return Answer(bodies.pop(0))
+
+    monkeypatch.setattr(client_module.urllib.request, "urlopen", urlopen)
+
+    return requests, bodies
+
+
+def test_a_console_answer_cut_off_is_asked_again(console):
+    """Live, p22's 1.2 MB definition stopped at 1 MiB and the exception ended an agent run (NFH-102)."""
+
+    requests, bodies = console
+    cut = http.client.IncompleteRead(b"{" * 1043456, 226476)
+    bodies += [cut, json.dumps(DEFINITION).encode()]
+
+    assert client_module.LiveClient().console_get("/x") == DEFINITION
+    assert len(requests) == 2 and all(r.headers["X-altus-auth"] == "signed" for r in requests)
+
+    bodies += [cut] * client_module.CONSOLE_ATTEMPTS
+    found = client_module.LiveClient().console_get("/x")
+
+    assert found["error"] == "The CDP console's answer was cut off (3 tries)."
+    assert found["detail"] == "IncompleteRead: IncompleteRead(1043456 bytes read, 226476 more expected)"
+    assert len(requests) == 2 + client_module.CONSOLE_ATTEMPTS
 
 
 def test_the_mock_cuts_and_downloads_as_live(tenant):

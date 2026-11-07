@@ -35,6 +35,7 @@ Ported from agentstudio_nifi_monitoring_and_self_healing_pipelines
 """
 
 import base64
+import http.client
 import json
 import os
 import re
@@ -79,6 +80,15 @@ WORKER_CALLS = 500
 # id (the last segment of its `bucketIdentifier`). The UI's backend, not
 # a documented API, so only a fallback for what getFlowVersion cuts short.
 CONSOLE_FLOW_VERSION_PATH = "/dfx/api/v1/catalog/flows/versions/{version_id}"
+
+# Tries of a console GET whose answer is cut off mid-body, and the pause
+# before each retry. Live, p22's 1.2 MB definition stopped at 1 MiB now and
+# then (IncompleteRead, NFH-102).
+CONSOLE_ATTEMPTS = 3
+CONSOLE_RETRY_PAUSE_SECONDS = 2
+
+# Flow definitions a LiveClient keeps, newest read last (NFH-103).
+DEFINITIONS_KEPT = 32
 
 # How a cut definition shows: cdpcli's own json.loads fails on it, and
 # a JSON decode error's message ends "(char N)"; or, cut inside a
@@ -899,6 +909,37 @@ class LiveClient(Client):
 
     def __init__(self):
         self.pool = WorkerPool(config.CDP_WORKERS) if config.CDP_WORKERS > 0 else None
+        self._definitions, self._definitions_lock = {}, threading.Lock()
+
+    def flow_definition(self, flow_version_crn: str) -> dict:
+        """
+        Read once per version, as a version never changes, and handed out
+        fresh each time, so no caller's edit reaches another. An agent run
+        read p22's 1.2 MB definition three times or more, and the poller and
+        the Review panel read it again (NFH-103). A failed read is not kept.
+        """
+
+        with self._definitions_lock:
+            text = self._definitions.pop(flow_version_crn, None)
+
+            if text is not None:
+                self._definitions[flow_version_crn] = text     # newest last
+
+        if text is None:
+            definition = super().flow_definition(flow_version_crn)
+
+            if "error" in definition:
+                return definition
+
+            text = json.dumps(definition)
+
+            with self._definitions_lock:
+                self._definitions[flow_version_crn] = text
+
+                while len(self._definitions) > DEFINITIONS_KEPT:
+                    self._definitions.pop(next(iter(self._definitions)))
+
+        return json.loads(text)
 
     def _environment(self) -> dict:
         """
@@ -980,22 +1021,36 @@ class LiveClient(Client):
         if signer is None:
             return {"error": "No CDP credentials found.", "command": command}
 
-        # The console checks content-type in the signature, even on a GET.
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        signer.add_auth(_SignedRequest("GET", url, headers))
+        for attempt in range(CONSOLE_ATTEMPTS):
+            if attempt:
+                time.sleep(CONSOLE_RETRY_PAUSE_SECONDS)
 
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
-                                        timeout=config.CDP_TIMEOUT_SECONDS) as response:
-                body = response.read().decode("utf-8", errors="replace")
+            # The console checks content-type in the signature, even on a GET.
+            # Signed again on each try: the signature carries the time.
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            signer.add_auth(_SignedRequest("GET", url, headers))
 
-        except urllib.error.HTTPError as exc:
-            return {"error": f"The CDP console answered {exc.code}.", "command": command,
-                    "detail": exc.read().decode("utf-8", errors="replace")[:MAX_RAW_OUTPUT_CHARS]}
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                            timeout=config.CDP_TIMEOUT_SECONDS) as response:
+                    body = response.read().decode("utf-8", errors="replace")
 
-        except (OSError, ValueError) as exc:     # URLError and timeouts are OSErrors
-            return {"error": "The CDP console could not be reached.", "command": command,
-                    "detail": f"{type(exc).__name__}: {exc}"}
+                break
+
+            except urllib.error.HTTPError as exc:
+                return {"error": f"The CDP console answered {exc.code}.", "command": command,
+                        "detail": exc.read().decode("utf-8", errors="replace")[:MAX_RAW_OUTPUT_CHARS]}
+
+            except http.client.HTTPException as exc:     # IncompleteRead: cut off mid-body; a GET, so again
+                cut = {"error": f"The CDP console's answer was cut off ({CONSOLE_ATTEMPTS} tries).",
+                       "command": command, "detail": f"{type(exc).__name__}: {exc}"}
+
+            except (OSError, ValueError) as exc:     # URLError and timeouts are OSErrors
+                return {"error": "The CDP console could not be reached.", "command": command,
+                        "detail": f"{type(exc).__name__}: {exc}"}
+
+        else:
+            return cut
 
         try:
             result = json.loads(body)
