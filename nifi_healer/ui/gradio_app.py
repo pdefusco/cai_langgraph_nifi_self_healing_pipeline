@@ -279,21 +279,50 @@ def _panel(incident_id) -> tuple:
     return show_review(incident_id) + (key,)
 
 
-@_timed
-def select_review(incident_id):
-    return _panel(incident_id)
+# Each browser session's latest pick in the Review Queue. A panel renders
+# for seconds on a large flow (its definition is read from the tenant), so
+# a follow that fired for the last pick can land after the next pick's
+# panel: live, S51's showed over S52's until the next follow (NFH-100).
+_picks = {}
+
+
+def _pick(request, incident_id):
+    if session := getattr(request, "session_hash", None):
+        _picks.pop(session, None)
+        _picks[session] = incident_id
+
+        while len(_picks) > 1000:
+            _picks.pop(next(iter(_picks)))
+
+
+def _picked_since(request, incident_id) -> bool:
+    """Whether the session has picked another incident than incident_id since."""
+
+    session = getattr(request, "session_hash", None)
+
+    return bool(session) and _picks.get(session, incident_id) != incident_id
 
 
 @_timed
-def follow_review(incident_id, seen):
+def select_review(incident_id, request: gr.Request = None):
+    _pick(request, incident_id)
+    out = _panel(incident_id)
+
+    return (gr.skip(),) * (PANEL_OUTPUTS + 1) if _picked_since(request, incident_id) else out
+
+
+@_timed
+def follow_review(incident_id, seen, request: gr.Request = None):
     """Re-render the panel only when it would change (an approval being applied finishes)."""
 
     key = views.review_key(get_store(), incident_id)
 
-    if key == seen:
+    if key == seen or _picked_since(request, incident_id):
         return (gr.skip(),) * (PANEL_OUTPUTS + 1)
 
-    return _panel(incident_id)
+    out = _panel(incident_id)
+
+    return (gr.skip(),) * (PANEL_OUTPUTS + 1) if _picked_since(request, incident_id) else out
 
 
 def caller(request: gr.Request | None) -> tuple:

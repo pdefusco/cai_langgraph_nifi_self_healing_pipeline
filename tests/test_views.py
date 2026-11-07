@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 import time
+import types
 
 import gradio as gr
 import pytest
@@ -552,6 +553,32 @@ def test_a_run_that_moves_on_while_the_panel_renders_is_followed(agent, monkeypa
 
     out = gradio_app.follow_review(incident_id, key)
     assert "The agent is diagnosing" in out[1] and out[-1] == views.review_key(store, incident_id)
+
+
+def test_a_follow_that_lands_after_the_next_pick_is_dropped(agent, monkeypatch):
+    # Live: a slow follow of S51's panel, just approved, landed after S52 was picked and showed S51 over it.
+    _, client, store, incidents, _ = agent("p1-throughput")
+    s01, s02 = incidents["S01"]["id"], incidents["S02"]["id"]
+    browser, other = types.SimpleNamespace(session_hash="a"), types.SimpleNamespace(session_hash="b")
+    render = views.review
+
+    *_, seen = gradio_app.select_review(s01, browser)
+    store.update_incident(s01, client.now(), status="DIAGNOSING")
+
+    def picked_meanwhile(store_, client_, incident_id):
+        if incident_id == s01:
+            assert gradio_app.select_review(s02, browser)[-1] == views.review_key(store, s02)
+
+        return render(store_, client_, incident_id)
+
+    monkeypatch.setattr(views, "review", picked_meanwhile)
+    skipped = (gr.skip(),) * (gradio_app.PANEL_OUTPUTS + 1)
+    assert gradio_app.follow_review(s01, seen, browser) == skipped
+    assert gradio_app.follow_review(s01, seen, browser) == skipped  # nor once it has moved on
+
+    # Another browser's pick is its own.
+    assert gradio_app.select_review(s01, other)[-1] == views.review_key(store, s01)
+    assert gradio_app.follow_review(s02, "", browser)[-1] == views.review_key(store, s02)
 
 
 def test_blocks_build_and_handlers(agent):

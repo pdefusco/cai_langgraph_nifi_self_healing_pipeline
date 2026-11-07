@@ -121,7 +121,8 @@ them.
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
-| NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | In progress | |
+| NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | In progress | ac4eec8 |
+| NFH-100 | Fix | The Review Queue shows the last incident's panel for a few seconds after another is picked | In progress | |
 
 ## Open tickets
 
@@ -402,6 +403,22 @@ So the pack was polled and charted, its rows in the Fleet tab, and nothing said 
   DATA_DIR/app.owner at start, and 05 ends by reading it: "the running app (started …) knows every scenario of these
   packs", "RESTART NEEDED: …", or, for an app older than this, a note that it cannot tell. Next: push, restart the
   app, and see S51–S53 open on live.
+- 2026-11-06: after the restart, S51, S52 and S53 opened on live. S51's proposal was its design fix (the run schedule
+  of S51 Drain to 1 sec), and the user approved it (disarmed, a dry run). S52's was its design fix too (route S52
+  Validator's failure to S52 DLQ), which the first LLM replay of p23 had missed. S53's too (enable S53 Tokenize
+  Lane 3), the rationale ruling out both traps (higher thresholds, other processors' scheduling). 3 of 3 design fixes
+  live among 24 sibling controls. p23's groups are all under 60 processors, so these prompts were not scoped
+  (NFH-97); p22 is the live test of that.
+
+### NFH-100 · Fix · The Review Queue shows the last incident's panel after another is picked
+Live, with S52 open in the Review Queue just after S51 was approved, the panel showed S51 for a few seconds, now and
+then. The follow timer (3 s) re-renders the picked incident's panel when its state moves, as S51's did after
+approval (approved, applying, the dry run), and on a large flow a render takes seconds, because it reads the flow
+definition from the tenant. A follow that fired for S51 landed after S52 was picked and its panel had shown; the next
+follow saw the mismatch and drew S52 again. The decisions already refuse a panel the dropdown does not name
+(`_shows_another`), so nothing was sent to the wrong incident.
+- 2026-11-06: the app keeps each browser session's latest pick (`_picks`, by Gradio's session hash). A follow or a
+  pick's render whose incident is no longer the session's pick, before or after it renders, sends nothing.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
