@@ -250,8 +250,8 @@ def _queue_at(incident_id):
     return gr.update(choices=views.queue_choices(get_store(), keep=incident_id), value=incident_id)
 
 
-# show_review's outputs: evidence, proposal, diff, commands, steps and the five buttons (Hold among them).
-PANEL_OUTPUTS = 10
+# show_review's outputs: evidence, proposal, change, diff, commands, steps and the five buttons (Hold among them).
+PANEL_OUTPUTS = 11
 
 
 @_timed
@@ -259,7 +259,7 @@ def show_review(incident_id):
     view = views.review(get_store(), get_client(), incident_id)
     pending = view["pending"]
 
-    return (view["evidence"], view["proposal"], view["diff"], view["commands"],
+    return (view["evidence"], view["proposal"], view["change"], view["diff"], view["commands"],
             gr.Code(value=view["steps"], interactive=pending),
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
@@ -763,7 +763,12 @@ def build() -> gr.Blocks:
                     with gr.Column(scale=3):
                         proposal = gr.Markdown()
 
-                diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True, label="Change")
+                gr.Markdown("**Change**")
+                change = gr.Markdown()
+
+                with gr.Accordion("Every field changed", open=False):
+                    diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True)
+
                 commands = gr.Code(language="shell", label="Exact cdp commands", interactive=False)
                 steps = gr.Code(language="json", label="Steps (edit, then Submit edit to re-validate)",
                                 interactive=False)
@@ -780,8 +785,8 @@ def build() -> gr.Blocks:
                     hold_btn = gr.Button("Hold for review", visible=False)
 
                 review_result = gr.Markdown()
-                panel = [evidence, proposal, diff, commands, steps, approve_btn, edit_btn, reject_btn, diagnose_btn,
-                         hold_btn]
+                panel = [evidence, proposal, change, diff, commands, steps, approve_btn, edit_btn, reject_btn,
+                         diagnose_btn, hold_btn]
                 seen = gr.State("")
                 queue_timer = gr.Timer(5.0)
                 packs_timer = gr.Timer(30.0)

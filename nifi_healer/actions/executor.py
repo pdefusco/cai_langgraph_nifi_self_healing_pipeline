@@ -305,7 +305,8 @@ def _plan_parameters(client: Client, incident: dict, steps: list, report: dict,
             raise Refused(f"{name} is already {value!r}")
 
         updates.setdefault(context, []).append({"name": name, "value": value})
-        report["changes"].append(f"{context}.{name}: {parameter.get('value')!r} -> {value!r}")
+        report["changes"].append(f"parameter {name} ({context}): {edits.shown(parameter.get('value'))} → "
+                                 f"{edits.shown(value)}")
         report["diff"].append({"path": f"parameters[{context}].{name}",
                                "before": parameter.get("value"), "after": value})
 
@@ -347,7 +348,7 @@ def _plan_sizing(client: Client, incident: dict, steps: list, report: dict,
         "--cluster-size", json.dumps({"name": step["cluster_size"]}),
         "--static-node-count", step["nodes"],
     ]
-    report["changes"] = [f"sizing: {size} x{nodes} -> {step['cluster_size']} x{step['nodes']}"]
+    report["changes"] = [f"deployment size: {size} ×{nodes} → {step['cluster_size']} ×{step['nodes']}"]
     report["diff"] = [{"path": "deployment.clusterSize", "before": size, "after": step["cluster_size"]},
                       {"path": "deployment.staticNodeCount", "before": nodes, "after": step["nodes"]}]
     report["_writes"] = [("dfworkload", args)]
@@ -430,7 +431,7 @@ def _plan_version_rollback(client: Client, incident: dict, original: dict, diff:
     listen = bool(guardrails.expected_for(pack).get("has_listen_components"))
 
     report["base_flow_version_crn"] = deployed
-    report["changes"] = [f"flow version: v{facts['flow_version']} -> v{version.get('version')}"]
+    report["changes"] = [f"flow version: v{facts['flow_version']} → v{version.get('version')}"]
     report["diff"] = [{"path": d["path"], "before": d.get("after"), "after": d.get("before")} for d in diff]
     report["commands"] = [command_line(client.argv("df", guardrails.change_flow_version_args(
         deployment, flow, back, listen)))]

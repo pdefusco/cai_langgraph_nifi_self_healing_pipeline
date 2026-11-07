@@ -73,7 +73,7 @@ them.
 | NFH-48 | Pack | p19-daily-cycle: S42–S43 (control) | Built | d8b6da4 |
 | NFH-49 | Pack | p20-big-healthy: S44–S45 (control) | Built | d8b6da4 |
 | NFH-50 | Ops | Phase 4 M6: live rollout and the review pass | In progress | |
-| NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | Parked | |
+| NFH-51 | Feature | Review Queue change table in plain sentences, canvas fields hidden | In progress | |
 | NFH-52 | Feature | Scorecard refreshes when its tab opens | Parked | |
 | NFH-53 | Feature | Scorecard grades a value "at least the acceptable one", and a resize by its size | Done | 93491e2 |
 | NFH-54 | Feature | The agent sees every reading in its process group, not only the breached ones | Done | e93d361 |
@@ -121,8 +121,8 @@ them.
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
-| NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | In progress | ac4eec8 |
-| NFH-100 | Fix | The Review Queue shows the last incident's panel for a few seconds after another is picked | In progress | |
+| NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | Done | ac4eec8 |
+| NFH-100 | Fix | The Review Queue shows the last incident's panel for a few seconds after another is picked | Done | 4900800 |
 
 ## Open tickets
 
@@ -177,6 +177,12 @@ The change table shows raw diff paths, including canvas-only fields such as conn
 plain sentences the edit already writes (`s09-failure-loop: destination 'S09 Validator' -> 'S09 DLQ'`), with the
 cosmetic and id fields behind "show all fields". Display only.
 - 2026-10-20: found on S09. Parked.
+- 2026-11-06: raised again on live S52, whose change was diff paths the user could not check against the proposal.
+  The Change section is now the edit's sentences, one per setting, in the NiFi UI's names and before → after
+  ("S51 Drain: run schedule 10 sec → 1 sec"; S52: "s52-to-dlq: new connection from S52 Validator to S52 DLQ",
+  "carries failure", "S52 Validator: no longer auto-terminates failure", "S52 DLQ: state DISABLED → ENABLED"). Every
+  field, the canvas ones and ids included, is behind **Every field changed**. Parameter, resize and version-rollback
+  changes read the same way. A test checks every scenario's known fix reads without definition key names.
 
 ### NFH-52 · Feature · Scorecard refreshes when its tab opens
 The Scorecard renders only on page load and on its own Refresh button.
@@ -419,6 +425,8 @@ follow saw the mismatch and drew S52 again. The decisions already refuse a panel
 (`_shows_another`), so nothing was sent to the wrong incident.
 - 2026-11-06: the app keeps each browser session's latest pick (`_picks`, by Gradio's session hash). A follow or a
   pick's render whose incident is no longer the session's pick, before or after it renders, sends nothing.
+- 2026-11-06: the user pulled and restarted; picking between incidents is "significantly faster" and the stale panel
+  is gone. Done.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the

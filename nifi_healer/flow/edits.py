@@ -12,6 +12,10 @@ of the flow is an error, so a proposal cannot pass review by doing
 nothing. Component identifiers are kept, so KPIs (keyed by component
 id) and queued FlowFiles survive the version change.
 
+The changes apply returns are the sentences a reviewer reads in the
+Review Queue ("S51 Drain: run schedule 30 sec → 1 sec"), the diff
+behind them (NFH-51).
+
 validate_edit compares the problems lib.check and the simulator's
 compiler find before and after, and reports only the ones the edit
 introduced: the faulty baseline is allowed its own faults.
@@ -51,11 +55,33 @@ def _connection(group: dict, name: str) -> dict:
     raise EditError(f"no connection named {name!r} in {group.get('name')!r} (connections: {names})")
 
 
-def _set(item: dict, key: str, value, label: str, changes: list) -> None:
+# The settings a step sets, as the NiFi UI names them.
+FIELDS = {
+    "concurrentlySchedulableTaskCount": "concurrent tasks",
+    "schedulingPeriod": "run schedule",
+    "backPressureObjectThreshold": "back pressure object threshold",
+    "backPressureDataSizeThreshold": "back pressure size threshold",
+    "flowFileExpiration": "FlowFile expiration",
+    "penaltyDuration": "penalty duration",
+    "yieldDuration": "yield duration",
+    "backoffMechanism": "retry backoff",
+    "maxBackoffPeriod": "max backoff period",
+    "retryCount": "retry count",
+    "scheduledState": "state",
+}
+
+
+def shown(value) -> str:
+    """A setting's value in a change sentence."""
+
+    return "unset" if value is None else "empty" if value == "" else str(value)
+
+
+def _set(item: dict, key: str, value, label: str, changes: list, field: str = "") -> None:
     if item.get(key) == value:
         raise EditError(f"{label}: {key} is already {value!r}")
 
-    changes.append(f"{label}: {key} {item.get(key)!r} -> {value!r}")
+    changes.append(f"{label}: {field or FIELDS.get(key, key)} {shown(item.get(key))} → {shown(value)}")
     item[key] = value
 
 
@@ -108,8 +134,8 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
         target = next((c for c in outgoing if set(c["selectedRelationships"]) <= wanted), None)
 
         if target is not None:
-            changes.append(f"{target.get('name') or target['identifier']}: destination "
-                           f"{target['destination']['name']!r} -> {dlq['name']!r}")
+            changes.append(f"{target.get('name') or target['identifier']}: now goes to {dlq['name']}, "
+                           f"not {target['destination']['name']}")
             target["destination"] = _endpoint(group, dlq)
             target["bends"] = []
 
@@ -142,7 +168,7 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
             "zIndex": 0,
         }
         connections.append(target)
-        changes.append(f"{name}: new connection {label} -> {dlq['name']}")
+        changes.append(f"{name}: new connection from {label} to {dlq['name']}")
 
     added = sorted(wanted - set(target["selectedRelationships"]))
     target["selectedRelationships"] = sorted(set(target["selectedRelationships"]) | wanted)
@@ -179,7 +205,7 @@ def _route_to_dlq(group: dict, step: dict, changes: list) -> None:
 
     if dlq.get("scheduledState") == "DISABLED":
         dlq["scheduledState"] = "ENABLED"
-        changes.append(f"{dlq['name']}: scheduledState DISABLED -> ENABLED")
+        changes.append(f"{dlq['name']}: state DISABLED → ENABLED")
 
 
 def _apply_step(group: dict, step: dict, changes: list) -> None:
@@ -255,7 +281,8 @@ def _apply_step(group: dict, step: dict, changes: list) -> None:
         if current is not None and "#{" in str(current):
             raise EditError(f"{target}: {key!r} is {current!r}, a parameter; use UPDATE_PARAMETER")
 
-        _set(processor.setdefault("properties", {}), key, str(step["value"]), f"{target}.{key}", changes)
+        _set(processor.setdefault("properties", {}), key, str(step["value"]), target, changes,
+             field=f"property {key}")
 
     elif kind == "ROUTE_RELATIONSHIP_TO_DLQ":
         _route_to_dlq(group, step, changes)

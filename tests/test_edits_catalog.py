@@ -37,6 +37,10 @@ def test_known_fix_applies_cleanly(definitions, scenario_id, label, steps):
     assert report["ok"], report["problems"]
     assert changes and report["diff"]
 
+    # Each change reads as a sentence, in the NiFi UI's names, not the definition's (NFH-51).
+    for change in changes:
+        assert "->" not in change and not set(edits.FIELDS) & set(change.replace(":", " ").split()), change
+
 
 def test_every_scenario_fix_is_in_bounds():
     for sid, scenario in packs.SCENARIOS.items():
@@ -141,3 +145,19 @@ def test_routes_of_one_processor_to_one_dlq_are_one_step():
     assert merged == [dict(route, relationship=["Failure", "No Retry", "Retry"]), other, tasks]
     assert catalog.check_steps(merged[:2]) == [] and route["relationship"] == "Retry"     # the input is kept
     assert catalog.merge_routes([route, dict(route, dlq="Other DLQ")])[1]["dlq"] == "Other DLQ"
+
+
+def test_a_fix_reads_as_sentences(definitions):
+    # Live: S52's change was three diff paths, one of them a new connection reading "absent" -> "added".
+    definition = definitions["p23-siblings"]
+    _, changes = edits.apply(definition, "S52 Auto-terminated Failures Among Siblings",
+                             [catalog.normalize(s) for s in packs.SCENARIOS["S52"].expected])
+
+    assert changes == ["s52-to-dlq: new connection from S52 Validator to S52 DLQ",
+                       "s52-to-dlq: carries failure",
+                       "S52 Validator: no longer auto-terminates failure",
+                       "S52 DLQ: state DISABLED → ENABLED"]
+
+    _, changes = edits.apply(definition, "S51 Slow Run Schedule Among Siblings",
+                             [catalog.normalize(s) for s in packs.SCENARIOS["S51"].expected])
+    assert changes == ["S51 Drain: run schedule 10 sec → 1 sec"]

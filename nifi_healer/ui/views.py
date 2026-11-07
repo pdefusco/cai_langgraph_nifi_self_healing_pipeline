@@ -568,14 +568,25 @@ def window_line(window: dict | None, now: float) -> str:
         reason=window.get("reason") or "?", by=window.get("decided_by") or "someone")
 
 
+def change_list(plan: dict) -> str:
+    """The change a plan makes, a sentence per setting, for the review panel."""
+
+    if plan.get("changes"):
+        return "\n".join(f"- {c}" for c in plan["changes"])
+
+    return "See every field changed below." if plan.get("diff") else ""
+
+
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
-    {evidence, proposal, diff, commands, steps, can_approve, can_diagnose,
-    can_hold, pending, status}.
+    {evidence, proposal, change, diff, commands, steps, can_approve,
+    can_diagnose, can_hold, pending, status}. change is the plan's
+    sentences, one per setting; diff is every field the edit changes,
+    canvas and ids included, behind it (NFH-51).
     """
 
-    blank = {"evidence": "Select an incident.", "proposal": "", "diff": [], "commands": "",
+    blank = {"evidence": "Select an incident.", "proposal": "", "change": "", "diff": [], "commands": "",
              "steps": "", "can_approve": False, "can_diagnose": False, "can_hold": False, "pending": False,
              "status": ""}
     incident = store.incident(incident_id) if incident_id else None
@@ -718,6 +729,7 @@ def review(store, client, incident_id: str | None) -> dict:
     return {
         "evidence": "\n".join(evidence),
         "proposal": "\n\n".join(text),
+        "change": change_list(plan),
         "diff": diff,
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": json.dumps(proposal.get("steps") or [], indent=2),
