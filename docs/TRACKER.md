@@ -118,7 +118,7 @@ them.
 | NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | 8ca4244 |
 | NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
 | NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
-| NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
+| NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Done | 1792336 |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
 | NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | Done | ac4eec8 |
@@ -507,7 +507,7 @@ inventory see only a group's own processors. Needed before p25-nested.
   p25-nested (wave 3): S98 = S01 one group down (60 processors), S99 = S09 and S100 = S14 two down (80, 75),
   S101–S102 nested controls (40, 60). The oracle replay on p25 detects all three faults, the controls stay quiet,
   and each design fix applies two to three levels down and works. 715 pass. Not provisioned: live, it also tests
-  whether CDF takes a componentId 4–5 levels deep.
+  whether CDF takes a componentId 4–5 levels deep. On main in 1792336.
 
 ## Closed tickets
 
