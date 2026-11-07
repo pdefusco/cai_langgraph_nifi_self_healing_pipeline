@@ -123,9 +123,9 @@ them.
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
 | NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | Done | ac4eec8 |
 | NFH-100 | Fix | The Review Queue shows the last incident's panel for a few seconds after another is picked | Done | 4900800 |
-| NFH-101 | Fix | A run that raises leaves its incident DIAGNOSING, said to be diagnosing, and never run again | In progress | |
-| NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | In progress | |
-| NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | In progress | |
+| NFH-101 | Fix | A run that raises leaves its incident DIAGNOSING, said to be diagnosing, and never run again | Done | e0760e0 |
+| NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | Done | 49c641f |
+| NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
 
 ## Open tickets
 
@@ -371,6 +371,7 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   p22–p24 existed (c634fef), so it could not place S78–S97 in a group and would have opened no incident whatever
   they read (NFH-99). The controls' KPIs were below their thresholds, so they would likely have stayed quiet; this
   has to be checked again after the restart.
+- 2026-11-06/07: p22-wide-250 live on pdf110526 (the user's go-ahead), the first live test of NFH-97's scoping (groups of 250). S50 opened 21:26 PST and S49 21:30; both look-alikes stayed healthy, s49-exports-2 near 5,000 as designed. S49's first proposal valid. S50's run raised on a cut-off definition download (NFH-101 to NFH-103); after the restart its proposal was its design fix (route s50-failure-loop to S50 DLQ, enable the DLQ), ruling out both traps (thresholds, tasks or schedules) and not touching the decoy.
 
 ### NFH-97 · Feature · A prompt budget for large groups
 The prompt shows the whole incident's group: every processor with every property, and a reading for every
@@ -457,6 +458,7 @@ would have run it again. Only diagnose_and_propose catches its own errors (an LL
   as for an LLM timeout. A DIAGNOSING incident nothing is running (one left by an app before this) says "The
   agent's run stopped before it proposed a fix, and nothing is running it now. Diagnose runs it again; so does an
   app restart." 675 pass.
+- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in e0760e0.
 
 ### NFH-102 · Fix · A console download cut off mid-body raises
 The console catalog download (NFH-56's fallback for definitions over 64 KiB) caught HTTP errors, `OSError` and
@@ -467,6 +469,7 @@ laptop had read it whole.
 - 2026-11-07: `_console_get` tries a GET whose answer is cut off (`http.client.HTTPException`) 3 times, 2 s apart,
   signed again each time, then returns an error dict ("The CDP console's answer was cut off (3 tries).") as any
   other failed read. 675 pass.
+- 2026-11-07: deployed with NFH-101 and NFH-103; S50's re-run read the definition and proposed. Done in 49c641f.
 
 ### NFH-103 · Fix · A flow definition is downloaded on every read
 Nothing kept a flow definition, though a version never changes. An agent run read the deployed version's in
@@ -476,6 +479,7 @@ handlers in the app log (show_fleet 122 s, refresh_history 111 s, most others 15
 - 2026-11-07: the LiveClient keeps the last 32 definitions it read, by version CRN, as JSON text, and parses a fresh
   copy for each caller, so no caller's edit reaches another. A failed read is not kept. The mock is unchanged (its
   reads are local). 675 pass.
+- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in 49c641f.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
