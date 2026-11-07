@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 
 import config
-from nifi_healer import chaos, llm
+from nifi_healer import chaos, fleet, llm
 from nifi_healer.actions import executor, rollback
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
@@ -156,6 +156,12 @@ def fleet_header(snapshot: dict) -> str:
 
     if paused:
         lines.append("Detection paused for " + "; ".join(paused))
+
+    unknown = [fleet.unknown_note(name, view["unknown_scenarios"]) for name, view in packs.items()
+               if view.get("unknown_scenarios")]
+
+    if unknown:
+        lines.insert(0, "⚠ **Detection off** for " + "; ".join(unknown))
 
     late = falling_behind(beat)
 

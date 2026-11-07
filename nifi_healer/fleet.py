@@ -20,6 +20,13 @@ read back from the thing we are about to mutate.
         }
       }
     }
+
+A KPI's signals take their process group from this build's scenarios
+(packs.SCENARIOS), and a signal without one opens no incident. A pack
+registered after the app started, from a newer commit, is polled but
+silent until the app restarts: unknown_scenarios() names what the app
+cannot place, for the Fleet header and 05 (NFH-99). The running app
+records the scenarios it knows in DATA_DIR/app.owner at start.
 """
 
 import json
@@ -27,6 +34,7 @@ import os
 import threading
 
 import config
+from flows import packs
 
 _LOCK = threading.RLock()
 
@@ -87,3 +95,36 @@ def deployed_packs() -> dict:
         for name, entry in read()["packs"].items()
         if entry.get("deployment_crn") and entry.get("deployed_flow_crn")
     }
+
+
+def unknown_scenarios(entry: dict, known=None) -> list:
+    """The scenarios `entry`'s KPIs name that `known` (this build's, by default) does not, sorted."""
+
+    known = set(packs.SCENARIOS if known is None else known)
+
+    return sorted({k.get("scenario") for k in entry.get("kpis") or [] if k.get("scenario")} - known)
+
+
+def unknown_note(name: str, scenarios: list) -> str:
+    """What unknown_scenarios() means for pack `name`, in a sentence."""
+
+    shown = ", ".join(scenarios) if len(scenarios) <= 3 else f"{scenarios[0]} … {scenarios[-1]}"
+    count = f" ({len(scenarios)} scenarios)" if len(scenarios) > 3 else ""
+
+    return (f"{name}: this build of the app does not know {shown}{count}, so their signals open no "
+            "incident; restart the app (pull_and_restart.py) to watch them")
+
+
+def owner_file() -> str:
+    return os.path.join(config.DATA_DIR, "app.owner")
+
+
+def running_app() -> dict:
+    """What the running app recorded at start ({host, pid, started, scenarios}), or {} if nothing."""
+
+    try:
+        with open(owner_file()) as handle:
+            return json.load(handle)
+
+    except (OSError, ValueError):
+        return {}

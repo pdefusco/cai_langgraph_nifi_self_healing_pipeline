@@ -3,12 +3,37 @@ Provisioning on a mock tenant: a rebuilt baseline imported as a new
 version, and the flow-only reset that deploys it without undoing a fix.
 """
 
+import importlib
 import json
+import os
+import sys
 
 import config
 from flows.builder.lib import iter_processors
 from flows.scenarios.p5_parameters import CORRECT_URL
 from nifi_healer import fleet, provisioning
+from nifi_healer.ui import gradio_app
+
+
+def test_05_says_when_the_running_app_needs_a_restart(tenant, tmp_path):
+    # A pack newer than the app is polled but opens no incident until it restarts (NFH-99).
+    tenant("p1-throughput", "p23-siblings")
+    sys.path.insert(0, os.path.join(config.REPO_ROOT, "provision"))
+    register = importlib.import_module("05_register_fleet")
+    names = ["p1-throughput", "p23-siblings"]
+
+    assert "does not say which scenarios it knows" in register.restart_note(names)
+
+    gradio_app._claim_data_dir()
+    assert "knows every scenario of these packs" in register.restart_note(names)
+
+    owner = json.loads((tmp_path / "app.owner").read_text())
+    (tmp_path / "app.owner").write_text(json.dumps(dict(owner, scenarios=[f"S{n:02d}" for n in range(1, 51)])))
+    note = register.restart_note(names)
+
+    assert note.startswith("RESTART NEEDED: the running app started ")
+    assert "p23-siblings: this build of the app does not know S51 … S77 (27 scenarios)" in note
+    assert "p1-throughput" not in note
 
 
 def test_a_new_baseline_is_deployed_without_undoing_a_parameter_fix(tenant, monkeypatch):

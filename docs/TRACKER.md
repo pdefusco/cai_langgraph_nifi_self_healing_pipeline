@@ -121,6 +121,7 @@ them.
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Open | |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
+| NFH-99 | Fix | A pack provisioned after the app started is polled but never opens an incident | In progress | |
 
 ## Open tickets
 
@@ -342,6 +343,10 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   0 s, CDP failures 0.0%, container CPU p95 1.3%, 76 CDP calls/min; poll jobs queued 6 (peak 11) and health reads
   20 s late, both up a little since p24. The deployment itself was Concerning Health from 14:24: a WARN bulletin
   from the filler's DLQs, which the sim does not model (NFH-98).
+- 2026-11-06 (correction): the "0 false alarms" above proves nothing. The running app was started on 11-05, before
+  p22–p24 existed (c634fef), so it could not place S78–S97 in a group and would have opened no incident whatever
+  they read (NFH-99). The controls' KPIs were below their thresholds, so they would likely have stayed quiet; this
+  has to be checked again after the restart.
 
 ### NFH-97 · Feature · A prompt budget for large groups
 The prompt shows the whole incident's group: every processor with every property, and a reading for every
@@ -383,6 +388,20 @@ nothing; but on p21–p23 the filler's bulletins would bury a twin's own.
   `--new-baseline`, 06 `--flow-only`), which should go Good Health.
 - 2026-11-06: live (`rebaseline_p24.py`: git-pull, 01 `--new-baseline`, 06 `--flow-only` armed in its own job
   only, 05): p24-healthy-500 on the rebuilt flow is Good Health, the bulletin alert gone. Done.
+
+### NFH-99 · Fix · A pack provisioned after the app started is polled but never opens an incident
+Live, p23-siblings was provisioned on pdf110526 and, 40 minutes on, none of S51–S53 had opened, though the probe
+read s51-backlog 1,826 against 500 and s53-to-lane-3 2,000 against 1,500. A signal takes its process group from the
+running build's scenarios (`detectors.group_name`, `packs.SCENARIOS`) and `by_group` drops a signal without one. The
+app had started on 11-05, before p22–p24 were added; the git-pull job updates the files but not the running modules.
+So the pack was polled and charted, its rows in the Fleet tab, and nothing said its signals went nowhere.
+- 2026-11-06: `fleet.unknown_scenarios(entry)` names the scenarios a pack's KPIs read that the build doesn't know.
+  The poller logs it once per change ("detection off") and puts it on the view, and the Fleet header leads with
+  "⚠ Detection off for p23-siblings: this build of the app does not know S51 … S77 (27 scenarios), so their signals
+  open no incident; restart the app (pull_and_restart.py) to watch them". The app writes the scenarios it knows into
+  DATA_DIR/app.owner at start, and 05 ends by reading it: "the running app (started …) knows every scenario of these
+  packs", "RESTART NEEDED: …", or, for an app older than this, a note that it cannot tell. Next: push, restart the
+  app, and see S51–S53 open on live.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the

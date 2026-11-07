@@ -17,10 +17,15 @@ problem here is one the app will refuse to touch.
 project was copied without var/data) from the tenant, by exact name in
 our service. It refuses when the name is ambiguous or the pack is still
 registered. Run 04 afterwards to record the charts again.
+
+Last, it says whether the running app knows each pack's scenarios. A
+pack added after the app started is polled but opens no incident until
+the app restarts (NFH-99).
 """
 
 import argparse
 import sys
+import time
 
 import _common
 
@@ -85,7 +90,31 @@ def main() -> int:
 
     deployed = sum(1 for row in rows if row[1] != "not deployed")
     print(f"\n{deployed} of {len(rows)} pack(s) registered; the app can watch them")
+    print(restart_note([name for name, state, *_ in rows if state != "not deployed"]))
     return 0
+
+
+def restart_note(names: list) -> str:
+    """
+    Whether the running app knows these packs' scenarios. Its signals
+    take their process group from its own build, so a pack newer than the
+    app is polled but opens no incident until it restarts (NFH-99).
+    """
+
+    app = fleet.running_app()
+
+    if "scenarios" not in app:
+        return ("note: the running app does not say which scenarios it knows (no app, or a build before "
+                "NFH-99); if a pack here is new to it, restart it (pull_and_restart.py) so it can open incidents")
+
+    started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(app.get("started", 0)))
+    unknown = [fleet.unknown_note(name, found) for name in names
+               if (found := fleet.unknown_scenarios(fleet.pack(name), app["scenarios"]))]
+
+    if not unknown:
+        return f"the running app (started {started}) knows every scenario of these packs"
+
+    return f"RESTART NEEDED: the running app started {started}. " + "; ".join(unknown)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ import traceback
 import gradio as gr
 
 import config
+from flows.packs import SCENARIOS
 from nifi_healer import fleet
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
@@ -106,13 +107,18 @@ def _snapshot() -> dict:
 
 
 def _owner_file() -> str:
-    return os.path.join(config.DATA_DIR, "app.owner")
+    return fleet.owner_file()
 
 
 def _claim_data_dir() -> None:
-    """Record this process as the data directory's user, to name a second one if locks appear."""
+    """
+    Record this process as the data directory's user, to name a second
+    one if locks appear, and the scenarios this build knows, for 05 to
+    say when a new pack needs a restart (NFH-99).
+    """
 
-    me = {"host": socket.gethostname(), "pid": os.getpid(), "started": time.time()}
+    me = {"host": socket.gethostname(), "pid": os.getpid(), "started": time.time(),
+          "scenarios": sorted(SCENARIOS)}
 
     try:
         with open(_owner_file(), "w") as handle:

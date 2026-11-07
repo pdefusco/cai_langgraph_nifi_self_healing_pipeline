@@ -30,7 +30,8 @@ an open incident just refreshes that incident's signals; one without
 opens a new incident, unless its last one closed less than
 INCIDENT_COOLDOWN_SECONDS ago. Nothing is opened while the deployment is
 mid-change (UPDATING, DEPLOYING, a half-applied version swap) or
-unreadable. `on_incident(incident)` is called for each new incident when
+unreadable, nor for a scenario this build does not know (a pack newer
+than the running app; the view's unknown_scenarios, NFH-99). `on_incident(incident)` is called for each new incident when
 AUTO_DIAGNOSE is on. `on_tick(client, store)` is called every
 POLL_KPI_SECONDS (agent/autonomy.py's veto windows).
 
@@ -150,6 +151,7 @@ class Poller:
         self._backfilled = set()
         self.judging = threading.Lock()   # the poller's verdicts and a reviewer's re-check, one at a time
         self._not_rolled_back = {}        # action id -> why no rollback was proposed, as last logged
+        self._unknown = {}                # pack -> its scenarios this build does not know, as last logged
 
     # -- lifecycle --------------------------------------------------------
 
@@ -359,9 +361,16 @@ class Poller:
             groups.setdefault(kpi["scenario"], []).append(kpi)
 
         groups = {scenario: rollup.group_flow(kpis, series) for scenario, kpis in groups.items()}
+        unknown = fleet.unknown_scenarios(entry)
+
+        if unknown and self._unknown.get(name) != unknown:
+            log(f"[{name}] detection off: {fleet.unknown_note(name, unknown)}")
+
+        self._unknown[name] = unknown
 
         with self.lock:
             view.update(kpis=found["kpis"], signals=found["signals"], series=series, groups=groups,
+                        unknown_scenarios=unknown,
                         system={short: metrics.summarize(points) for short, points in system.items()},
                         unmatched_alerts=found["unmatched_alerts"], sources=read["sources"],
                         kpi_at=now, kpi_wall=time.time())

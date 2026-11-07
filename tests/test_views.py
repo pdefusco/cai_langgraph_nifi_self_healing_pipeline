@@ -12,6 +12,7 @@ import gradio as gr
 import pytest
 
 import config
+from flows import packs
 from nifi_healer import llm, provisioning
 from nifi_healer.agent import graph, nodes
 from nifi_healer.kpi import outcomes
@@ -60,6 +61,30 @@ def test_fleet_views(agent):
     assert "p1-throughput|group:S01" in [v for _, v in choices]
     frame = views.kpi_frame(snapshot, "p1-throughput|group:S01")
     assert set(frame["series"]) == {"in (S01 Source)", "out (S01 Consumer)"}
+
+
+def test_a_pack_newer_than_the_app_says_so_instead_of_staying_silent(tenant, monkeypatch):
+    # Live: p23 was provisioned from a commit after the app started; its faults breached
+    # for 40 min with no incident, as the app's build had no S51-S77 to place them (NFH-99).
+    _, client, store = tenant("p1-throughput", history=3600)
+    every = packs.SCENARIOS
+    monkeypatch.setattr(packs, "SCENARIOS", {k: v for k, v in every.items() if k != "S01"})
+    opened = []
+    poller = Poller(client, store, on_incident=opened.append)
+    poller.poll_now()
+    snapshot = poller.snapshot()
+
+    assert opened and "S01" not in {i["scenario"] for i in opened}
+    assert snapshot["packs"]["p1-throughput"]["unknown_scenarios"] == ["S01"]
+    header = views.fleet_header(snapshot)
+    assert header.startswith("⚠ **Detection off** for p1-throughput: this build of the app does not know S01,")
+    assert "restart the app (pull_and_restart.py)" in header
+
+    monkeypatch.setattr(packs, "SCENARIOS", every)    # the app restarted on a build that knows it
+    poller.poll_now()
+
+    assert poller.snapshot()["packs"]["p1-throughput"]["unknown_scenarios"] == []
+    assert "Detection off" not in views.fleet_header(poller.snapshot())
 
 
 def test_history_shows_each_kpi_before_and_after(agent):
