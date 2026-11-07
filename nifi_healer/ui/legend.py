@@ -71,9 +71,11 @@ with the KPI values the agent was shown.
   the target exists). An invalid proposal cannot be approved.
 
 **Below**
-- **Change**: what the fix changes, one line per setting, before → after. **Every field changed** opens the
-  full list, the canvas fields and ids the edit moves too. **Exact cdp commands**: what will run, word for word.
-- **Steps**: the fix as JSON. Edit it and press **Submit edit** to re-validate your version before approving.
+- **Change**: what the fix changes, one line per setting, before → after. **Exact cdp commands**: what will run,
+  word for word.
+- **Edit this fix**: the fix as a form, a row per step: the action, what it changes (a processor, connection or
+  parameter context of this group) and its values. Change it and press **Submit edit** to re-validate your version;
+  the Change above then shows it, and you approve it as usual.
 - **Approve** applies it. **Reject** closes the incident and needs a reason, which is kept. **Diagnose** asks the
   agent to look again.
 """

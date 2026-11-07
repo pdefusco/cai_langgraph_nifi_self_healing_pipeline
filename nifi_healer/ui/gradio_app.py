@@ -27,6 +27,7 @@ import gradio as gr
 import config
 from flows.packs import SCENARIOS
 from nifi_healer import fleet
+from nifi_healer.actions import catalog
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
@@ -250,8 +251,49 @@ def _queue_at(incident_id):
     return gr.update(choices=views.queue_choices(get_store(), keep=incident_id), value=incident_id)
 
 
-# show_review's outputs: evidence, proposal, change, diff, commands, steps and the five buttons (Hold among them).
-PANEL_OUTPUTS = 11
+# The step form's boxes: each row's action, target and fields (NFH-58).
+FORM_BOXES = catalog.MAX_STEPS * (2 + views.FORM_FIELDS)
+# show_review's outputs: evidence, proposal, change, commands, the form's rows and boxes, the names it
+# offers, and the five buttons (Hold among them).
+PANEL_OUTPUTS = 4 + catalog.MAX_STEPS + FORM_BOXES + 1 + 5
+
+
+def _form(view) -> list:
+    """The step form for a view: each row's group, then each row's action, target and fields."""
+
+    pending = view["pending"]
+    rows = views.step_form(view["steps"], view["targets"])
+    boxes = []
+
+    for row in rows:
+        boxes.append(gr.update(choices=views.action_choices(row["action"]), value=row["action"],
+                               interactive=pending))
+        boxes += [gr.update(**box, interactive=pending) for box in (row["target"], *row["fields"])]
+
+    return [gr.update(visible=row["visible"]) for row in rows] + boxes
+
+
+def pick_action(last: bool):
+    """A step's action chosen: its target and fields, emptied and named for it, and the next row shown."""
+
+    def handler(action, targets):
+        boxes = [views.target_box(action, targets or {}), *views.field_boxes(action, None, targets or {})]
+        out = [gr.update(**box) for box in boxes]
+
+        return out if last else out + [gr.update(visible=True) if action else gr.skip()]
+
+    return handler
+
+
+def pick_target(action, target, targets, *values):
+    """A step's target chosen: its fields offer that target's relationships, properties or parameters."""
+
+    return [gr.update(choices=box["choices"]) if box["visible"] else gr.skip()
+            for box in views.field_boxes(action, target, targets or {}, values)]
+
+
+def collect_steps(*values):
+    return views.form_steps(list(values))
 
 
 @_timed
@@ -259,8 +301,7 @@ def show_review(incident_id):
     view = views.review(get_store(), get_client(), incident_id)
     pending = view["pending"]
 
-    return (view["evidence"], view["proposal"], view["change"], view["diff"], view["commands"],
-            gr.Code(value=view["steps"], interactive=pending),
+    return (view["evidence"], view["proposal"], view["change"], view["commands"], *_form(view), view["targets"],
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
             gr.Button(interactive=view["can_diagnose"]), gr.Button(visible=view["can_hold"]))
@@ -365,7 +406,7 @@ def _shows_another(incident_id, shown) -> str:
 
 def _decide(decision):
     @_timed
-    def handler(incident_id, reviewer, reason, steps_text, shown=None, request: gr.Request = None,
+    def handler(incident_id, reviewer, reason, steps, shown=None, request: gr.Request = None,
                 progress=gr.Progress()):
         login, permission = caller(request)
 
@@ -381,7 +422,7 @@ def _decide(decision):
         if decision == "approve":
             progress(0, desc="Applying (dry run)" if not config.ARMED else "Applying to the tenant")
 
-        message = views.decide(incident_id, decision, (reviewer or "").strip() or login, reason, steps_text)
+        message = views.decide(incident_id, decision, (reviewer or "").strip() or login, reason, steps)
 
         return _answer(message, incident_id)
 
@@ -765,13 +806,28 @@ def build() -> gr.Blocks:
 
                 gr.Markdown("**Change**")
                 change = gr.Markdown()
-
-                with gr.Accordion("Every field changed", open=False):
-                    diff = gr.Dataframe(headers=views.DIFF_HEADERS, interactive=False, wrap=True)
-
                 commands = gr.Code(language="shell", label="Exact cdp commands", interactive=False)
-                steps = gr.Code(language="json", label="Steps (edit, then Submit edit to re-validate)",
-                                interactive=False)
+
+                # The fix as a form, a row per step (NFH-58); .input, not .change, so a
+                # panel render filling it in does not empty what it fills.
+                with gr.Accordion("Edit this fix", open=False):
+                    step_rows, step_boxes = [], []
+
+                    for i in range(catalog.MAX_STEPS):
+                        with gr.Group(visible=i == 0) as row, gr.Row():
+                            action = gr.Dropdown(label=f"Step {i + 1}", choices=views.action_choices(), value="",
+                                                 interactive=False, scale=2)
+                            boxes = [gr.Dropdown(label="", choices=[], allow_custom_value=True, visible=False,
+                                                 interactive=False, scale=2)
+                                     for _ in range(1 + views.FORM_FIELDS)]
+
+                        step_rows.append(row)
+                        step_boxes += [action, *boxes]
+
+                    edit_btn = gr.Button("Submit edit", interactive=False)
+
+                form_targets = gr.State({})
+                form_steps = gr.State([])
 
                 with gr.Row():
                     reviewer = gr.Textbox(label="Reviewer", placeholder="your CAI login if left blank", scale=1)
@@ -779,14 +835,22 @@ def build() -> gr.Blocks:
 
                 with gr.Row():
                     approve_btn = gr.Button("Approve", variant="primary", interactive=False)
-                    edit_btn = gr.Button("Submit edit", interactive=False)
                     reject_btn = gr.Button("Reject", variant="stop", interactive=False)
                     diagnose_btn = gr.Button("Diagnose", interactive=False)
                     hold_btn = gr.Button("Hold for review", visible=False)
 
                 review_result = gr.Markdown()
-                panel = [evidence, proposal, change, diff, commands, steps, approve_btn, edit_btn, reject_btn,
-                         diagnose_btn, hold_btn]
+                panel = [evidence, proposal, change, commands, *step_rows, *step_boxes, form_targets,
+                         approve_btn, edit_btn, reject_btn, diagnose_btn, hold_btn]
+                width = 2 + views.FORM_FIELDS
+
+                for i in range(catalog.MAX_STEPS):
+                    action, target, *fields = step_boxes[i * width:(i + 1) * width]
+                    last = i == catalog.MAX_STEPS - 1
+                    action.input(pick_action(last), inputs=[action, form_targets],
+                                 outputs=[target, *fields] + ([] if last else [step_rows[i + 1]]))
+                    target.input(pick_target, inputs=[action, target, form_targets, *fields], outputs=fields)
+
                 seen = gr.State("")
                 queue_timer = gr.Timer(5.0)
                 packs_timer = gr.Timer(30.0)
@@ -806,10 +870,11 @@ def build() -> gr.Blocks:
 
                 # seen goes in so a decision can tell the panel the reviewer read
                 # was for the incident the dropdown now names.
-                decision_inputs = [queue_pick, reviewer, reason, steps, seen]
+                decision_inputs = [queue_pick, reviewer, reason, form_steps, seen]
                 decision_outputs = [review_result] + panel + [queue_pick, seen]
                 approve_btn.click(_decide("approve"), inputs=decision_inputs, outputs=decision_outputs)
-                edit_btn.click(_decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
+                edit_btn.click(collect_steps, inputs=step_boxes, outputs=[form_steps]).then(
+                    _decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
                 reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
                 hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
                 diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)

@@ -46,7 +46,7 @@ from nifi_healer.actions import capacity, catalog, executor, rollback
 from nifi_healer.agent import prompts, tools
 from nifi_healer.agent.schemas import Critique, Proposal
 from nifi_healer.cdp.client import get_client
-from nifi_healer.flow.inventory import inventory, render, scope
+from nifi_healer.flow.inventory import inventory, render, scope, targets
 from nifi_healer.kpi import readings
 from nifi_healer.rag import drafter, memory, priors, retriever
 from nifi_healer.runtime import telemetry
@@ -168,8 +168,9 @@ def gather_context(state: dict) -> dict:
         groups = (configuration.get("parameterGroups") if "error" not in configuration else None) \
             or groups_from_definition(definition)
         # A large group only around the fault (NFH-97); validation still plans on the whole flow.
-        found = scope(inventory(definition, incident["process_group"], groups), readings.seeds(incident, rows))
-        context.update(inventory=render(found), parameters=found.get("parameters") or [])
+        whole = inventory(definition, incident["process_group"], groups)
+        found = scope(whole, readings.seeds(incident, rows))
+        context.update(inventory=render(found), parameters=found.get("parameters") or [], targets=targets(whole))
 
     sizing = client.deployment_configuration(deployment)
 

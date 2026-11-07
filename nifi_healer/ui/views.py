@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import config
 from nifi_healer import chaos, fleet, llm
-from nifi_healer.actions import executor, rollback
+from nifi_healer.actions import catalog, executor, rollback
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.kpi import rollup
@@ -26,7 +26,6 @@ DEPLOYMENT_HEADERS = ["Pack", "State", "Flow", "CPU %", "Memory %", "Cores", "Ac
                       "Groups not ok", "Open incidents", "KPIs read"]
 GROUP_HEADERS = ["Pack", "Process group", "Status", "In", "Out", "Out / in", "Queued (watched)", "Incident"]
 FLEET_HEADERS = ["Pack", "Process group", "KPI", "Status", "Latest", "Threshold", "Trend /min", "Incident"]
-DIFF_HEADERS = ["Path", "Before", "After"]
 HISTORY_HEADERS = ["Incident", "Pack", "Process group", "Status", "Verdict", "Windows", "Opened", "Action",
                    "Reviewed by", "Change"]
 OUTCOME_HEADERS = ["KPI", "Decides", "Before (mean · last)", "After (mean · last)", "Change (last)",
@@ -574,20 +573,146 @@ def change_list(plan: dict) -> str:
     if plan.get("changes"):
         return "\n".join(f"- {c}" for c in plan["changes"])
 
-    return "See every field changed below." if plan.get("diff") else ""
+    return "\n".join(f"- {d.get('path')}: {json.dumps(d.get('before'), default=str)} → "
+                     f"{json.dumps(d.get('after'), default=str)}" for d in plan.get("diff") or [])
+
+
+# The Review Queue's form for a fix (NFH-58): a row per step, up to the
+# catalog's MAX_STEPS, each an action, its target and the fields it takes.
+FORM_FIELDS = 3     # the most an action takes: SET_RETRY_POLICY's
+
+ACTION_NAMES = {"SET_CONCURRENT_TASKS": "Set concurrent tasks", "SET_RUN_SCHEDULE": "Set run schedule",
+                "SET_BACKPRESSURE": "Set back pressure", "SET_FLOWFILE_EXPIRATION": "Set FlowFile expiration",
+                "SET_PENALTY_YIELD": "Set penalty and yield", "SET_RETRY_POLICY": "Set retry policy",
+                "SET_PROCESSOR_PROPERTY": "Set a processor property",
+                "ROUTE_RELATIONSHIP_TO_DLQ": "Route a relationship to a DLQ", "SET_SCHEDULED_STATE": "Enable a processor",
+                "UPDATE_PARAMETER": "Update a parameter", "SCALE_DEPLOYMENT": "Resize the deployment",
+                "NO_ACTION": "No action", "ROLLBACK": "Roll back an action"}
+TARGET_NAMES = {"processor": "Processor", "connection": "Connection", "parameter_context": "Parameter context"}
+FIELD_NAMES = {"value": "Value", "property": "Property", "relationship": "Relationship (commas between several)",
+               "dlq": "DLQ", "object_threshold": "Back pressure object threshold",
+               "size_threshold": "Back pressure size threshold", "parameter": "Parameter",
+               "cluster_size": "Cluster size", "nodes": "Nodes", "backoff": "Retry backoff",
+               "max_backoff": "Max backoff period", "retry_count": "Retry count", "penalty": "Penalty duration",
+               "yield_duration": "Yield duration", "action_id": "Action id"}
+VALUE_NAMES = {"SET_CONCURRENT_TASKS": "Concurrent tasks", "SET_RUN_SCHEDULE": "Run schedule",
+               "SET_FLOWFILE_EXPIRATION": "FlowFile expiration", "SET_SCHEDULED_STATE": "State"}
+
+
+def _fields(action: str) -> tuple:
+    spec = catalog.CATALOG.get(action)
+
+    return (spec.required + spec.optional)[:FORM_FIELDS] if spec else ()
+
+
+def _shown(value) -> str | None:
+    if value in (None, ""):
+        return None
+
+    return ", ".join(map(str, value)) if isinstance(value, (list, tuple)) else str(value)
+
+
+def _choices(names, value) -> list:
+    """names, with the value shown even when it is not among them (typed, or no flow was read)."""
+
+    names = list(dict.fromkeys(names))
+
+    return names + [value] if value and value not in names else names
+
+
+def target_box(action: str, targets: dict, value=None) -> dict:
+    """The target dropdown of a step: its label, choices and value; hidden when the action takes none."""
+
+    kind = (catalog.CATALOG[action].target if action in catalog.CATALOG else "none")
+    names = {"processor": sorted(targets.get("processors") or {}), "connection": targets.get("connections") or [],
+             "parameter_context": sorted(targets.get("parameters") or {})}.get(kind, [])
+    value = _shown(value)
+
+    return {"label": TARGET_NAMES.get(kind, "Target"), "choices": _choices(names, value), "value": value,
+            "visible": kind in TARGET_NAMES}
+
+
+def field_boxes(action: str, target, targets: dict, values=()) -> list:
+    """The FORM_FIELDS field dropdowns of a step, named for its action; the choices come from its target."""
+
+    processor = (targets.get("processors") or {}).get(target) or {}
+    known = {"dlq": targets.get("dlqs") or [], "relationship": processor.get("relationships") or [],
+             "property": processor.get("properties") or [],
+             "parameter": (targets.get("parameters") or {}).get(target) or [],
+             "cluster_size": catalog.CLUSTER_SIZES, "backoff": catalog.BACKOFF_MECHANISMS}
+    boxes = []
+
+    for i, name in enumerate(_fields(action)):
+        value = _shown(values[i] if i < len(values) else None)
+        names = ["ENABLED"] if action == "SET_SCHEDULED_STATE" else known.get(name, [])
+        label = VALUE_NAMES.get(action, FIELD_NAMES[name]) if name == "value" else FIELD_NAMES[name]
+        boxes.append({"label": label, "choices": _choices(names, value), "value": value, "visible": True})
+
+    return boxes + [{"label": "", "choices": [], "value": None, "visible": False}] * (FORM_FIELDS - len(boxes))
+
+
+def action_choices(action: str = "") -> list:
+    """(label, action) for the action dropdown; the app's own (ROLLBACK) only on a step that has it."""
+
+    return [("— none —", "")] + [(ACTION_NAMES.get(a.name, a.name), a.name) for a in catalog.CATALOG.values()
+                                 if not a.hidden or a.name == action]
+
+
+def step_form(steps: list, targets: dict) -> list:
+    """
+    The form's MAX_STEPS rows for these steps: {visible, action, target,
+    fields}. The steps' rows show, and one empty row to add a step.
+    """
+
+    rows = []
+
+    for i in range(catalog.MAX_STEPS):
+        step = steps[i] if i < len(steps) else {}
+        action = str(step.get("action") or "").upper()
+        rows.append({"visible": i <= len(steps), "action": action,
+                     "target": target_box(action, targets, step.get("target")),
+                     "fields": field_boxes(action, step.get("target"), targets,
+                                           [step.get(name) for name in _fields(action)])})
+
+    return rows
+
+
+def form_steps(values: list) -> list:
+    """The steps a form holds: values is each row's action, target and FORM_FIELDS fields, in order."""
+
+    steps, width = [], 2 + FORM_FIELDS
+
+    for i in range(0, len(values), width):
+        action, target, *fields = values[i:i + width]
+
+        if not action:
+            continue
+
+        step = {"action": action, "target": (target or "").strip()}
+
+        for name, value in zip(_fields(action), fields):
+            value = str(value).strip() if value is not None else ""
+
+            if value:
+                parts = [v.strip() for v in value.split(",") if v.strip()]
+                step[name] = parts if name == "relationship" and len(parts) > 1 else value
+
+        steps.append(step)
+
+    return steps
 
 
 def review(store, client, incident_id: str | None) -> dict:
     """
     Everything the review panel shows for one incident:
-    {evidence, proposal, change, diff, commands, steps, can_approve,
+    {evidence, proposal, change, commands, steps, targets, can_approve,
     can_diagnose, can_hold, pending, status}. change is the plan's
-    sentences, one per setting; diff is every field the edit changes,
-    canvas and ids included, behind it (NFH-51).
+    sentences, one per setting (NFH-51); steps the proposal's, for the
+    form, and targets the names it offers (NFH-58).
     """
 
-    blank = {"evidence": "Select an incident.", "proposal": "", "change": "", "diff": [], "commands": "",
-             "steps": "", "can_approve": False, "can_diagnose": False, "can_hold": False, "pending": False,
+    blank = {"evidence": "Select an incident.", "proposal": "", "change": "", "commands": "",
+             "steps": [], "targets": {}, "can_approve": False, "can_diagnose": False, "can_hold": False, "pending": False,
              "status": ""}
     incident = store.incident(incident_id) if incident_id else None
 
@@ -647,7 +772,7 @@ def review(store, client, incident_id: str | None) -> dict:
     if proposal.get("parse_error"):
         text = ["### No usable proposal",
                 f"The agent's last reply could not be read as a proposal: {proposal['parse_error']}",
-                "Write the steps under **Steps** and **Submit edit**, or **Reject** with a reason.",
+                "Write the fix under **Edit this fix** and **Submit edit**, or **Reject** with a reason.",
                 "**The agent's last reply:**",
                 "```\n" + (proposal.get("rationale") or "(empty)").replace("```", "'''") + "\n```"]
 
@@ -723,16 +848,13 @@ def review(store, client, incident_id: str | None) -> dict:
     elif not payload and _last_action(store, incident_id):
         text.append(_last_action(store, incident_id))
 
-    diff = [[d.get("path"), json.dumps(d.get("before"), default=str), json.dumps(d.get("after"), default=str)]
-            for d in plan.get("diff") or []]
-
     return {
         "evidence": "\n".join(evidence),
         "proposal": "\n\n".join(text),
         "change": change_list(plan),
-        "diff": diff,
         "commands": "\n\n".join(plan.get("commands") or []),
-        "steps": json.dumps(proposal.get("steps") or [], indent=2),
+        "steps": list(proposal.get("steps") or []),
+        "targets": ((graph.state(incident_id).get("context") or {}).get("targets") or {}) if payload else {},
         "can_approve": bool(payload and plan.get("ok")) and not applying,
         "can_diagnose": (orphaned or bool(outdated)) and run is None,
         "can_hold": bool(payload and window and window["status"] == autonomy.WAITING) and not applying,
@@ -742,8 +864,11 @@ def review(store, client, incident_id: str | None) -> dict:
 
 
 def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: str = "",
-           steps_text: str = "") -> str:
-    """Send a reviewer's decision into the graph. Returns a line for the UI."""
+           steps: list | str = ()) -> str:
+    """
+    Send a reviewer's decision into the graph. Returns a line for the UI.
+    An edit's steps are the form's (form_steps), or JSON text.
+    """
 
     if not incident_id:
         return "Select an incident first."
@@ -783,13 +908,16 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
 
     if decision == "edit":
         try:
-            steps = json.loads(steps_text or "[]")
+            steps = json.loads(steps or "[]") if isinstance(steps, str) else list(steps)
 
         except json.JSONDecodeError as exc:
             return f"The steps are not valid JSON: {exc}"
 
         if isinstance(steps, dict):
             steps = [steps]
+
+        if not steps:
+            return "The fix has no steps: choose an action under **Edit this fix**, or reject it with a reason."
 
         answer["steps"] = steps
 

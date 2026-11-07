@@ -15,9 +15,12 @@ import pytest
 import config
 from flows import packs
 from nifi_healer import llm, provisioning
+from nifi_healer.actions import catalog
 from nifi_healer.agent import graph, nodes
+from nifi_healer.flow import inventory
 from nifi_healer.kpi import outcomes
 from nifi_healer.runtime.poller import Poller
+from nifi_healer.sim.world import groups_from_definition
 from nifi_healer.ui import gradio_app, monitor, views
 
 from test_agent_graph import S01_FIX, ScriptedLLM, agent, proposal  # noqa: F401 (agent is a fixture)
@@ -155,11 +158,11 @@ def test_review_approve_and_history(agent):
     panel = views.review(store, client, incident["id"])
 
     assert panel["pending"] and panel["can_approve"] and panel["status"] == "PENDING_REVIEW"
-    assert "S01 Consumer" in panel["proposal"] and panel["diff"]
+    assert "S01 Consumer" in panel["proposal"] and panel["change"].startswith("- S01 Consumer: concurrent tasks 1 → ")
     assert "import-flow-definition-version" in panel["commands"]
     assert "change-flow-version-in-deployment" in panel["commands"]
 
-    assert "not valid JSON" in views.decide(incident["id"], "edit", steps_text="[{")
+    assert "not valid JSON" in views.decide(incident["id"], "edit", steps="[{")
     assert views.decide(incident["id"], "reject").startswith("Not accepted")
     assert "in the background" in views.decide(incident["id"], "approve", reviewer="ops")
     applied(incident["id"])
@@ -186,11 +189,20 @@ def test_edit_and_dry_run_messages(agent, monkeypatch):
     graph.start(incident["id"])
 
     edited = '[{"action": "SET_CONCURRENT_TASKS", "target": "S01 Consumer", "value": 40}]'
-    assert "failed validation" in views.decide(incident["id"], "edit", steps_text=edited)
+    assert "failed validation" in views.decide(incident["id"], "edit", steps=edited)
     assert not views.review(store, client, incident["id"])["can_approve"]
 
-    fixed = views.review(store, client, incident["id"])["steps"].replace("40", "6")
-    assert "validated" in views.decide(incident["id"], "edit", steps_text=fixed)
+    # The reviewer's fix, through the form (NFH-58): the row reads back the step they change.
+    panel = views.review(store, client, incident["id"])
+    row = views.step_form(panel["steps"], panel["targets"])[0]
+    assert row["action"] == "SET_CONCURRENT_TASKS" and row["target"]["value"] == "S01 Consumer"
+    assert "S01 Consumer" in panel["targets"]["processors"] and "s01-backlog" in panel["targets"]["connections"]
+    assert row["fields"][0]["label"] == "Concurrent tasks"
+    empty = ["", None] + [None] * views.FORM_FIELDS
+    values = [row["action"], row["target"]["value"], "6", None, None] + empty * 3
+    assert "validated" in views.decide(incident["id"], "edit", steps=views.form_steps(values))
+    assert "concurrent tasks 1 → 6" in views.review(store, client, incident["id"])["change"]
+    assert "no steps" in views.decide(incident["id"], "edit", steps=[])
     assert "disarmed" in views.review(store, client, incident["id"])["proposal"]
     assert views.decide(incident["id"], "approve").startswith("Dry run recorded")
 
@@ -343,7 +355,7 @@ def test_an_unusable_reply_is_shown_for_review(agent):
     panel = views.review(store, client, incident["id"])
     assert panel["status"] == "PENDING_REVIEW" and panel["pending"] and not panel["can_approve"]
     assert "No usable proposal" in panel["proposal"] and "I think the consumer is slow." in panel["proposal"]
-    assert "Submit edit" in panel["proposal"] and panel["steps"] == "[]"
+    assert "Submit edit" in panel["proposal"] and panel["steps"] == []
 
     assert views.decide(incident["id"], "reject", reason="no proposal").endswith("rejected.")
 
@@ -667,3 +679,42 @@ def test_measure_from_reads_minutes_and_utc_times():
 
     with pytest.raises(ValueError):
         views.parse_start("soon", finished)
+
+
+def test_the_step_form_reads_a_fix_back_as_it_was():
+    # NFH-58: S52's route, as the Review Queue's form shows it, offering the group's own names.
+    definition = packs.build("p23-siblings")
+    s52 = packs.SCENARIOS["S52"]
+    targets = inventory.targets(inventory.inventory(definition, s52.group_name, groups_from_definition(definition)))
+    steps = [catalog.normalize(s) for s in s52.expected]
+    rows = views.step_form(steps, targets)
+
+    assert [r["visible"] for r in rows] == [True, True, False, False] and rows[1]["action"] == ""
+    route = rows[0]
+    assert route["target"]["value"] == "S52 Validator" and "S52 Validator" in route["target"]["choices"]
+    assert [(f["label"], f["value"]) for f in route["fields"][:2]] == [
+        ("Relationship (commas between several)", "failure"), ("DLQ", "S52 DLQ")]
+    assert "failure" in route["fields"][0]["choices"] and route["fields"][1]["choices"] == ["S52 DLQ"]
+    assert not route["fields"][2]["visible"]
+
+    values = [v for r in rows for v in (r["action"], r["target"]["value"], *(f["value"] for f in r["fields"]))]
+    assert [catalog.normalize(s) for s in views.form_steps(values)] == steps
+
+    # Every action the catalog has is named, and fits the form.
+    assert set(catalog.CATALOG) <= set(views.ACTION_NAMES)
+    assert all(len(a.required + a.optional) <= views.FORM_FIELDS for a in catalog.CATALOG.values())
+    assert [v for _, v in views.action_choices()][1:] == [a for a in catalog.CATALOG if a != "ROLLBACK"]
+
+
+def test_choosing_an_action_names_its_fields_and_shows_the_next_step():
+    targets = {"processors": {"S01 Consumer": {"relationships": ["success", "failure"], "properties": []}},
+               "connections": ["s01-backlog"], "dlqs": [], "parameters": {}}
+    target, *fields, next_row = gradio_app.pick_action(False)("SET_BACKPRESSURE", targets)
+
+    assert target["label"] == "Connection" and target["choices"] == ["s01-backlog"]
+    assert [f["label"] for f in fields[:2]] == ["Back pressure object threshold", "Back pressure size threshold"]
+    assert not fields[2]["visible"] and next_row["visible"]
+    assert gradio_app.pick_action(True)("", targets)[0]["visible"] is False
+
+    fields = gradio_app.pick_target("SET_RETRY_POLICY", "S01 Consumer", targets, None, None, None)
+    assert [f["choices"] for f in fields[:1]] == [list(catalog.BACKOFF_MECHANISMS)]

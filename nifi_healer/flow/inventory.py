@@ -142,6 +142,27 @@ def inventory(definition: dict, group_name: str, parameter_groups: list | None =
     }
 
 
+def targets(inv: dict) -> dict:
+    """
+    The names a reviewer picks a fix's targets from, in the Review Queue's
+    form (NFH-58): the whole group's, not the scoped inventory's.
+    """
+
+    if "error" in inv:
+        return {}
+
+    parameters = {}
+
+    for parameter in inv["parameters"]:
+        parameters.setdefault(parameter["context"], []).append(parameter["name"])
+
+    return {"processors": {p["name"]: {"relationships": p["relationships"], "properties": p["editable_properties"]}
+                           for p in inv["processors"]},
+            "connections": [c["name"] for c in inv["connections"]],
+            "dlqs": inv["dlqs"],
+            "parameters": parameters}
+
+
 # A group up to this many processors is shown whole; a larger one only around the fault.
 SCOPE_PROCESSORS = 60
 
