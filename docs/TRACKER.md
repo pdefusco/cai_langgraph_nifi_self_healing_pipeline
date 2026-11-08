@@ -128,7 +128,7 @@ them.
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
 | NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
-| NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | In progress | |
+| NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
 
 ## Open tickets
 
@@ -239,6 +239,8 @@ report the KPIs still breached as "still open: likely another fault", with no ro
   connection landed on the DebugFlow, and CDF failed the swap. The validator now has a new key, so a new id: the swap
   removes the DebugFlow and its loop and adds the EvaluateJsonPath. NiFi refuses to remove a connection with data
   queued, so empty the S09 group's queues by hand before the re-baseline. Why 06 said done is NFH-107.
+- 2026-11-07/08: the rebuilt S09 is live on all three packs: p3 V.6, p22 v.2, p25 V.2 (p3's EvaluateJsonPath
+  validator checked in NiFi). Stop the group as well as emptying it: on p22 the failure loop refilled before the swap.
 
 ### NFH-66 · Feature · Environment promotion
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
@@ -281,6 +283,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-107 · Fix · A flow-only reset says it is done when CDF took the swap but never applied it
 - 2026-11-07: found on p3's S09 re-baseline (NFH-64). `run_steps` waits for the flow to be steady, which it already is
   before CDF starts the swap, and never reads the version it ended on, so the reset logged one step applied and the
@@ -295,10 +301,8 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   FAILED_TO_CHANGE_FLOW_VERSION, "Queue not empty for a51278e0-…", because S50's failure loop had refilled since its
   queues were emptied by hand. The wait ran the full 45 min: CDF offered no retry or cancel, and BAD_HEALTH is steady.
   It now also stops on a detailed state starting FAILED_TO. A test fails the swap and counts the reads.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-11-08: pushed as 997c7a7. With the S09 group stopped and its queues emptied just before, p22's re-baseline
+  passed (v.2) and p25's (V.2); 06 succeeded only once CDF ran the new version. Done in d004bc9, 120f2dd, 997c7a7.
 
 ### NFH-95 · Feature · Packs of customer-sized flows
 Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a group of ~100 processors), p22-wide-250,
