@@ -520,6 +520,13 @@ named its target by any path was not checked at all.
   a leading segment that is the group's own name is dropped. Edits try the target as written, then that; the capacity
   check finds a processor bare or by path and reports it by its name. Test: S98's short fix is sent back and the
   design fix passes, named all three ways. 716 pass. On main in 82d4883.
+- 2026-11-07: deployed, and the replay rerun with the same arguments (replay-20261108-033644): 18 of 18 worked,
+  94% valid first time (only S01's round 1, 3 tasks against about 3/s, sent back by the capacity check), the
+  controls quiet in 6 of 6, and no target not found. Nested matches flat: S98 100% vs S01 100%, S99 vs S09 and S100
+  vs S14 100% each. Prompts are 4,127 tokens for groups of 1–20 processors and 4,675 for 51–100, and diagnosis takes
+  about 45 s for both. It ran in the first run's store, so round 1 saw 17 past cases, its working S98 and S99 fixes
+  among them; the first run's round 1, where every nested miss was, saw none. A run with `--no-memory` would show
+  whether nesting costs the agent anything on its own.
 
 ## Closed tickets
 
