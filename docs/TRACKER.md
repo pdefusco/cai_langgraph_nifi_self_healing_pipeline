@@ -127,7 +127,7 @@ them.
 | NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | Done | 49c641f |
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
-| NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | In progress | |
+| NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
 
 ## Open tickets
 
@@ -537,7 +537,7 @@ so no step matched the label.
 - 2026-11-07: `_name` strips what is left of the path, so "Sub/Name", "Sub / Name" and "Top / Sub / Name" are Name,
   for a target and a DLQ alike. Test: S98's design fix is expected and a 500 ms schedule short, named all four ways,
   and S99's route with both names spaced is expected. 717 pass. The Scorecard grades from the record, so after a
-  deploy it shows the run's corrected numbers; the job's own table stays as printed.
+  deploy it shows the run's corrected numbers; the job's own table stays as printed. On main in 6a5a7c4.
 
 ## Closed tickets
 
