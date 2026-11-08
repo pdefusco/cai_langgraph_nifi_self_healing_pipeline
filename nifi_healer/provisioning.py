@@ -464,7 +464,8 @@ def _wait_for_flow(client: Client, deployment: str, flow: str) -> str:
 def _wait_for_version(client: Client, deployment: str, flow: str, target: str) -> dict:
     """
     Poll the deployed flow until it runs `target` and is steady, CDF
-    offers to retry or cancel a swap it failed, or the deadline passes.
+    says it failed the swap (FAILED_TO_CHANGE_FLOW_VERSION, or a retry or
+    cancel on offer), or the deadline passes.
     Returns the last facts read. The flow is steady before CDF starts a
     swap, and on a large flow the old version reads for a while after.
     """
@@ -477,7 +478,9 @@ def _wait_for_version(client: Client, deployment: str, flow: str, target: str) -
         if facts.get("flow_version_crn") == target and facts.get("state") in STEADY_STATES:
             return facts
 
-        if is_half_applied(facts) or client.now() - started > DEPLOY_DEADLINE:
+        failed = str(facts.get("detailed_state") or "").startswith("FAILED_TO") or is_half_applied(facts)
+
+        if failed or client.now() - started > DEPLOY_DEADLINE:
             return facts
 
         client.sleep(20)

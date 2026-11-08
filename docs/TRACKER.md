@@ -291,6 +291,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   "still runs v1, not …/v.2", CONCERNING_HEALTH with only its KPI alert, so the check had read the flow before CDF
   moved to v.2. It now polls until the flow runs the target and is steady, CDF offers to retry or cancel a swap it
   failed, or 45 min pass. A test lags the version by three reads.
+- 2026-11-08: pushed as 120f2dd; p22's next re-baseline then failed for real: BAD_HEALTH
+  FAILED_TO_CHANGE_FLOW_VERSION, "Queue not empty for a51278e0-…", because S50's failure loop had refilled since its
+  queues were emptied by hand. The wait ran the full 45 min: CDF offered no retry or cancel, and BAD_HEALTH is steady.
+  It now also stops on a detailed state starting FAILED_TO. A test fails the swap and counts the reads.
 
 ## Closed tickets
 

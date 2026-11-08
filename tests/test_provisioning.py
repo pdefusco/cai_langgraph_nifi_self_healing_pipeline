@@ -99,6 +99,37 @@ def test_a_swap_cdf_takes_but_never_applies_fails_the_reset(tenant, monkeypatch)
         raise AssertionError("the reset said it was done")
 
 
+def test_a_swap_cdf_says_it_failed_stops_the_wait(tenant, monkeypatch):
+    # Live (NFH-107): p22's swap failed on a queue with data, and the reset waited out its 45 min.
+    world, client, _ = tenant("p5-parameters")
+    monkeypatch.setattr(config, "ARMED", True)
+    entry = fleet.pack("p5-parameters")
+    deployment, flow = entry["deployment_crn"], entry["deployed_flow_crn"]
+    before = client.flow_facts(deployment, flow)
+    provisioning.import_flow(client, "p5-parameters", new_baseline=True)
+    world.skip(31 * 60)  # past the deployment's cooldown
+    reads = []
+
+    def failed(*_):
+        reads.append(1)
+        return dict(before, state="BAD_HEALTH", detailed_state="FAILED_TO_CHANGE_FLOW_VERSION",
+                    message="Failed to Change Flow Version: Queue not empty for a51278e0")
+
+    monkeypatch.setattr(client, "flow_facts", failed)
+
+    try:
+        provisioning.reset_pack(client, "p5-parameters", dry_run=False, flow_only=True,
+                                wait=lambda: world.settle(deployment))
+
+    except SystemExit as exc:
+        assert "FAILED_TO_CHANGE_FLOW_VERSION" in str(exc) and "Queue not empty" in str(exc)
+
+    else:
+        raise AssertionError("the reset said it was done")
+
+    assert len(reads) < 5
+
+
 def test_a_swap_is_checked_once_cdf_has_moved_to_it(tenant, monkeypatch):
     # Live (NFH-107): on p22 the flow read steady on v1 for a while after the swap was sent.
     world, client, _ = tenant("p5-parameters")
