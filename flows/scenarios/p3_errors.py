@@ -1,8 +1,9 @@
 """
 Pack p3-errors: failures handled badly.
 
-S09 and S10 loop failures back into the processor that produced them,
-so retries crowd out new work. S11 is a configuration bug that looks
+S09 and S10 loop failures back into the processor that produced them:
+S09's malformed records pile up there for good, S10's retries crowd out
+new work. S11 is a configuration bug that looks
 like a slow quarantine. S12 uses NiFi's own retry, but with a backoff
 that stalls the whole processor.
 """
@@ -11,38 +12,51 @@ from flows.scenarios.base import Kpi, Pack, Scenario, action
 from flows.scenarios.common import debug_flow, dlq, generator, invoke_http, sink
 
 BLACKHOLE_URL = "http://10.255.255.1:8080/orders"
+# One in ten has no value: {"id": } is not JSON.
+S09_RECORD = """{"id": ${random():mod(10):equals(0):ifElse('','1')}}"""
 
 
 def build_s09(pg):
-    # 90% of attempts fail and go straight back in: each FlowFile needs
-    # ten runs on average, so the validator needs 10 runs/s for 1/s of
-    # input and has 1.
-    generator(pg, "S09 Source", period="1 sec", batch=1)
-    debug_flow(pg, "validator", "S09 Validator", successes=1, failures=9,
-               period="1 sec", tasks=1)
+    # One record in ten is malformed: it fails, goes straight back in and
+    # fails again, for good. The validator keeps up with the input four
+    # times over, so the loop only grows, by one record every 10 s, and no
+    # number of tasks or runs gets a malformed record through.
+    generator(pg, "S09 Source", period="1 sec", batch=1, text=S09_RECORD)
+    pg.processor("validator", "S09 Validator", "EvaluateJsonPath", {
+        "Destination": "flowfile-attribute",
+        "Return Type": "auto-detect",
+        "order.id": "$.id",
+    }, period="250 ms", tasks=1, auto_terminate=("unmatched",))
     sink(pg, "publish", "S09 Publish", period="0 sec")
     dlq(pg, "S09 DLQ", connected=False)
     pg.connect("gen", "validator", ["success"], "s09-input")
     pg.connect("validator", "validator", ["failure"], "s09-failure-loop")
-    pg.connect("validator", "publish", ["success"], "s09-valid")
+    pg.connect("validator", "publish", ["matched"], "s09-valid")
 
 
 S09 = Scenario(
     id="S09",
     title="Failure Self-Loop",
     symptom="failure_loop",
-    fault="Failures are routed back into the validator with no limit, so retries starve new input.",
+    fault="Malformed records fail and are routed back into the validator with no limit, so they pile up there "
+          "for good, retried on every run.",
     build=build_s09,
     kpis=(
         Kpi("S09", "connection", "s09-failure-loop", "queued_count", above=100),
+        # Only once the loop is full and back pressure stops the validator.
         Kpi("S09", "connection", "s09-input", "queued_count", above=500, primary=False),
     ),
     family="FLOW_EDIT",
     expected=(action("ROUTE_RELATIONSHIP_TO_DLQ", "S09 Validator", relationship="failure", dlq="S09 DLQ"),),
     acceptable=(),
     traps=(
-        "More validator tasks multiply the retry storm: demand is ten runs per FlowFile.",
+        "More validator tasks or a shorter run schedule only retry the same malformed records faster: "
+        "none of them will ever parse.",
         "SET_RETRY_POLICY alone still lands exhausted FlowFiles back on the self-loop.",
+    ),
+    wrong=(
+        action("SET_CONCURRENT_TASKS", "S09 Validator", value=4),
+        action("SET_RUN_SCHEDULE", "S09 Validator", value="0 sec"),
     ),
 )
 

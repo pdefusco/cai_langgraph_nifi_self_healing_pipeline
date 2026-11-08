@@ -136,6 +136,7 @@ def test_a_twin_presents_and_clears_as_its_twin_does(scenario):
     decoy = {label: found.pop(label) for label in set(found) - set(expected)}
 
     assert found["expected"] == []
+    assert all(value for label, value in expected.items() if label.startswith("wrong")), expected
     assert found == {label: rename(value) for label, value in expected.items()}
     assert len(decoy) == (1 if scenario.build.decoy else 0) and all(decoy.values()), decoy
 

@@ -344,3 +344,26 @@ def parse_json(text):
 
     except (TypeError, ValueError):
         return False, None
+
+
+# One in N: ${random():mod(N):equals(0):ifElse('this','that')}, the only Expression Language the sim reads.
+_ONE_IN = re.compile(r"\$\{random\(\):mod\((\d+)\):equals\(0\):ifElse\('([^']*)',\s*'([^']*)'\)\}")
+
+
+def text_variants(text) -> list:
+    """
+    The contents a GenerateFlowFile's custom text makes, as [(share, text)]:
+    each one in N choice splits it in two, else it is the text itself.
+    """
+
+    found = _ONE_IN.search(text) if isinstance(text, str) else None
+
+    if found is None:
+        return [(1.0, text)]
+
+    share = 1.0 / max(1, int(found.group(1)))
+    rest = text[found.end():]
+    head = text[:found.start()]
+
+    return [(share * s, head + found.group(2) + t) for s, t in text_variants(rest)] + \
+        [((1 - share) * s, head + found.group(3) + t) for s, t in text_variants(rest)]

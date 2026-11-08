@@ -36,7 +36,7 @@ from collections import deque
 from flows.builder.processors import relationships
 from nifi_healer.sim import cron
 from nifi_healer.sim.model import (compile_flow, control_rate, dynamic_properties, json_path_lookup,
-                                   parse_duration, parse_json, parse_size)
+                                   parse_duration, parse_json, parse_size, text_variants)
 
 DT = 15.0                      # simulated seconds per step
 
@@ -205,6 +205,13 @@ class Simulation:
     def _take_inputs(self, proc, wanted: float) -> tuple:
         """Round-robin across input connections: water-fill, then FIFO within each."""
 
+        taken = self._take_each(proc, wanted).values()
+
+        return sum(c for c, _ in taken), sum(b for _, b in taken)
+
+    def _take_each(self, proc, wanted: float) -> dict:
+        """_take_inputs, as {connection id: (count, bytes)}."""
+
         available = {cid: self._ready(cid)[0] for cid in proc.inputs}
         grant = {cid: 0.0 for cid in available}
         left = wanted
@@ -221,14 +228,7 @@ class Simulation:
                 if available[cid] - grant[cid] <= 1e-9:
                     open_.remove(cid)
 
-        count = size = 0.0
-
-        for cid, n in grant.items():
-            c, b = self._take(cid, n)
-            count += c
-            size += b
-
-        return count, size
+        return {cid: self._take(cid, n) for cid, n in grant.items()}
 
     def _expire(self) -> None:
         for cid, conn in self.model.connections.items():
@@ -400,7 +400,7 @@ class Simulation:
         text = proc.properties.get("generate-ff-custom-text")
 
         if text is not None:
-            size = float(len(text.encode()))
+            size = sum(share * len(str(each).encode()) for share, each in text_variants(text))
 
         if proc.cron is not None:
             runs = 0 if self._blocked(proc) else spread * self._firings(proc)
@@ -535,20 +535,43 @@ class Simulation:
 
     def _run_EvaluateJsonPath(self, proc, spread, state, stat, cpu, avail, avg) -> None:
         paths = list(dynamic_properties(proc).values())
-        ok, document = parse_json(self._source_text(proc))
 
-        if not ok:
-            rel = "failure"
+        def where(text) -> str:
+            ok, document = parse_json(text)
 
-        else:
+            if not ok:
+                return "failure"
+
             found = paths and all(json_path_lookup(document, path)[0] for path in paths)
-            rel = "matched" if found else "unmatched"
+
+            return "matched" if found else "unmatched"
+
+        shares = {}
+
+        for share, text in text_variants(self._source_text(proc)):
+            rel = where(text)
+            shares[rel] = shares.get(rel, 0.0) + share
 
         n = min(avail, self._schedule_limit(proc, spread, CHEAP_LATENCY), self._out_room(proc, avg))
-        count, size = self._take_inputs(proc, n)
-        stat["in"] += count
-        cpu["fixed"] += count * CHEAP_CPU / DT
-        self._route(proc, {rel: (count, size)}, stat)
+        routed = {}
+
+        for cid, (count, size) in self._take_each(proc, n).items():
+            conn = self.model.connections[cid]
+            mine = shares
+
+            if conn.source == proc.id:
+                # Back from its own relationships: the content is the same, and so is where it goes.
+                mine = {rel: s for rel, s in shares.items() if rel in conn.relationships} or shares
+
+            total = sum(mine.values())
+            stat["in"] += count
+            cpu["fixed"] += count * CHEAP_CPU / DT
+
+            for rel, share in mine.items():
+                was = routed.get(rel, (0.0, 0.0))
+                routed[rel] = (was[0] + count * share / total, was[1] + size * share / total)
+
+        self._route(proc, routed, stat)
 
     def _run_DuplicateFlowFile(self, proc, spread, state, stat, cpu, avail, avg) -> None:
         try:

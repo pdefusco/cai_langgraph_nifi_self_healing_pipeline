@@ -116,8 +116,8 @@ them.
 | NFH-91 | Feature | Read-only tools the agent may call before it proposes: check a fix, read a KPI's history | Dropped | 5aa7b38, 4bd7ba4 |
 | NFH-92 | Ops | Replay every scenario: the oracle's ceiling on all 45, then an LLM baseline | In progress | |
 | NFH-93 | Fix | The test tenant's clock is stepped, so a slow machine doesn't move the flows on before the first poll | Done | 8ca4244 |
-| NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | In progress | |
-| NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | In progress | |
+| NFH-94 | Feature | Measure what a larger flow costs: time per graph node, prompt size, flow size on replay cases, a bench | Done | 68b88be, db21b18 |
+| NFH-95 | Feature | Packs of customer-sized flows, 100–500 processors, each fault the twin of a small scenario | Done | 1d0024d, c634fef, 055c6e4, 78c711e |
 | NFH-96 | Feature | Nested process groups: ports, edits and the inventory inside a child group | Done | 1792336 |
 | NFH-97 | Feature | A prompt budget: show a large group only around the fault | Done | 736ab4f |
 | NFH-98 | Fix | The large packs' healthy filler raises WARN bulletins: Concerning Health with nothing wrong | Done | 10d9a53 |
@@ -177,23 +177,6 @@ the scenario guide, and what the review shows becomes tickets. p14–p20 wait fo
 - 2026-11-05: NFH-56 built, so p11 reviews get an inventory and p14–p20 are unblocked. pdf1019-cdp-env is gone;
   NFH-56 was verified on se-sandbox-aws.
 
-### NFH-51 · Feature · Review Queue change table in plain sentences
-The change table shows raw diff paths, including canvas-only fields such as connection bends and positions. Show the
-plain sentences the edit already writes (`s09-failure-loop: destination 'S09 Validator' -> 'S09 DLQ'`), with the
-cosmetic and id fields behind "show all fields". Display only.
-- 2026-10-20: found on S09. Parked.
-- 2026-11-06: raised again on live S52, whose change was diff paths the user could not check against the proposal.
-  The Change section is now the edit's sentences, one per setting, in the NiFi UI's names and before → after
-  ("S51 Drain: run schedule 10 sec → 1 sec"; S52: "s52-to-dlq: new connection from S52 Validator to S52 DLQ",
-  "carries failure", "S52 Validator: no longer auto-terminates failure", "S52 DLQ: state DISABLED → ENABLED"). Every
-  field, the canvas ones and ids included, is behind **Every field changed**. Parameter, resize and version-rollback
-  changes read the same way. A test checks every scenario's known fix reads without definition key names.
-- 2026-11-06: live, the user found the table behind **Every field changed** of no use next to the sentences: it is
-  gone; the diff stays on the proposal's validation report, where the executor checks it. A plan without sentences lists its diff
-  as path: before → after. Reviews drafted before the restart keep the sentences they were drafted with
-  (`schedulingPeriod '1 sec' -> '250 ms'`); new ones read the new way.
-- 2026-11-06: the user pulled, restarted and validated it live. Done.
-
 ### NFH-52 · Feature · Scorecard refreshes when its tab opens
 The Scorecard renders only on page load and on its own Refresh button.
 - 2026-10-20: offered. Parked.
@@ -217,21 +200,6 @@ A review that failed for a platform reason (NFH-56) can only be rejected, which 
 case and drafts a playbook edit. Add a separate outcome that closes the review without teaching or grading the agent.
 - 2026-10-20: found on S28. Parked.
 
-### NFH-58 · Feature · A form for editing steps
-Editing a proposal means typing a JSON list of steps. Replace it with one row per step: an action dropdown limited to
-the proposal's family, a target dropdown from the inventory, fields that fit the action, with JSON behind "edit as
-JSON".
-- 2026-10-21: asked for on S30. Parked.
-- 2026-11-06: asked for again on live S01 and S52, with NFH-51. The JSON box is gone; the user chose a form folded
-  under **Edit this fix**, the JSON kept only in History. A row per step, up to the catalog's 4: the action (every
-  catalog action, not only the proposal's family, so a reviewer can write a fix for a reply the agent could not
-  give), the target (a processor, connection or parameter context of the group), and up to 3 fields named for the
-  action (run schedule, DLQ, retry backoff...), offering the target's relationships, properties or parameters. The
-  names come from the whole group's inventory, recorded at diagnosis (`context["targets"]`), so the form costs no
-  CDF read; a review drafted before this offers only the names its steps hold, and any name can be typed.
-  **Submit edit** re-validates the form's steps.
-- 2026-11-06: the user pulled, restarted and validated it live. Done.
-
 ### NFH-59 · Fix · Credit a two-fault first fix by its own KPI
 S32 needs a parameter fix and then a flow edit, so two proposals. The outcome check judges the first by every KPI that
 opened the incident, so a correct first fix can read as no change, or worse. Credit a fix for the KPI it targeted, and
@@ -242,13 +210,28 @@ report the KPIs still breached as "still open: likely another fault", with no ro
 - S06 alerts on percent full, which counts objects only, so six large files read as 0.06% and it never opens an
   incident. Alert on bytes queued instead.
 - S21's CPU threshold can't be reached on EXTRA_SMALL.
-- S09's backlog can't drain after its fix.
+- S09's backlog can't drain after its fix. Fixed 2026-11-07, live on a re-baseline.
 - S20 is stalled live rather than CPU-bound.
 - Thresholds on processor counts (S23 `below=20`, the rate KPIs) are written per second, but CDF charts a processor's
   counts as 5-minute totals, so on live they are 300 times off: a `below` alert never fires and an `above` one fires
   far too early. Fix with NFH-65.
 - 2026-10-21: found in the review pass. Parked.
 - 2026-10-21: the processor-count units found while building NFH-54.
+- 2026-11-07: the p25 replays show two more sides of S09, and of its twins S50 and S99 (measured on the mock). The
+  design fix, the DLQ route, empties the loop (4.3k → 14) but leaves s09-input at ~5.4k for good, one in and one out
+  a second, so the Scorecard's lift reads −1% on it, the least-moved signalled KPI, while the verdict is IMPROVED.
+  And the validator's failures come by count (DebugFlow passes one run in ten), not by record, so a retried FlowFile
+  always gets through in the end: at a 0 sec run schedule both queues drain within 15 min (loop 135, input 15), a
+  fix the scorecard grades "other" and the verdict credits (S99-b4b2, +97%); at 100 ms the input drains into the
+  loop (9.7k), as S09-953c read WORSENED; 4 tasks fill both.
+- 2026-11-07: S09 rebuilt, and with it S50 and S99. The validator is an EvaluateJsonPath reading `$.id`, and the
+  source's custom text makes one record in ten malformed (`${random():mod(10):equals(0):ifElse('','1')}`), so a
+  failure is the record's, not the run's, and a looped one fails on every run after. The validator runs every
+  250 ms, four times the input, so s09-input stays empty and only the loop grows, by 0.1/s, past 100 at 20 min.
+  The sim reads that one in N as content shares, and an EvaluateJsonPath's own relationships route what comes back
+  to it as before (`model.text_variants`, `engine._take_each`). On the mock the DLQ route empties the loop within
+  15 min (1.1k → 2), and 4 tasks or a 0 sec schedule leave it growing; both are now S09's wrong fixes, which the
+  twins' tests check. p3, p22 and p25 need re-baselining live, on a go-ahead.
 
 ### NFH-66 · Feature · Environment promotion
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
@@ -291,30 +274,9 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
-### NFH-94 · Feature · Measure what a larger flow costs
-Every pack is small: p20, the largest, has 40 processors, and a fault group 3–23. Customers run hundreds, so before
-building larger packs (NFH-95) the app has to say where the time and the prompt go. Nothing measured it: LLM and CDP
-calls reach telemetry's per-minute p50/p95, but no graph node is timed, the prompt is known only by its hash, and a
-replay case doesn't record the size of the flow.
-- 2026-11-05: each work node of the graph is timed (`nodes.timed`; not human_review, which waits on a person) into
-  telemetry as `agent.<node>` and into the run's `timings`, which the validation report carries. The report carries
-  the proposal's prompt size too (characters, a token estimate at 4 per token, the reply, and the inventory's and
-  readings' share), and the critique its own.
-- 2026-11-06: the replay records each trial's flow size (processors, connections and groups of the deployment and of
-  the fault's group, and the deployment's bytes); its cases carry the stage timings and the first prompt's size, and
-  the report ends with a by-size block (tiers of the fault group's processors: valid 1st, worked, median diagnose and
-  run seconds, prompt tokens). A scenario's `twin` names the small scenario it copies, and `--compare DIR DIR --twins`
-  sets each beside it. 550 pass.
-- 2026-11-06: `python -m nifi_healer.eval.bench` (also a CAI job): S03's fault as a size twin in one group of 50,
-  100, 250 and 500 processors, each alone on a fresh mock tenant, every stage the app runs timed with no LLM, plus
-  the sizes; a table, and JSON in provision/out/. Laptop, ms at 50 → 500: backfill 3 h 438 → 4,179, sim step 0.7 →
-  5.8, world save 46 → 445 (world file 0.55 → 5.3 MB), poll 26 → 161, read flow 3.9 → 29, inventory 0.3 → 16,
-  plan 12 → 156 (validate_edit 5 → 94, capacity 1.8 → 41), Monitor 1.3 → 8; everything about linear, none
-  near a second but the backfill, which the app runs once per deployment. What grows is the prompt: inventory and
-  readings 5.9k → 59.6k tokens, before playbooks, past cases, retries and samples. And the KPIs: 23 → 200, as each
-  filler flow's entry and exit gets a chart-only in/out roll-up KPI (`edge_kpis`), about 0.4 per processor, which
-  live means a 200-KPI `--kpis` argument (43 KB, a third of the 128 KiB limit) and a reading per KPI in the prompt. (The 50's provision, 500 ms,
-  is the first import's warm-up.) 569 pass.
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
 
 ### NFH-95 · Feature · Packs of customer-sized flows
 Wave 3, never provisioned unless named: p21-wide-100 (three faults, each in a group of ~100 processors), p22-wide-250,
@@ -374,114 +336,67 @@ the twin of a small one (same fault, design fix and traps) inside healthy filler
   they read (NFH-99). The controls' KPIs were below their thresholds, so they would likely have stayed quiet; this
   has to be checked again after the restart.
 - 2026-11-06/07: p22-wide-250 live on pdf110526 (the user's go-ahead), the first live test of NFH-97's scoping (groups of 250). S50 opened 21:26 PST and S49 21:30; both look-alikes stayed healthy, s49-exports-2 near 5,000 as designed. S49's first proposal valid. S50's run raised on a cut-off definition download (NFH-101 to NFH-103); after the restart its proposal was its design fix (route s50-failure-loop to S50 DLQ, enable the DLQ), ruling out both traps (thresholds, tasks or schedules) and not touching the decoy.
+- 2026-11-07: closed. p22, p23, p24 and p25-nested (NFH-96) are live, p21 built and provisioned only on a go-ahead
+  (NFH-50). Against their small twins the large and nested ones detect, stay quiet and work as the twins do, within
+  luck: wide on 20 pairs (llm-wave3-x3, llm-nfh97b), nested on 9 with memory and 9 without (NFH-105, NFH-106). Size,
+  wide or nested, costs the agent nothing measurable. Done in 1d0024d, c634fef, 055c6e4, 78c711e.
 
-### NFH-97 · Feature · A prompt budget for large groups
-The prompt shows the whole incident's group: every processor with every property, and a reading for every
-connection and roll-up KPI. At 250 processors that is ~32k tokens (NFH-95), almost all of it filler that has nothing
-to do with the fault, seven times the tokens of a small group on every call, and 60k at 500. Three rounds of p22–p23
-found no loss of quality at 250 (NFH-95), so this is for the cost and the headroom. A group of more than 60
-processors is now shown only around the fault.
-- 2026-11-06: `inventory.scope(inv, seeds)`: the processors joined to the seeds by connections, either way, but not
-  through a DLQ (flows share them), hop by hop while that stays within 60 processors; a processor nothing connects
-  to stays too (a DLQ nothing routes to yet is a fix's target). The seeds (`readings.seeds`) are what the incident's
-  own KPIs read and its signals name, not the roll-ups; none when a signal is on the deployment's nodes, which any
-  processor may load. The inventory says what it leaves out ("Also in this group, not shown: 236 processor(s) and
-  213 connection(s), in 42 flow(s) not connected to the ones above."), the readings keep only the rows of what it
-  shows, and the prompt says "every queue of the inventory below" (a new PROMPT_VERSION). Validation, capacity and
-  the tools still plan on the whole flow. A group of 60 or fewer is shown as before. In p21 and p22 each twin's
-  scoped inventory is its small twin's, renamed, with its decoy beside it. The bench records the tokens unscoped
-  too. Oracle on waves 1–2 as before (38/38 detected, controls 7/7, worked 92%, the same S30/S32/S36 as
-  oracle-all-1028); on p21–p24 8/8 worked, controls 44/44, prompt tokens at 51–100 processors 14.7k → 3.7k and at
-  101–250 32k → 4.4k, as at 1–20. Bench at 100/250/500: inventory and readings 11.6k/29.6k/59.6k → 0.47k tokens
-  (S03's fault is 4 processors); scoping adds nothing measurable. 660 pass. Next: an LLM replay of p21–p22 with
-  their twins, which should match the twins as llm-wave3-x3 did unscoped.
-- 2026-11-06: LLM replay of p21–p22 with their twins, 1 round (llm-nfh97b, CAI job replay-eval): prompt tokens
-  at 51–100 processors 14.7k → 3.7k and at 101–250 32k → 4.4k, as in the oracle and as at 1–20 (3.7k).
-  `--compare --twins`, small → large: worked 80% → 80% and value 80% → 80%, the same on every scenario; valid
-  1st 80% → 60% (S47 on its second try, S03 on its first; ±20 pts luck with 5 pairs). The one miss is the same on
-  both sides, S48 and S24, the right lever with too little. Diagnose time 113 s at 3.7k, 120 s at 3.7k, 76 s at
-  4.4k: the endpoint's queue again. A wide twin now costs what its small twin does, with no loss.
+### NFH-94 · Feature · Measure what a larger flow costs
+Every pack is small: p20, the largest, has 40 processors, and a fault group 3–23. Customers run hundreds, so before
+building larger packs (NFH-95) the app has to say where the time and the prompt go. Nothing measured it: LLM and CDP
+calls reach telemetry's per-minute p50/p95, but no graph node is timed, the prompt is known only by its hash, and a
+replay case doesn't record the size of the flow.
+- 2026-11-05: each work node of the graph is timed (`nodes.timed`; not human_review, which waits on a person) into
+  telemetry as `agent.<node>` and into the run's `timings`, which the validation report carries. The report carries
+  the proposal's prompt size too (characters, a token estimate at 4 per token, the reply, and the inventory's and
+  readings' share), and the critique its own.
+- 2026-11-06: the replay records each trial's flow size (processors, connections and groups of the deployment and of
+  the fault's group, and the deployment's bytes); its cases carry the stage timings and the first prompt's size, and
+  the report ends with a by-size block (tiers of the fault group's processors: valid 1st, worked, median diagnose and
+  run seconds, prompt tokens). A scenario's `twin` names the small scenario it copies, and `--compare DIR DIR --twins`
+  sets each beside it. 550 pass.
+- 2026-11-06: `python -m nifi_healer.eval.bench` (also a CAI job): S03's fault as a size twin in one group of 50,
+  100, 250 and 500 processors, each alone on a fresh mock tenant, every stage the app runs timed with no LLM, plus
+  the sizes; a table, and JSON in provision/out/. Laptop, ms at 50 → 500: backfill 3 h 438 → 4,179, sim step 0.7 →
+  5.8, world save 46 → 445 (world file 0.55 → 5.3 MB), poll 26 → 161, read flow 3.9 → 29, inventory 0.3 → 16,
+  plan 12 → 156 (validate_edit 5 → 94, capacity 1.8 → 41), Monitor 1.3 → 8; everything about linear, none
+  near a second but the backfill, which the app runs once per deployment. What grows is the prompt: inventory and
+  readings 5.9k → 59.6k tokens, before playbooks, past cases, retries and samples. And the KPIs: 23 → 200, as each
+  filler flow's entry and exit gets a chart-only in/out roll-up KPI (`edge_kpis`), about 0.4 per processor, which
+  live means a 200-KPI `--kpis` argument (43 KB, a third of the 128 KiB limit) and a reading per KPI in the prompt. (The 50's provision, 500 ms,
+  is the first import's warm-up.) 569 pass.
+- 2026-11-07: closed. Every replay since has read its cost by size from these measures: unscoped, the prompt grew
+  with the group (3.7k tokens at 1–20 processors, 14.7k at 51–100, 32k at 101–250) and diagnosis time did not, the
+  shared endpoint's queue sets it (NFH-95); scoped (NFH-97), a wide or nested group's prompt is a small one's (4.1k
+  and 4.7k tokens on p25, NFH-105). The bench stays the check for any larger flow. Done in 68b88be, db21b18.
 
-### NFH-98 · Fix · The large packs' filler raises WARN bulletins
-Live, p24-healthy-500 (controls only) was Concerning Health from a minute after it started: an active "Warning Or
-Error Bulletin", from LogAttribute dumps of FlowFile attributes. The filler's validate flows reject one FlowFile in 20
-into a DLQ by design, and every DLQ is `common.dlq()`, a LogAttribute at WARN, so each reject is a bulletin: 20
-groups, a steady trickle, and CDF's health could never change. The app reads KPIs, not bulletins, so it opened
-nothing; but on p21–p23 the filler's bulletins would bury a twin's own.
-- 2026-11-06: `common.dlq(level=)`, "warn" by default; the filler's Reject DLQs log at "info", so a healthy reject
-  rate is no bulletin, and a twin's own DLQs stay at WARN as its twin's do (S49 Unparsed DLQ, S50 DLQ, S52 DLQ, S53
-  Parse DLQ). 20/20/12/4 DLQs move in p24/p22/p21/p23; waves 1–2 are unchanged. A test checks every wave-3
-  LogAttribute is WARN only in a twin's fault. README regenerated. 664 pass. Next, live: p24 to the rebuilt flow (01
-  `--new-baseline`, 06 `--flow-only`), which should go Good Health.
-- 2026-11-06: live (`rebaseline_p24.py`: git-pull, 01 `--new-baseline`, 06 `--flow-only` armed in its own job
-  only, 05): p24-healthy-500 on the rebuilt flow is Good Health, the bulletin alert gone. Done.
+### NFH-106 · Fix · A nested target with spaces graded as the wrong lever
+The `--no-memory` replay of p25-nested (replay-20261108-035438) graded S98 0% design and 0% lever, though all three
+fixes worked: two run schedules and one tasks change on S98 Consumer, the lever S01 is credited for. Edits take
+"S98 Region / S98 Consumer" since NFH-105, but `scorecard._name` read it as " S98 Consumer", leading space and all,
+so no step matched the label.
+- 2026-11-07: `_name` strips what is left of the path, so "Sub/Name", "Sub / Name" and "Top / Sub / Name" are Name,
+  for a target and a DLQ alike. Test: S98's design fix is expected and a 500 ms schedule short, named all four ways,
+  and S99's route with both names spaced is expected. 717 pass. The Scorecard grades from the record, so after a
+  deploy it shows the run's corrected numbers; the job's own table stays as printed. On main in 6a5a7c4.
 
-### NFH-99 · Fix · A pack provisioned after the app started is polled but never opens an incident
-Live, p23-siblings was provisioned on pdf110526 and, 40 minutes on, none of S51–S53 had opened, though the probe
-read s51-backlog 1,826 against 500 and s53-to-lane-3 2,000 against 1,500. A signal takes its process group from the
-running build's scenarios (`detectors.group_name`, `packs.SCENARIOS`) and `by_group` drops a signal without one. The
-app had started on 11-05, before p22–p24 were added; the git-pull job updates the files but not the running modules.
-So the pack was polled and charted, its rows in the Fleet tab, and nothing said its signals went nowhere.
-- 2026-11-06: `fleet.unknown_scenarios(entry)` names the scenarios a pack's KPIs read that the build doesn't know.
-  The poller logs it once per change ("detection off") and puts it on the view, and the Fleet header leads with
-  "⚠ Detection off for p23-siblings: this build of the app does not know S51 … S77 (27 scenarios), so their signals
-  open no incident; restart the app (pull_and_restart.py) to watch them". The app writes the scenarios it knows into
-  DATA_DIR/app.owner at start, and 05 ends by reading it: "the running app (started …) knows every scenario of these
-  packs", "RESTART NEEDED: …", or, for an app older than this, a note that it cannot tell. Next: push, restart the
-  app, and see S51–S53 open on live.
-- 2026-11-06: after the restart, S51, S52 and S53 opened on live. S51's proposal was its design fix (the run schedule
-  of S51 Drain to 1 sec), and the user approved it (disarmed, a dry run). S52's was its design fix too (route S52
-  Validator's failure to S52 DLQ), which the first LLM replay of p23 had missed. S53's too (enable S53 Tokenize
-  Lane 3), the rationale ruling out both traps (higher thresholds, other processors' scheduling). 3 of 3 design fixes
-  live among 24 sibling controls. p23's groups are all under 60 processors, so these prompts were not scoped
-  (NFH-97); p22 is the live test of that.
-
-### NFH-100 · Fix · The Review Queue shows the last incident's panel after another is picked
-Live, with S52 open in the Review Queue just after S51 was approved, the panel showed S51 for a few seconds, now and
-then. The follow timer (3 s) re-renders the picked incident's panel when its state moves, as S51's did after
-approval (approved, applying, the dry run), and on a large flow a render takes seconds, because it reads the flow
-definition from the tenant. A follow that fired for S51 landed after S52 was picked and its panel had shown; the next
-follow saw the mismatch and drew S52 again. The decisions already refuse a panel the dropdown does not name
-(`_shows_another`), so nothing was sent to the wrong incident.
-- 2026-11-06: the app keeps each browser session's latest pick (`_picks`, by Gradio's session hash). A follow or a
-  pick's render whose incident is no longer the session's pick, before or after it renders, sends nothing.
-- 2026-11-06: the user pulled and restarted; picking between incidents is "significantly faster" and the stale panel
-  is gone. Done.
-
-### NFH-101 · Fix · A run that raises leaves its incident DIAGNOSING
-Live, S50 on p22-wide-250 stayed DIAGNOSING for 46 minutes and more, its panel reading "The agent is diagnosing this
-incident." with nothing running it; S49, opened four minutes later, was diagnosed. The app log had
-`INC-…-S50-3926: run failed: IncompleteRead: …` (NFH-102). `_run` logged an exception and returned, so the
-incident kept DIAGNOSING; `retry_failed` re-queues only NEW incidents, and only `recover()` at the next app start
-would have run it again. Only diagnose_and_propose catches its own errors (an LLM's, setting NEW).
-- 2026-11-07: a run or a re-diagnosis that raises logs its traceback, puts a DIAGNOSING incident back to NEW and
-  counts as an LLM failure, so `retry_failed` runs it again on the same backoff (5, 15, 30 min) from the step that
-  raised, its checkpoint kept. The panel says "The last run stopped: IncompleteRead: …" and when it tries again,
-  as for an LLM timeout. A DIAGNOSING incident nothing is running (one left by an app before this) says "The
-  agent's run stopped before it proposed a fix, and nothing is running it now. Diagnose runs it again; so does an
-  app restart." 675 pass.
-- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in e0760e0.
-
-### NFH-102 · Fix · A console download cut off mid-body raises
-The console catalog download (NFH-56's fallback for definitions over 64 KiB) caught HTTP errors, `OSError` and
-`ValueError`. Live on p22, whose definition is 1.2 MB, the body stopped at 1,043,456 bytes (1 MiB less 1 KiB) twice:
-once in the poller's processor kinds and once in S50's gather_context. `http.client.IncompleteRead` is neither, so
-it raised through `flow_definition`, and S50's run ended (NFH-101). A read-only probe of the same version from a
-laptop had read it whole.
-- 2026-11-07: `_console_get` tries a GET whose answer is cut off (`http.client.HTTPException`) 3 times, 2 s apart,
-  signed again each time, then returns an error dict ("The CDP console's answer was cut off (3 tries).") as any
-  other failed read. 675 pass.
-- 2026-11-07: deployed with NFH-101 and NFH-103; S50's re-run read the definition and proposed. Done in 49c641f.
-
-### NFH-103 · Fix · A flow definition is downloaded on every read
-Nothing kept a flow definition, though a version never changes. An agent run read the deployed version's in
-gather_context and again in each `executor.plan`, per attempt; the poller once per version; the Review panel on each
-render (NFH-100). On p22 each read is a 1.2 MB console download, the read NFH-102 saw cut off, and the slow
-handlers in the app log (show_fleet 122 s, refresh_history 111 s, most others 15–40 s) are probably these too.
-- 2026-11-07: the LiveClient keeps the last 32 definitions it read, by version CRN, as JSON text, and parses a fresh
-  copy for each caller, so no caller's edit reaches another. A failed read is not kept. The mock is unchanged (its
-  reads are local). 675 pass.
-- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in 49c641f.
+### NFH-105 · Fix · A nested target named as the inventory's header names it
+The first LLM replay of p25-nested (replay-20261108-025555, nemotron-3-super, 3 rounds against twins S01, S09, S14)
+lost S98's round 1 to it: the third attempt named its target "S98 Slow Consumer One Group Down / S98 Region /
+S98 Consumer", as the inventory's `Process group: Top / Sub` header writes the group, and edits look up only
+"S98 Region/S98 Consumer"; the attempts ran out. The capacity check kept processors by bare name only, so a fix that
+named its target by any path was not checked at all.
+- 2026-11-07: `inventory.target_path` reads a target as a path below the incident's group: spaces around "/" go, and
+  a leading segment that is the group's own name is dropped. Edits try the target as written, then that; the capacity
+  check finds a processor bare or by path and reports it by its name. Test: S98's short fix is sent back and the
+  design fix passes, named all three ways. 716 pass. On main in 82d4883.
+- 2026-11-07: deployed, and the replay rerun with the same arguments (replay-20261108-033644): 18 of 18 worked,
+  94% valid first time (only S01's round 1, 3 tasks against about 3/s, sent back by the capacity check), the
+  controls quiet in 6 of 6, and no target not found. Nested matches flat: S98 100% vs S01 100%, S99 vs S09 and S100
+  vs S14 100% each. Prompts are 4,127 tokens for groups of 1–20 processors and 4,675 for 51–100, and diagnosis takes
+  about 45 s for both. It ran in the first run's store, so round 1 saw 17 past cases, its working S98 and S99 fixes
+  among them; the first run's round 1, where every nested miss was, saw none. A run with `--no-memory` would show
+  whether nesting costs the agent anything on its own.
 
 ### NFH-96 · Feature · Nested process groups
 The builder can nest groups but has no ports, and flow_edges, edits.apply, the outside-the-group check and the
@@ -511,37 +426,145 @@ inventory see only a group's own processors. Needed before p25-nested.
   and each design fix applies two to three levels down and works. 715 pass. Not provisioned: live, it also tests
   whether CDF takes a componentId 4–5 levels deep. On main in 1792336.
 
-### NFH-105 · Fix · A nested target named as the inventory's header names it
-The first LLM replay of p25-nested (replay-20261108-025555, nemotron-3-super, 3 rounds against twins S01, S09, S14)
-lost S98's round 1 to it: the third attempt named its target "S98 Slow Consumer One Group Down / S98 Region /
-S98 Consumer", as the inventory's `Process group: Top / Sub` header writes the group, and edits look up only
-"S98 Region/S98 Consumer"; the attempts ran out. The capacity check kept processors by bare name only, so a fix that
-named its target by any path was not checked at all.
-- 2026-11-07: `inventory.target_path` reads a target as a path below the incident's group: spaces around "/" go, and
-  a leading segment that is the group's own name is dropped. Edits try the target as written, then that; the capacity
-  check finds a processor bare or by path and reports it by its name. Test: S98's short fix is sent back and the
-  design fix passes, named all three ways. 716 pass. On main in 82d4883.
-- 2026-11-07: deployed, and the replay rerun with the same arguments (replay-20261108-033644): 18 of 18 worked,
-  94% valid first time (only S01's round 1, 3 tasks against about 3/s, sent back by the capacity check), the
-  controls quiet in 6 of 6, and no target not found. Nested matches flat: S98 100% vs S01 100%, S99 vs S09 and S100
-  vs S14 100% each. Prompts are 4,127 tokens for groups of 1–20 processors and 4,675 for 51–100, and diagnosis takes
-  about 45 s for both. It ran in the first run's store, so round 1 saw 17 past cases, its working S98 and S99 fixes
-  among them; the first run's round 1, where every nested miss was, saw none. A run with `--no-memory` would show
-  whether nesting costs the agent anything on its own.
+### NFH-103 · Fix · A flow definition is downloaded on every read
+Nothing kept a flow definition, though a version never changes. An agent run read the deployed version's in
+gather_context and again in each `executor.plan`, per attempt; the poller once per version; the Review panel on each
+render (NFH-100). On p22 each read is a 1.2 MB console download, the read NFH-102 saw cut off, and the slow
+handlers in the app log (show_fleet 122 s, refresh_history 111 s, most others 15–40 s) are probably these too.
+- 2026-11-07: the LiveClient keeps the last 32 definitions it read, by version CRN, as JSON text, and parses a fresh
+  copy for each caller, so no caller's edit reaches another. A failed read is not kept. The mock is unchanged (its
+  reads are local). 675 pass.
+- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in 49c641f.
 
-### NFH-106 · Fix · A nested target with spaces graded as the wrong lever
-The `--no-memory` replay of p25-nested (replay-20261108-035438) graded S98 0% design and 0% lever, though all three
-fixes worked: two run schedules and one tasks change on S98 Consumer, the lever S01 is credited for. Edits take
-"S98 Region / S98 Consumer" since NFH-105, but `scorecard._name` read it as " S98 Consumer", leading space and all,
-so no step matched the label.
-- 2026-11-07: `_name` strips what is left of the path, so "Sub/Name", "Sub / Name" and "Top / Sub / Name" are Name,
-  for a target and a DLQ alike. Test: S98's design fix is expected and a 500 ms schedule short, named all four ways,
-  and S99's route with both names spaced is expected. 717 pass. The Scorecard grades from the record, so after a
-  deploy it shows the run's corrected numbers; the job's own table stays as printed. On main in 6a5a7c4.
+### NFH-102 · Fix · A console download cut off mid-body raises
+The console catalog download (NFH-56's fallback for definitions over 64 KiB) caught HTTP errors, `OSError` and
+`ValueError`. Live on p22, whose definition is 1.2 MB, the body stopped at 1,043,456 bytes (1 MiB less 1 KiB) twice:
+once in the poller's processor kinds and once in S50's gather_context. `http.client.IncompleteRead` is neither, so
+it raised through `flow_definition`, and S50's run ended (NFH-101). A read-only probe of the same version from a
+laptop had read it whole.
+- 2026-11-07: `_console_get` tries a GET whose answer is cut off (`http.client.HTTPException`) 3 times, 2 s apart,
+  signed again each time, then returns an error dict ("The CDP console's answer was cut off (3 tries).") as any
+  other failed read. 675 pass.
+- 2026-11-07: deployed with NFH-101 and NFH-103; S50's re-run read the definition and proposed. Done in 49c641f.
 
-## Closed tickets
+### NFH-101 · Fix · A run that raises leaves its incident DIAGNOSING
+Live, S50 on p22-wide-250 stayed DIAGNOSING for 46 minutes and more, its panel reading "The agent is diagnosing this
+incident." with nothing running it; S49, opened four minutes later, was diagnosed. The app log had
+`INC-…-S50-3926: run failed: IncompleteRead: …` (NFH-102). `_run` logged an exception and returned, so the
+incident kept DIAGNOSING; `retry_failed` re-queues only NEW incidents, and only `recover()` at the next app start
+would have run it again. Only diagnose_and_propose catches its own errors (an LLM's, setting NEW).
+- 2026-11-07: a run or a re-diagnosis that raises logs its traceback, puts a DIAGNOSING incident back to NEW and
+  counts as an LLM failure, so `retry_failed` runs it again on the same backoff (5, 15, 30 min) from the step that
+  raised, its checkpoint kept. The panel says "The last run stopped: IncompleteRead: …" and when it tries again,
+  as for an LLM timeout. A DIAGNOSING incident nothing is running (one left by an app before this) says "The
+  agent's run stopped before it proposed a fix, and nothing is running it now. Diagnose runs it again; so does an
+  app restart." 675 pass.
+- 2026-11-07: the user pulled and restarted; S50, left DIAGNOSING by the old app, was run again by `recover()` and proposed in about a minute. Done in e0760e0.
 
-Tickets 1–29 were done before this tracker began; see the index.
+### NFH-100 · Fix · The Review Queue shows the last incident's panel after another is picked
+Live, with S52 open in the Review Queue just after S51 was approved, the panel showed S51 for a few seconds, now and
+then. The follow timer (3 s) re-renders the picked incident's panel when its state moves, as S51's did after
+approval (approved, applying, the dry run), and on a large flow a render takes seconds, because it reads the flow
+definition from the tenant. A follow that fired for S51 landed after S52 was picked and its panel had shown; the next
+follow saw the mismatch and drew S52 again. The decisions already refuse a panel the dropdown does not name
+(`_shows_another`), so nothing was sent to the wrong incident.
+- 2026-11-06: the app keeps each browser session's latest pick (`_picks`, by Gradio's session hash). A follow or a
+  pick's render whose incident is no longer the session's pick, before or after it renders, sends nothing.
+- 2026-11-06: the user pulled and restarted; picking between incidents is "significantly faster" and the stale panel
+  is gone. Done.
+
+### NFH-99 · Fix · A pack provisioned after the app started is polled but never opens an incident
+Live, p23-siblings was provisioned on pdf110526 and, 40 minutes on, none of S51–S53 had opened, though the probe
+read s51-backlog 1,826 against 500 and s53-to-lane-3 2,000 against 1,500. A signal takes its process group from the
+running build's scenarios (`detectors.group_name`, `packs.SCENARIOS`) and `by_group` drops a signal without one. The
+app had started on 11-05, before p22–p24 were added; the git-pull job updates the files but not the running modules.
+So the pack was polled and charted, its rows in the Fleet tab, and nothing said its signals went nowhere.
+- 2026-11-06: `fleet.unknown_scenarios(entry)` names the scenarios a pack's KPIs read that the build doesn't know.
+  The poller logs it once per change ("detection off") and puts it on the view, and the Fleet header leads with
+  "⚠ Detection off for p23-siblings: this build of the app does not know S51 … S77 (27 scenarios), so their signals
+  open no incident; restart the app (pull_and_restart.py) to watch them". The app writes the scenarios it knows into
+  DATA_DIR/app.owner at start, and 05 ends by reading it: "the running app (started …) knows every scenario of these
+  packs", "RESTART NEEDED: …", or, for an app older than this, a note that it cannot tell. Next: push, restart the
+  app, and see S51–S53 open on live.
+- 2026-11-06: after the restart, S51, S52 and S53 opened on live. S51's proposal was its design fix (the run schedule
+  of S51 Drain to 1 sec), and the user approved it (disarmed, a dry run). S52's was its design fix too (route S52
+  Validator's failure to S52 DLQ), which the first LLM replay of p23 had missed. S53's too (enable S53 Tokenize
+  Lane 3), the rationale ruling out both traps (higher thresholds, other processors' scheduling). 3 of 3 design fixes
+  live among 24 sibling controls. p23's groups are all under 60 processors, so these prompts were not scoped
+  (NFH-97); p22 is the live test of that.
+
+### NFH-98 · Fix · The large packs' filler raises WARN bulletins
+Live, p24-healthy-500 (controls only) was Concerning Health from a minute after it started: an active "Warning Or
+Error Bulletin", from LogAttribute dumps of FlowFile attributes. The filler's validate flows reject one FlowFile in 20
+into a DLQ by design, and every DLQ is `common.dlq()`, a LogAttribute at WARN, so each reject is a bulletin: 20
+groups, a steady trickle, and CDF's health could never change. The app reads KPIs, not bulletins, so it opened
+nothing; but on p21–p23 the filler's bulletins would bury a twin's own.
+- 2026-11-06: `common.dlq(level=)`, "warn" by default; the filler's Reject DLQs log at "info", so a healthy reject
+  rate is no bulletin, and a twin's own DLQs stay at WARN as its twin's do (S49 Unparsed DLQ, S50 DLQ, S52 DLQ, S53
+  Parse DLQ). 20/20/12/4 DLQs move in p24/p22/p21/p23; waves 1–2 are unchanged. A test checks every wave-3
+  LogAttribute is WARN only in a twin's fault. README regenerated. 664 pass. Next, live: p24 to the rebuilt flow (01
+  `--new-baseline`, 06 `--flow-only`), which should go Good Health.
+- 2026-11-06: live (`rebaseline_p24.py`: git-pull, 01 `--new-baseline`, 06 `--flow-only` armed in its own job
+  only, 05): p24-healthy-500 on the rebuilt flow is Good Health, the bulletin alert gone. Done.
+
+### NFH-97 · Feature · A prompt budget for large groups
+The prompt shows the whole incident's group: every processor with every property, and a reading for every
+connection and roll-up KPI. At 250 processors that is ~32k tokens (NFH-95), almost all of it filler that has nothing
+to do with the fault, seven times the tokens of a small group on every call, and 60k at 500. Three rounds of p22–p23
+found no loss of quality at 250 (NFH-95), so this is for the cost and the headroom. A group of more than 60
+processors is now shown only around the fault.
+- 2026-11-06: `inventory.scope(inv, seeds)`: the processors joined to the seeds by connections, either way, but not
+  through a DLQ (flows share them), hop by hop while that stays within 60 processors; a processor nothing connects
+  to stays too (a DLQ nothing routes to yet is a fix's target). The seeds (`readings.seeds`) are what the incident's
+  own KPIs read and its signals name, not the roll-ups; none when a signal is on the deployment's nodes, which any
+  processor may load. The inventory says what it leaves out ("Also in this group, not shown: 236 processor(s) and
+  213 connection(s), in 42 flow(s) not connected to the ones above."), the readings keep only the rows of what it
+  shows, and the prompt says "every queue of the inventory below" (a new PROMPT_VERSION). Validation, capacity and
+  the tools still plan on the whole flow. A group of 60 or fewer is shown as before. In p21 and p22 each twin's
+  scoped inventory is its small twin's, renamed, with its decoy beside it. The bench records the tokens unscoped
+  too. Oracle on waves 1–2 as before (38/38 detected, controls 7/7, worked 92%, the same S30/S32/S36 as
+  oracle-all-1028); on p21–p24 8/8 worked, controls 44/44, prompt tokens at 51–100 processors 14.7k → 3.7k and at
+  101–250 32k → 4.4k, as at 1–20. Bench at 100/250/500: inventory and readings 11.6k/29.6k/59.6k → 0.47k tokens
+  (S03's fault is 4 processors); scoping adds nothing measurable. 660 pass. Next: an LLM replay of p21–p22 with
+  their twins, which should match the twins as llm-wave3-x3 did unscoped.
+- 2026-11-06: LLM replay of p21–p22 with their twins, 1 round (llm-nfh97b, CAI job replay-eval): prompt tokens
+  at 51–100 processors 14.7k → 3.7k and at 101–250 32k → 4.4k, as in the oracle and as at 1–20 (3.7k).
+  `--compare --twins`, small → large: worked 80% → 80% and value 80% → 80%, the same on every scenario; valid
+  1st 80% → 60% (S47 on its second try, S03 on its first; ±20 pts luck with 5 pairs). The one miss is the same on
+  both sides, S48 and S24, the right lever with too little. Diagnose time 113 s at 3.7k, 120 s at 3.7k, 76 s at
+  4.4k: the endpoint's queue again. A wide twin now costs what its small twin does, with no loss.
+
+### NFH-58 · Feature · A form for editing steps
+Editing a proposal means typing a JSON list of steps. Replace it with one row per step: an action dropdown limited to
+the proposal's family, a target dropdown from the inventory, fields that fit the action, with JSON behind "edit as
+JSON".
+- 2026-10-21: asked for on S30. Parked.
+- 2026-11-06: asked for again on live S01 and S52, with NFH-51. The JSON box is gone; the user chose a form folded
+  under **Edit this fix**, the JSON kept only in History. A row per step, up to the catalog's 4: the action (every
+  catalog action, not only the proposal's family, so a reviewer can write a fix for a reply the agent could not
+  give), the target (a processor, connection or parameter context of the group), and up to 3 fields named for the
+  action (run schedule, DLQ, retry backoff...), offering the target's relationships, properties or parameters. The
+  names come from the whole group's inventory, recorded at diagnosis (`context["targets"]`), so the form costs no
+  CDF read; a review drafted before this offers only the names its steps hold, and any name can be typed.
+  **Submit edit** re-validates the form's steps.
+- 2026-11-06: the user pulled, restarted and validated it live. Done.
+
+### NFH-51 · Feature · Review Queue change table in plain sentences
+The change table shows raw diff paths, including canvas-only fields such as connection bends and positions. Show the
+plain sentences the edit already writes (`s09-failure-loop: destination 'S09 Validator' -> 'S09 DLQ'`), with the
+cosmetic and id fields behind "show all fields". Display only.
+- 2026-10-20: found on S09. Parked.
+- 2026-11-06: raised again on live S52, whose change was diff paths the user could not check against the proposal.
+  The Change section is now the edit's sentences, one per setting, in the NiFi UI's names and before → after
+  ("S51 Drain: run schedule 10 sec → 1 sec"; S52: "s52-to-dlq: new connection from S52 Validator to S52 DLQ",
+  "carries failure", "S52 Validator: no longer auto-terminates failure", "S52 DLQ: state DISABLED → ENABLED"). Every
+  field, the canvas ones and ids included, is behind **Every field changed**. Parameter, resize and version-rollback
+  changes read the same way. A test checks every scenario's known fix reads without definition key names.
+- 2026-11-06: live, the user found the table behind **Every field changed** of no use next to the sentences: it is
+  gone; the diff stays on the proposal's validation report, where the executor checks it. A plan without sentences lists its diff
+  as path: before → after. Reviews drafted before the restart keep the sentences they were drafted with
+  (`schedulingPeriod '1 sec' -> '250 ms'`); new ones read the new way.
+- 2026-11-06: the user pulled, restarted and validated it live. Done.
 
 ### NFH-93 · Fix · The test tenant's clock is stepped
 The install job on the new pdf-workbench-110526 failed two tests that pass on a laptop:

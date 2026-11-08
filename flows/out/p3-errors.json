@@ -25,7 +25,7 @@
     "position": null,
     "processGroups": [
       {
-        "comments": "Failures are routed back into the validator with no limit, so retries starve new input. (symptom: failure_loop)",
+        "comments": "Malformed records fail and are routed back into the validator with no limit, so they pile up there for good, retried on every run. (symptom: failure_loop)",
         "componentType": "PROCESS_GROUP",
         "connections": [
           {
@@ -139,7 +139,7 @@
             "position": null,
             "prioritizers": [],
             "selectedRelationships": [
-              "success"
+              "matched"
             ],
             "source": {
               "comments": null,
@@ -204,7 +204,8 @@
               "Batch Size": "1",
               "Data Format": "Text",
               "File Size": "1 KB",
-              "Unique FlowFiles": "false"
+              "Unique FlowFiles": "false",
+              "generate-ff-custom-text": "{\"id\": ${random():mod(10):equals(0):ifElse('','1')}}"
             },
             "propertyDescriptors": {},
             "retriedRelationships": [],
@@ -219,7 +220,9 @@
           },
           {
             "annotationData": null,
-            "autoTerminatedRelationships": [],
+            "autoTerminatedRelationships": [
+              "unmatched"
+            ],
             "backoffMechanism": "PENALIZE_FLOWFILE",
             "bulletinLevel": "WARN",
             "bundle": {
@@ -242,20 +245,19 @@
               "y": 200.0
             },
             "properties": {
-              "FlowFile Exception Iterations": "0",
-              "FlowFile Failure Iterations": "9",
-              "FlowFile Rollback Iterations": "0",
-              "FlowFile Success Iterations": "1"
+              "Destination": "flowfile-attribute",
+              "Return Type": "auto-detect",
+              "order.id": "$.id"
             },
             "propertyDescriptors": {},
             "retriedRelationships": [],
             "retryCount": 10,
             "runDurationMillis": 0,
             "scheduledState": "ENABLED",
-            "schedulingPeriod": "1 sec",
+            "schedulingPeriod": "250 ms",
             "schedulingStrategy": "TIMER_DRIVEN",
             "style": {},
-            "type": "org.apache.nifi.processors.standard.DebugFlow",
+            "type": "org.apache.nifi.processors.standard.EvaluateJsonPath",
             "yieldDuration": "1 sec"
           },
           {

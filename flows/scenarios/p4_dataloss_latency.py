@@ -68,7 +68,7 @@ S14 = Scenario(
     family="FLOW_EDIT",
     expected=(action("ROUTE_RELATIONSHIP_TO_DLQ", "S14 Validator", relationship="failure", dlq="S14 DLQ"),),
     acceptable=(),
-    traps=("Routing failure back to the validator turns silent loss into a retry storm (see S09).",),
+    traps=("Routing failure back to the validator turns silent loss into a loop that never empties (see S09).",),
 )
 
 

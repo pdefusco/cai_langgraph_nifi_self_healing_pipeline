@@ -1,8 +1,8 @@
 """
 The building blocks the larger packs need: CRON scheduling, and the
 DistributeLoad, ControlRate, SplitText and ReplaceText processors, in
-the builder and the simulator; and what a scenario declares about how
-its fault presents.
+the builder and the simulator; a malformed record that fails on every
+retry (S09); and what a scenario declares about how its fault presents.
 """
 
 import calendar
@@ -16,7 +16,7 @@ from flows.scenarios.base import Scenario
 from flows.scenarios.common import generator, sink
 from nifi_healer.sim import cron
 from nifi_healer.sim.engine import DT, Simulation
-from nifi_healer.sim.model import compile_flow
+from nifi_healer.sim.model import compile_flow, text_variants
 
 MONDAY = calendar.timegm((2026, 10, 12, 0, 0, 0))     # 00:00 UTC
 
@@ -230,6 +230,32 @@ def test_replace_text_passes_through_unless_the_content_overflows_its_buffer():
     whole = _simulation(build("Entire text", "1 KB"))
     whole.advance(whole.t + 10 * DT)
     assert _per_step(whole, "Rewritten") == 0 and _per_step(whole, "Rewrite DLQ") == pytest.approx(15)
+
+
+def test_a_one_in_n_record_is_one_in_n_of_the_content():
+    assert text_variants('{"id": 1}') == [(1.0, '{"id": 1}')]
+    assert text_variants("""{"id": ${random():mod(4):equals(0):ifElse('','1')}}""") == \
+        [(0.25, '{"id": }'), (0.75, '{"id": 1}')]
+
+
+def test_a_malformed_record_looped_back_fails_again():
+    # One record in four is not JSON: it fails, comes back, and fails on every run after; the rest match.
+    def build(pg):
+        generator(pg, "Source", text="""{"id": ${random():mod(4):equals(0):ifElse('','1')}}""")
+        pg.processor("check", "Check", "EvaluateJsonPath", {"Destination": "flowfile-attribute", "id": "$.id"},
+                     period="0 sec", auto_terminate=("unmatched",))
+        sink(pg, "sink", "Valid", period="0 sec")
+        pg.connect("gen", "check", ["success"], "Records")
+        pg.connect("check", "check", ["failure"], "Loop")
+        pg.connect("check", "sink", ["matched"], "Matched")
+
+    sim = _simulation(_flow(build))
+    sim.advance(sim.t + 10 * DT)
+    looped = sim.latest("connection|Loop|queued_count")
+    sim.advance(sim.t + 20 * DT)
+
+    assert _per_step(sim, "Valid") == pytest.approx(15 * 0.75)
+    assert sim.latest("connection|Loop|queued_count") - looped == pytest.approx(20 * 15 * 0.25)
 
 
 def _merging(threshold: int):

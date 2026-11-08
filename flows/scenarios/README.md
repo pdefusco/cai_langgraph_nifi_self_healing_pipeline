@@ -451,21 +451,21 @@ This pack is about error handling. A failure relationship that loops straight ba
 
 *A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
 
-S09 Validator is a DebugFlow that fails nine times out of ten. Its failure relationship goes straight back into itself through `s09-failure-loop`, with no limit on how many times a FlowFile can go around. On average each FlowFile takes ten attempts to get through, so with one FlowFile arriving each second the validator would need ten runs a second, and it only has one.
+S09 Source sends one order record a second, and one in ten is malformed: `{"id": }`, with no value. S09 Validator is an EvaluateJsonPath that reads `$.id` from each one. A malformed record can't be parsed, so it goes to failure, and failure goes straight back into the validator through `s09-failure-loop`, with no limit on how many times a FlowFile can go around. It fails again every time, because nothing about it has changed.
 
-The retries crowd out new work. The loop passes 100 FlowFiles quickly, and the input queue backs up behind it until it reaches 500. There's an S09 DLQ on the canvas, but it's disabled and nothing is connected to it.
+The validator runs four times a second, so it keeps up with the input and retries the loop with what is left. The good records go through, `s09-input` stays near empty, and the loop grows by one record every ten seconds, passing 100 after about 17 minutes. Left alone, it fills to its limit and back pressure stops the validator, and then the input backs up too. There's an S09 DLQ on the canvas, but it's disabled and nothing is connected to it.
 
-The fix is to route failure to the DLQ instead of back into the validator. The agent's DLQ edit repoints the self-loop at S09 DLQ and enables it. Adding validator tasks is the obvious mistake, since that only makes the retry storm bigger. Setting a retry policy on its own isn't enough either, because once retries are exhausted the FlowFiles still land back on the self-loop.
+The fix is to route failure to the DLQ instead of back into the validator. The agent's DLQ edit repoints the self-loop at S09 DLQ and enables it, and the loop empties into it. More validator tasks or a 0 sec schedule are the obvious mistakes: they retry the same malformed records faster, and none of them will ever parse. The tests check that both leave the loop growing. Setting a retry policy on its own isn't enough either, because once retries are exhausted the FlowFiles still land back on the self-loop.
 
 ```mermaid
 flowchart LR
     p0["<b>S09 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
-    p1["<b>S09 Validator</b><br/>DebugFlow<br/>1 task every 1 sec<br/>1 succeed, then 9 fail"]
+    p1["<b>S09 Validator</b><br/>EvaluateJsonPath<br/>1 task every 250 ms<br/>order.id: $.id"]
     p2["<b>S09 Publish</b><br/>UpdateAttribute"]
     p3["<b>S09 DLQ</b><br/>LogAttribute<br/>DISABLED"]
     p0 -->|"s09-input"| p1
     p1 -->|"s09-failure-loop<br/>failure"| p1
-    p1 -->|"s09-valid"| p2
+    p1 -->|"s09-valid<br/>matched"| p2
     classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
     classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
     classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
@@ -481,8 +481,8 @@ flowchart LR
 
 | Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
 |---|---|---|---|---|---|---|
-| S09 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
-| S09 Validator | DebugFlow | 1 sec | 1 | enabled |  | FlowFile Success Iterations: `1`<br>FlowFile Failure Iterations: `9`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S09 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"id": ${random():mod(10):equals(0):ifElse('','1')}}` |
+| S09 Validator | EvaluateJsonPath | 250 ms | 1 | enabled | unmatched | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>order.id: `$.id` |
 | S09 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
 | S09 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
 
@@ -490,7 +490,12 @@ flowchart LR
 |---|---|---|---|---|---|
 | s09-input | S09 Source | S09 Validator | success | 10,000 / 1 GB |  |
 | s09-failure-loop | S09 Validator | itself | failure | 10,000 / 1 GB | **self-loop** |
-| s09-valid | S09 Validator | S09 Publish | success | 10,000 / 1 GB |  |
+| s09-valid | S09 Validator | S09 Publish | matched | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S09 Validator to 4.
+- Setting the run schedule of S09 Validator to 0 sec.
 
 </details>
 
@@ -675,7 +680,7 @@ S14 Validator is a DebugFlow that fails one record in five. Its success relation
 
 The only sign in the metrics is that the validator sends out fewer FlowFiles than it takes in, and those two numbers are what the KPIs chart. The fix is to route failure to S14 DLQ, so rejected records are kept somewhere a person can look at them.
 
-The tempting alternative is to loop failure back into the validator so the records get another go. That trades silent loss for the retry storm from S09.
+The tempting alternative is to loop failure back into the validator so the records get another go. That trades silent loss for S09's loop, which never empties.
 
 ```mermaid
 flowchart LR
@@ -3207,9 +3212,9 @@ The tests also apply these wrong fixes and check that they don't clear the fault
 
 *A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
 
-S09's failure self-loop, renamed, in a group of 250. Nine attempts in ten fail and go straight back into S50 Validator, so each FlowFile needs ten runs and the validator, with one run a second, falls further behind every second. `s50-failure-loop` grows past 100.
+S09's failure self-loop, renamed, in a group of 250. One record in ten is malformed, fails S50 Validator and goes straight back into it, failing again on every run, so `s50-failure-loop` grows by one record every ten seconds and passes 100.
 
-The decoy, S50 Exports Send, also loops its failures back into itself, but only one in 20 fails and it runs on a 0 sec schedule, so it has room for the retries and `s50-exports-2` stays near empty. The other 243 processors are healthy filler, as in S46.
+The decoy, S50 Exports Send, also loops its failures back into itself, but its failures are transient: one attempt in 20 fails, a retry gets through, and it runs on a 0 sec schedule, so it has room for the retries and `s50-exports-2` stays near empty. The other 243 processors are healthy filler, as in S46.
 
 The fix is S09's: route S50 Validator's failures to S50 DLQ. Routing the decoy's failures there instead is a wrong fix, and the tests check that it leaves the self-loop growing.
 
@@ -3218,12 +3223,12 @@ Size twin of [S09 Failure Self-Loop](#s09-failure-self-loop). Beside S09's 4 pro
 ```mermaid
 flowchart LR
     p0["<b>S50 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
-    p1["<b>S50 Validator</b><br/>DebugFlow<br/>1 task every 1 sec<br/>1 succeed, then 9 fail"]
+    p1["<b>S50 Validator</b><br/>EvaluateJsonPath<br/>1 task every 250 ms<br/>order.id: $.id"]
     p2["<b>S50 Publish</b><br/>UpdateAttribute"]
     p3["<b>S50 DLQ</b><br/>LogAttribute<br/>DISABLED"]
     p0 -->|"s50-input"| p1
     p1 -->|"s50-failure-loop<br/>failure"| p1
-    p1 -->|"s50-valid"| p2
+    p1 -->|"s50-valid<br/>matched"| p2
     classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
     classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
     classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
@@ -3239,8 +3244,8 @@ flowchart LR
 
 | Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
 |---|---|---|---|---|---|---|
-| S50 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
-| S50 Validator | DebugFlow | 1 sec | 1 | enabled |  | FlowFile Success Iterations: `1`<br>FlowFile Failure Iterations: `9`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S50 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"id": ${random():mod(10):equals(0):ifElse('','1')}}` |
+| S50 Validator | EvaluateJsonPath | 250 ms | 1 | enabled | unmatched | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>order.id: `$.id` |
 | S50 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
 | S50 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
 
@@ -3248,10 +3253,12 @@ flowchart LR
 |---|---|---|---|---|---|
 | s50-input | S50 Source | S50 Validator | success | 10,000 / 1 GB |  |
 | s50-failure-loop | S50 Validator | itself | failure | 10,000 / 1 GB | **self-loop** |
-| s50-valid | S50 Validator | S50 Publish | success | 10,000 / 1 GB |  |
+| s50-valid | S50 Validator | S50 Publish | matched | 10,000 / 1 GB |  |
 
 The tests also apply these wrong fixes and check that they don't clear the fault:
 
+- Setting the concurrent tasks on S50 Validator to 4.
+- Setting the run schedule of S50 Validator to 0 sec.
 - Routing failure from S50 Exports Send to S50 DLQ.
 
 </details>
@@ -5524,7 +5531,7 @@ flowchart LR
 
 *A classic scenario with one fault, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
 
-S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. Nine attempts in ten fail and go straight back into S99 Validator through `s99-failure-loop`, which passes 100, and `s99-input` backs up behind it. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
+S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. One record in ten is malformed, fails S99 Validator and goes straight back into it through `s99-failure-loop`, failing again on every run, so the loop passes 100. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
 
 The fix is S09's: route the validator's failures to S99 DLQ. The filler has DLQs of its own higher up, and a route to one of them is refused, because a connection can only join processors in one group.
 
@@ -5533,12 +5540,12 @@ Size twin of [S09 Failure Self-Loop](#s09-failure-self-loop). S09's 4 processors
 ```mermaid
 flowchart LR
     p0["<b>S99 Source</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
-    p1["<b>S99 Validator</b><br/>DebugFlow<br/>1 task every 1 sec<br/>1 succeed, then 9 fail"]
+    p1["<b>S99 Validator</b><br/>EvaluateJsonPath<br/>1 task every 250 ms<br/>order.id: $.id"]
     p2["<b>S99 Publish</b><br/>UpdateAttribute"]
     p3["<b>S99 DLQ</b><br/>LogAttribute<br/>DISABLED"]
     p0 -->|"s99-input"| p1
     p1 -->|"s99-failure-loop<br/>failure"| p1
-    p1 -->|"s99-valid"| p2
+    p1 -->|"s99-valid<br/>matched"| p2
     classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
     classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
     classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
@@ -5554,8 +5561,8 @@ flowchart LR
 
 | Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
 |---|---|---|---|---|---|---|
-| S99 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false` |
-| S99 Validator | DebugFlow | 1 sec | 1 | enabled |  | FlowFile Success Iterations: `1`<br>FlowFile Failure Iterations: `9`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0` |
+| S99 Source | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"id": ${random():mod(10):equals(0):ifElse('','1')}}` |
+| S99 Validator | EvaluateJsonPath | 250 ms | 1 | enabled | unmatched | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>order.id: `$.id` |
 | S99 Publish | UpdateAttribute | 0 sec | 1 | enabled | success |  |
 | S99 DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
 
@@ -5563,7 +5570,12 @@ flowchart LR
 |---|---|---|---|---|---|
 | s99-input | S99 Source | S99 Validator | success | 10,000 / 1 GB |  |
 | s99-failure-loop | S99 Validator | itself | failure | 10,000 / 1 GB | **self-loop** |
-| s99-valid | S99 Validator | S99 Publish | success | 10,000 / 1 GB |  |
+| s99-valid | S99 Validator | S99 Publish | matched | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S99 Validator to 4.
+- Setting the run schedule of S99 Validator to 0 sec.
 
 </details>
 

@@ -232,19 +232,23 @@ WALKTHROUGHS = {
         to one FlowFile a second, which the consumer handles easily.
     """,
     "S09": """
-        S09 Validator is a DebugFlow that fails nine times out of ten. Its failure relationship goes straight
-        back into itself through `s09-failure-loop`, with no limit on how many times a FlowFile can go around.
-        On average each FlowFile takes ten attempts to get through, so with one FlowFile arriving each second
-        the validator would need ten runs a second, and it only has one.
+        S09 Source sends one order record a second, and one in ten is malformed: `{"id": }`, with no value.
+        S09 Validator is an EvaluateJsonPath that reads `$.id` from each one. A malformed record can't be parsed,
+        so it goes to failure, and failure goes straight back into the validator through `s09-failure-loop`, with
+        no limit on how many times a FlowFile can go around. It fails again every time, because nothing about it
+        has changed.
 
-        The retries crowd out new work. The loop passes 100 FlowFiles quickly, and the input queue backs up
-        behind it until it reaches 500. There's an S09 DLQ on the canvas, but it's disabled and nothing is
-        connected to it.
+        The validator runs four times a second, so it keeps up with the input and retries the loop with what is
+        left. The good records go through, `s09-input` stays near empty, and the loop grows by one record every
+        ten seconds, passing 100 after about 17 minutes. Left alone, it fills to its limit and back pressure stops
+        the validator, and then the input backs up too. There's an S09 DLQ on the canvas, but it's disabled and
+        nothing is connected to it.
 
         The fix is to route failure to the DLQ instead of back into the validator. The agent's DLQ edit repoints
-        the self-loop at S09 DLQ and enables it. Adding validator tasks is the obvious mistake, since that only
-        makes the retry storm bigger. Setting a retry policy on its own isn't enough either, because once
-        retries are exhausted the FlowFiles still land back on the self-loop.
+        the self-loop at S09 DLQ and enables it, and the loop empties into it. More validator tasks or a 0 sec
+        schedule are the obvious mistakes: they retry the same malformed records faster, and none of them will
+        ever parse. The tests check that both leave the loop growing. Setting a retry policy on its own isn't
+        enough either, because once retries are exhausted the FlowFiles still land back on the self-loop.
     """,
     "S10": """
         S10 Partner Call is an InvokeHTTP that posts orders to a partner at `10.255.255.1`. That address isn't
@@ -316,7 +320,7 @@ WALKTHROUGHS = {
         somewhere a person can look at them.
 
         The tempting alternative is to loop failure back into the validator so the records get another go. That
-        trades silent loss for the retry storm from S09.
+        trades silent loss for S09's loop, which never empties.
     """,
     "S15": """
         S15 Batcher is a MergeContent that waits for 1,000 entries before it sends a batch, and it has no Max
@@ -761,12 +765,13 @@ WALKTHROUGHS = {
         check that it leaves the deadlock in place.
     """,
     "S50": """
-        S09's failure self-loop, renamed, in a group of 250. Nine attempts in ten fail and go straight back into
-        S50 Validator, so each FlowFile needs ten runs and the validator, with one run a second, falls further
-        behind every second. `s50-failure-loop` grows past 100.
+        S09's failure self-loop, renamed, in a group of 250. One record in ten is malformed, fails S50 Validator
+        and goes straight back into it, failing again on every run, so `s50-failure-loop` grows by one record
+        every ten seconds and passes 100.
 
-        The decoy, S50 Exports Send, also loops its failures back into itself, but only one in 20 fails and it
-        runs on a 0 sec schedule, so it has room for the retries and `s50-exports-2` stays near empty. The other
+        The decoy, S50 Exports Send, also loops its failures back into itself, but its failures are transient:
+        one attempt in 20 fails, a retry gets through, and it runs on a 0 sec schedule, so it has room for the
+        retries and `s50-exports-2` stays near empty. The other
         243 processors are healthy filler, as in S46.
 
         The fix is S09's: route S50 Validator's failures to S50 DLQ. Routing the decoy's failures there instead
@@ -799,9 +804,9 @@ WALKTHROUGHS = {
         ports carry FlowFiles and have nothing to change.
     """,
     "S99": """
-        S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. Nine attempts in ten fail and
-        go straight back into S99 Validator through `s99-failure-loop`, which passes 100, and `s99-input` backs up
-        behind it. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
+        S09's failure self-loop, renamed, two groups down in S99 Region / S99 Site. One record in ten is
+        malformed, fails S99 Validator and goes straight back into it through `s99-failure-loop`, failing again
+        on every run, so the loop passes 100. S99 DLQ is beside the validator in S99 Site, disabled and connected to nothing.
 
         The fix is S09's: route the validator's failures to S99 DLQ. The filler has DLQs of its own higher up, and
         a route to one of them is refused, because a connection can only join processors in one group.
