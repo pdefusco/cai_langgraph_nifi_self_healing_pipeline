@@ -126,7 +126,7 @@ them.
 | NFH-101 | Fix | A run that raises leaves its incident DIAGNOSING, said to be diagnosing, and never run again | Done | e0760e0 |
 | NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | Done | 49c641f |
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
-| NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | In progress | |
+| NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
 
 ## Open tickets
 
@@ -519,7 +519,7 @@ named its target by any path was not checked at all.
 - 2026-11-07: `inventory.target_path` reads a target as a path below the incident's group: spaces around "/" go, and
   a leading segment that is the group's own name is dropped. Edits try the target as written, then that; the capacity
   check finds a processor bare or by path and reports it by its name. Test: S98's short fix is sent back and the
-  design fix passes, named all three ways.
+  design fix passes, named all three ways. 716 pass. On main in 82d4883.
 
 ## Closed tickets
 
