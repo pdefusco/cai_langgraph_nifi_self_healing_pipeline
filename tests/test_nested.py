@@ -372,3 +372,24 @@ def test_the_edges_of_a_nested_scenario_go_through_its_ports():
     assert edges["in"] == ["E Source"] and edges["out"] == ["E Sink"]
     assert edges["processors"] == ["E Source", "E Sink", "E Work"]
     assert edges["connections"] == ["e-down", "e-up", "e-into-work", "e-work-out"]
+
+
+# NiFi's boxes, about: a component this size from its position covers its neighbours on the canvas.
+BOX = {"processors": (350, 130), "processGroups": (380, 176), "inputPorts": (240, 48), "outputPorts": (240, 48)}
+
+
+def _overlaps(group: dict, path: str = "") -> list:
+    path = f"{path}/{group['name']}"
+    boxes = [(c["name"], c["position"]["x"], c["position"]["y"], *BOX[kind]) for kind in BOX for c in group[kind]]
+    found = [(path, a[0], b[0]) for i, a in enumerate(boxes) for b in boxes[i + 1:]
+             if a[1] < b[1] + b[3] and b[1] < a[1] + a[3] and a[2] < b[2] + b[4] and b[2] < a[2] + a[4]]
+
+    return found + [hit for child in group["processGroups"] for hit in _overlaps(child, path)]
+
+
+def test_no_component_covers_another_on_the_canvas():
+    # Live (NFH-108): on p25, each group inside sat on its crossing's source, and its ports on a stage and on filler.
+    from flows import packs
+
+    for name in packs.PACKS:
+        assert _overlaps(packs.build(name)["flowContents"]) == [], name

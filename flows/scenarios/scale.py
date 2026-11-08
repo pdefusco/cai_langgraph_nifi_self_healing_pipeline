@@ -257,18 +257,22 @@ def _crossing(parent, child, scenario_id: str, domain: str, index: int, rng) -> 
     key, level = f"x{index}", LEVELS[index - 1]
     outer = _Flow(parent, key, f"{scenario_id} {domain}", _slug(scenario_id, domain), column=0)
     inner = _Flow(child, key, outer.name, outer.slug, column=-1)
-    child.input_port(f"{key}.in", f"{scenario_id} In {level}")
-    child.output_port(f"{key}.out", f"{scenario_id} Out {level}")
+    # Laid out down the flows' own columns, the group under its source and the ports at the ends of
+    # the stages: where the builder puts them by default they covered the source, a stage and filler.
+    child.position = (0.0, ROW_SPACING)
+    child.input_port(f"{key}.in", f"{scenario_id} In {level}")["position"] = {"x": -COLUMN_SPACING, "y": 0.0}
+    out = child.output_port(f"{key}.out", f"{scenario_id} Out {level}")
     outer.connect(outer.source(rng), (child, f"{key}.in"))
-    inner.links, after = outer.links, f"{key}.in"
+    inner.links, inner.rows, after = outer.links, 1, f"{key}.in"
 
     for verb in rng.sample(VERBS, CROSSING_STAGES):
         made = inner.place(stage, verb.lower(), verb, period="0 sec")
         inner.connect(after, made, () if after == f"{key}.in" else ("success",))
         after = made
 
+    out["position"] = {"x": -COLUMN_SPACING, "y": inner.rows * ROW_SPACING}
     inner.connect(after, f"{key}.out")
-    outer.links = inner.links
+    outer.links, outer.rows = inner.links, 3  # a row's room below the group for its connections' labels
     outer.connect((child, f"{key}.out"), outer.place(sink, "store", "Store", period="0 sec"), ())
 
 

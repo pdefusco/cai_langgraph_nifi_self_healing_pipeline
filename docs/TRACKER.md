@@ -129,6 +129,7 @@ them.
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
 | NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
 | NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
+| NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | In progress | |
 
 ## Open tickets
 
@@ -282,6 +283,15 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 - 2026-10-22: re-graded with NFH-75, after-3 → after-4: design fix 25% → 50%, right value 50% → 67%, right lever
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
+
+### NFH-108 · Fix · Nested groups and their ports cover other components on the canvas
+- 2026-11-08: seen live on p25 (the S99 re-baseline, NFH-64): in each group the group inside sat at (0, 0), the
+  builder's default, on the crossing's Feed, under the labels of its own port connections. Inside it the input port
+  sat on the crossing's first stage and the output port in the fourth filler column. 20 overlaps, all in p25, none in
+  the other packs. `scale._crossing` now lays the crossing out down its own columns: the group under its Feed with a
+  row's room before the Store, and the ports above and below the stages. Positions only: ids, connections and
+  every check are unchanged, so moving p25 to it needs no queue emptied. A test checks no component covers another
+  in any pack. Live once p25 is re-baselined onto it.
 
 ## Closed tickets
 
