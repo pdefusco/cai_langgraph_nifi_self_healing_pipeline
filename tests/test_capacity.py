@@ -55,6 +55,19 @@ def test_the_design_fixes_pass(agent):
     assert short.startswith("S03 Transform: 2 task(s) every 1 sec is about 2/s, within 10% of the intake of about 2/s")
 
 
+def test_a_target_one_group_down_is_checked_however_it_is_named(agent):
+    # S98 is S01 in "S98 Region"; the replay's agent named it as the inventory's header does (NFH-105).
+    _, client, store, incidents, _ = agent("p25-nested")
+    incident = incidents["S98"]
+
+    for target in ("S98 Consumer", "S98 Region/S98 Consumer",
+                   "S98 Slow Consumer One Group Down / S98 Region / S98 Consumer"):
+        [short] = problems(client, store, incident, [schedule(target, "500 ms")])
+
+        assert short.startswith("S98 Consumer: 1 task(s) every 500 ms is about 2/s, below the intake of about 3/s")
+        assert problems(client, store, incident, [tasks(target, 4)]) == []
+
+
 def test_an_expiring_queue_hides_its_backlog(agent):
     # S25's buffer expires what the sessionizer can't reach: it holds steady, never full.
     _, client, store, incidents, _ = agent("p9-clickstream")

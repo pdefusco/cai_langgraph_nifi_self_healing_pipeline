@@ -28,7 +28,7 @@ import json
 from flows.builder.lib import check, component_id, walk_groups
 from flows.builder.processors import kind_of, relationships
 from nifi_healer.actions import catalog
-from nifi_healer.flow.inventory import editable_properties, find_group, subgroups
+from nifi_healer.flow.inventory import editable_properties, find_group, subgroups, target_path
 from nifi_healer.sim.model import compile_flow
 
 
@@ -44,6 +44,7 @@ def _find(group: dict, name: str, kind: str) -> tuple:
     """
 
     found, known = [], []
+    wanted = {name, target_path(group.get("name") or "", name)}
 
     for path, inner in subgroups(group):
         for item in inner.get(kind) or []:
@@ -53,7 +54,7 @@ def _find(group: dict, name: str, kind: str) -> tuple:
             full = f"{path}/{item.get('name') or ''}" if path else item.get("name") or ""
             known.append(full)
 
-            if item.get("name") == name or full == name:
+            if item.get("name") in wanted or full in wanted:
                 found.append((full, inner, item))
 
     if len(found) == 1:

@@ -126,6 +126,7 @@ them.
 | NFH-101 | Fix | A run that raises leaves its incident DIAGNOSING, said to be diagnosing, and never run again | Done | e0760e0 |
 | NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | Done | 49c641f |
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
+| NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | In progress | |
 
 ## Open tickets
 
@@ -508,6 +509,17 @@ inventory see only a group's own processors. Needed before p25-nested.
   S101–S102 nested controls (40, 60). The oracle replay on p25 detects all three faults, the controls stay quiet,
   and each design fix applies two to three levels down and works. 715 pass. Not provisioned: live, it also tests
   whether CDF takes a componentId 4–5 levels deep. On main in 1792336.
+
+### NFH-105 · Fix · A nested target named as the inventory's header names it
+The first LLM replay of p25-nested (replay-20261108-025555, nemotron-3-super, 3 rounds against twins S01, S09, S14)
+lost S98's round 1 to it: the third attempt named its target "S98 Slow Consumer One Group Down / S98 Region /
+S98 Consumer", as the inventory's `Process group: Top / Sub` header writes the group, and edits look up only
+"S98 Region/S98 Consumer"; the attempts ran out. The capacity check kept processors by bare name only, so a fix that
+named its target by any path was not checked at all.
+- 2026-11-07: `inventory.target_path` reads a target as a path below the incident's group: spaces around "/" go, and
+  a leading segment that is the group's own name is dropped. Edits try the target as written, then that; the capacity
+  check finds a processor bare or by path and reports it by its name. Test: S98's short fix is sent back and the
+  design fix passes, named all three ways.
 
 ## Closed tickets
 

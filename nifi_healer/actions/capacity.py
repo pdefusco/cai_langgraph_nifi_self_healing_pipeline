@@ -42,7 +42,7 @@ show as warnings after that (agent/nodes.py).
 
 import config
 from nifi_healer.actions import catalog
-from nifi_healer.flow.inventory import inventory
+from nifi_healer.flow.inventory import inventory, target_path
 from nifi_healer.kpi import readings
 from nifi_healer.kpi.detectors import REGROUPING
 from nifi_healer.sim.model import parse_duration
@@ -327,6 +327,20 @@ def _capacity(inv: dict, before: dict, after: dict, rows: dict, backlog: bool, n
     return found
 
 
+def _by_target(inv: dict) -> dict:
+    """An inventory's processors by every way a step may name them: bare, and by path below the group."""
+
+    found = {}
+
+    for p in inv["processors"]:
+        found.setdefault(p["name"], p)
+
+        if p.get("path"):
+            found[f"{p['path']}/{p['name']}"] = p
+
+    return found
+
+
 def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> list:
     if report.get("family") != catalog.FLOW_EDIT or "_base_definition" not in report:
         return []
@@ -343,17 +357,18 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         return []
 
     rows = {(r["kind"], r["component"], r["metric"]): r for r in readings.for_incident(incident, store, now)}
-    before = {p["name"]: p for p in old["processors"]}
-    after = {p["name"]: p for p in new["processors"]}
+    before, after = _by_target(old), _by_target(new)
     nodes = max(1, int(nodes or 1))
     signalled = {s.get("kpi") for s in incident.get("signals") or []}
     problems, considered, measured, backed = [], 0, 0, 0
 
-    for name in names:
-        was, now_is = before.get(name), after.get(name)
+    for target in names:
+        was, now_is = before.get(target_path(group, target)), after.get(target_path(group, target))
 
         if not was or not now_is or now_is.get("scheduling") == "CRON_DRIVEN":
             continue
+
+        name = now_is["name"]
 
         more_tasks = _int(now_is.get("concurrent_tasks")) > _int(was.get("concurrent_tasks"))
         period, period_was = _period(now_is), _period(was)

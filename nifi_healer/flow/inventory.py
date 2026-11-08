@@ -54,6 +54,22 @@ def subgroups(group: dict):
         yield "/".join(names[1:]), inner
 
 
+def target_path(group_name: str, target) -> str:
+    """
+    A target as a path below the incident's group: "Sub / Name" is
+    "Sub/Name", and one that starts at the group itself, as the
+    inventory's "Process group: Top / Sub" headers do, starts below it
+    (S98, NFH-105).
+    """
+
+    parts = [part.strip() for part in str(target or "").split("/")]
+
+    if len(parts) > 1 and parts[0] == group_name:
+        parts = parts[1:]
+
+    return "/".join(parts)
+
+
 def editable_properties(processor: dict) -> list:
     """The keys SET_PROCESSOR_PROPERTY may change on this processor."""
 
