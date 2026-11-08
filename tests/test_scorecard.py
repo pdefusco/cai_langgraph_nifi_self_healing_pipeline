@@ -74,6 +74,21 @@ def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
     assert sc.match([{"action": "NO_ACTION"}], None) == sc.UNKNOWN
 
 
+def test_match_takes_a_nested_target_however_it_is_named():
+    # Edits take all three since NFH-105; the replay graded the spaced ones "other" (S98, NFH-106).
+    s98, s99 = packs.SCENARIOS["S98"], packs.SCENARIOS["S99"]
+    [route] = (dict(s) for s in s99.expected)
+
+    for path in ("", "S98 Region/", "S98 Region / ", "S98 Slow Consumer One Group Down / S98 Region / "):
+        assert sc.match([{"action": "SET_CONCURRENT_TASKS", "target": f"{path}S98 Consumer", "value": 4}], s98) == \
+            sc.EXPECTED, path
+        assert sc.match([{"action": "SET_RUN_SCHEDULE", "target": f"{path}S98 Consumer", "value": "500 ms"}], s98) \
+            == sc.SHORT, path
+
+    assert sc.match([dict(route, target="S99 Region / S99 Site / S99 Validator", dlq="S99 Site / S99 DLQ")], s99) \
+        == sc.EXPECTED
+
+
 def test_match_takes_a_list_of_relationships_in_any_order():
     s10 = packs.SCENARIOS["S10"]
     route, *rest = (dict(s) for s in s10.expected)

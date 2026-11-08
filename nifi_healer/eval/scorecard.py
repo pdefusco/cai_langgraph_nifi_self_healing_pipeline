@@ -81,9 +81,9 @@ GROUPINGS = {
 
 
 def _name(target) -> str:
-    """A target's name: "Sub/Name" is Name."""
+    """A target's name: "Sub/Name", "Sub / Name" and the inventory header's "Top / Sub / Name" are Name (NFH-106)."""
 
-    return str(target or "").rsplit("/", 1)[-1]
+    return str(target or "").rsplit("/", 1)[-1].strip()
 
 
 def step_key(step: dict) -> tuple:

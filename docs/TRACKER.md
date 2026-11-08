@@ -127,6 +127,7 @@ them.
 | NFH-102 | Fix | A console download cut off mid-body raises instead of failing the read, and is not tried again | Done | 49c641f |
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
+| NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | In progress | |
 
 ## Open tickets
 
@@ -527,6 +528,16 @@ named its target by any path was not checked at all.
   about 45 s for both. It ran in the first run's store, so round 1 saw 17 past cases, its working S98 and S99 fixes
   among them; the first run's round 1, where every nested miss was, saw none. A run with `--no-memory` would show
   whether nesting costs the agent anything on its own.
+
+### NFH-106 · Fix · A nested target with spaces graded as the wrong lever
+The `--no-memory` replay of p25-nested (replay-20261108-035438) graded S98 0% design and 0% lever, though all three
+fixes worked: two run schedules and one tasks change on S98 Consumer, the lever S01 is credited for. Edits take
+"S98 Region / S98 Consumer" since NFH-105, but `scorecard._name` read it as " S98 Consumer", leading space and all,
+so no step matched the label.
+- 2026-11-07: `_name` strips what is left of the path, so "Sub/Name", "Sub / Name" and "Top / Sub / Name" are Name,
+  for a target and a DLQ alike. Test: S98's design fix is expected and a 500 ms schedule short, named all four ways,
+  and S99's route with both names spaced is expected. 717 pass. The Scorecard grades from the record, so after a
+  deploy it shows the run's corrected numbers; the job's own table stays as printed.
 
 ## Closed tickets
 
