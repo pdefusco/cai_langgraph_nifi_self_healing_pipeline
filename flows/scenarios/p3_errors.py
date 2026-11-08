@@ -21,17 +21,20 @@ def build_s09(pg):
     # fails again, for good. The validator keeps up with the input four
     # times over, so the loop only grows, by one record every 10 s, and no
     # number of tasks or runs gets a malformed record through.
+    # The key is new with the EvaluateJsonPath: NiFi matches a new version's
+    # components by id and never changes one's type, so under the old
+    # DebugFlow's id the swap kept the DebugFlow and failed.
     generator(pg, "S09 Source", period="1 sec", batch=1, text=S09_RECORD)
-    pg.processor("validator", "S09 Validator", "EvaluateJsonPath", {
+    pg.processor("check", "S09 Validator", "EvaluateJsonPath", {
         "Destination": "flowfile-attribute",
         "Return Type": "auto-detect",
         "order.id": "$.id",
     }, period="250 ms", tasks=1, auto_terminate=("unmatched",))
     sink(pg, "publish", "S09 Publish", period="0 sec")
     dlq(pg, "S09 DLQ", connected=False)
-    pg.connect("gen", "validator", ["success"], "s09-input")
-    pg.connect("validator", "validator", ["failure"], "s09-failure-loop")
-    pg.connect("validator", "publish", ["matched"], "s09-valid")
+    pg.connect("gen", "check", ["success"], "s09-input")
+    pg.connect("check", "check", ["failure"], "s09-failure-loop")
+    pg.connect("check", "publish", ["matched"], "s09-valid")
 
 
 S09 = Scenario(

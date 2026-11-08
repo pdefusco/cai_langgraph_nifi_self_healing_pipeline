@@ -128,6 +128,7 @@ them.
 | NFH-103 | Fix | A flow definition is downloaded again on every read, 1.2 MB at a time on p22 | Done | 49c641f |
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
 | NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
+| NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | In progress | |
 
 ## Open tickets
 
@@ -232,6 +233,12 @@ report the KPIs still breached as "still open: likely another fault", with no ro
   to it as before (`model.text_variants`, `engine._take_each`). On the mock the DLQ route empties the loop within
   15 min (1.1k → 2), and 4 tasks or a 0 sec schedule leave it growing; both are now S09's wrong fixes, which the
   twins' tests check. p3, p22 and p25 need re-baselining live, on a go-ahead.
+- 2026-11-07: p3's re-baseline didn't take. The jobs all succeeded, but the deployment stayed on v5 with S09 Validator
+  still a DebugFlow, now stopped and invalid, and both S09 queues full. NiFi matches a new version's components by id
+  and never changes one's type, so under the old DebugFlow's id the EvaluateJsonPath's properties and its `matched`
+  connection landed on the DebugFlow, and CDF failed the swap. The validator now has a new key, so a new id: the swap
+  removes the DebugFlow and its loop and adds the EvaluateJsonPath. NiFi refuses to remove a connection with data
+  queued, so empty the S09 group's queues by hand before the re-baseline. Why 06 said done is NFH-107.
 
 ### NFH-66 · Feature · Environment promotion
 How a fix gets from test to production: apply directly, stage then promote, or hand off; and how to test when the data
@@ -273,6 +280,13 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 - 2026-10-22: re-graded with NFH-75, after-3 → after-4: design fix 25% → 50%, right value 50% → 67%, right lever
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
+
+### NFH-107 · Fix · A flow-only reset says it is done when CDF took the swap but never applied it
+- 2026-11-07: found on p3's S09 re-baseline (NFH-64). `run_steps` waits for the flow to be steady, which it already is
+  before CDF starts the swap, and never reads the version it ended on, so the reset logged one step applied and the
+  job succeeded on v5. A version step now reads the deployed flow after the wait and fails, with its state and
+  message, unless it runs the target (as the executor already checks an agent's swap). A test takes a swap the
+  tenant never applies.
 
 ## Closed tickets
 
