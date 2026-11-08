@@ -704,6 +704,19 @@ def run_steps(client: Client, pack_name: str, steps: list, dry_run: bool = True,
 
         wait()
 
+        # CDF accepts a swap it then fails to apply, and the flow settles back on the old version.
+        if kind == "version":
+            target = record.get("imported") or value
+            facts = client.flow_facts(deployment, flow)
+
+            if facts.get("flow_version_crn") != target:
+                record.update(performed=False, result={
+                    "error": f"the deployment still runs v{facts.get('flow_version')}, not {target}",
+                    "detail": f"{facts.get('state')} {facts.get('detailed_state') or ''} "
+                              f"{facts.get('message') or ''}".strip(),
+                })
+                break
+
     return records
 
 

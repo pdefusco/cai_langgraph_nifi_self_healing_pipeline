@@ -75,6 +75,29 @@ def test_a_new_baseline_is_deployed_without_undoing_a_parameter_fix(tenant, monk
     assert "Connection Timeout" in call["properties"] and "Socket Connect Timeout" not in call["properties"]
 
 
+def test_a_swap_cdf_takes_but_never_applies_fails_the_reset(tenant, monkeypatch):
+    # Live (NFH-107): p3's rebuilt S09 changed a processor's type under its old id. CDF took the
+    # swap, failed it and stayed on v5, and the flow-only reset said it was done.
+    world, client, _ = tenant("p5-parameters")
+    monkeypatch.setattr(config, "ARMED", True)
+    entry = fleet.pack("p5-parameters")
+    deployment, flow = entry["deployment_crn"], entry["deployed_flow_crn"]
+    before = client.flow_facts(deployment, flow)
+    baseline = provisioning.import_flow(client, "p5-parameters", new_baseline=True)["baseline_flow_version_crn"]
+    world.skip(31 * 60)  # past the deployment's cooldown
+    monkeypatch.setattr(client, "flow_facts", lambda *_: dict(before, state="GOOD_HEALTH"))
+
+    try:
+        provisioning.reset_pack(client, "p5-parameters", dry_run=False, flow_only=True,
+                                wait=lambda: world.settle(deployment))
+
+    except SystemExit as exc:
+        assert f"still runs v{before['flow_version']}, not {baseline}" in str(exc)
+
+    else:
+        raise AssertionError("the reset said it was done")
+
+
 def test_a_flow_without_a_fleet_record_takes_its_newest_baseline(tenant):
     # Live: p3 and p5 were found in the catalog with no record, took v1 (built before NFH-11) and ran it.
     _, client, _ = tenant("p5-parameters")
