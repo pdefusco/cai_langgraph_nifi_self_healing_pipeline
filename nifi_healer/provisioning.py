@@ -39,7 +39,7 @@ import config
 from flows import packs
 from flows.build_all import render
 from nifi_healer import fleet
-from nifi_healer.cdp.client import STEADY_STATES, Client, command_line, require
+from nifi_healer.cdp.client import STEADY_STATES, Client, command_line, is_half_applied, require
 from nifi_healer.kpi import metrics
 
 DEPLOY_DEADLINE = 45 * 60
@@ -461,6 +461,28 @@ def _wait_for_flow(client: Client, deployment: str, flow: str) -> str:
     return facts["state"]
 
 
+def _wait_for_version(client: Client, deployment: str, flow: str, target: str) -> dict:
+    """
+    Poll the deployed flow until it runs `target` and is steady, CDF
+    offers to retry or cancel a swap it failed, or the deadline passes.
+    Returns the last facts read. The flow is steady before CDF starts a
+    swap, and on a large flow the old version reads for a while after.
+    """
+
+    started = client.now()
+
+    while True:
+        facts = client.flow_facts(deployment, flow)
+
+        if facts.get("flow_version_crn") == target and facts.get("state") in STEADY_STATES:
+            return facts
+
+        if is_half_applied(facts) or client.now() - started > DEPLOY_DEADLINE:
+            return facts
+
+        client.sleep(20)
+
+
 def reset_steps(client: Client, pack_name: str, flow_only: bool = False) -> list:
     """
     [(label, plane, args)] that return the pack to its baseline: the
@@ -707,7 +729,7 @@ def run_steps(client: Client, pack_name: str, steps: list, dry_run: bool = True,
         # CDF accepts a swap it then fails to apply, and the flow settles back on the old version.
         if kind == "version":
             target = record.get("imported") or value
-            facts = client.flow_facts(deployment, flow)
+            facts = _wait_for_version(client, deployment, flow, target)
 
             if facts.get("flow_version_crn") != target:
                 record.update(performed=False, result={

@@ -287,6 +287,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   job succeeded on v5. A version step now reads the deployed flow after the wait and fails, with its state and
   message, unless it runs the target (as the executor already checks an agent's swap). A test takes a swap the
   tenant never applies.
+- 2026-11-07: pushed as d004bc9; p3's re-baseline then passed it (V.6, the rebuilt S09). p22's failed it wrongly:
+  "still runs v1, not …/v.2", CONCERNING_HEALTH with only its KPI alert, so the check had read the flow before CDF
+  moved to v.2. It now polls until the flow runs the target and is steady, CDF offers to retry or cancel a swap it
+  failed, or 45 min pass. A test lags the version by three reads.
 
 ## Closed tickets
 

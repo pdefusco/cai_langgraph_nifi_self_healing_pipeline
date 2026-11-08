@@ -86,6 +86,7 @@ def test_a_swap_cdf_takes_but_never_applies_fails_the_reset(tenant, monkeypatch)
     baseline = provisioning.import_flow(client, "p5-parameters", new_baseline=True)["baseline_flow_version_crn"]
     world.skip(31 * 60)  # past the deployment's cooldown
     monkeypatch.setattr(client, "flow_facts", lambda *_: dict(before, state="GOOD_HEALTH"))
+    monkeypatch.setattr(provisioning, "DEPLOY_DEADLINE", 120)
 
     try:
         provisioning.reset_pack(client, "p5-parameters", dry_run=False, flow_only=True,
@@ -96,6 +97,30 @@ def test_a_swap_cdf_takes_but_never_applies_fails_the_reset(tenant, monkeypatch)
 
     else:
         raise AssertionError("the reset said it was done")
+
+
+def test_a_swap_is_checked_once_cdf_has_moved_to_it(tenant, monkeypatch):
+    # Live (NFH-107): on p22 the flow read steady on v1 for a while after the swap was sent.
+    world, client, _ = tenant("p5-parameters")
+    monkeypatch.setattr(config, "ARMED", True)
+    entry = fleet.pack("p5-parameters")
+    deployment, flow = entry["deployment_crn"], entry["deployed_flow_crn"]
+    before = client.flow_facts(deployment, flow)
+    baseline = provisioning.import_flow(client, "p5-parameters", new_baseline=True)["baseline_flow_version_crn"]
+    world.skip(31 * 60)  # past the deployment's cooldown
+    reads, read = [], client.flow_facts
+
+    def lagging(*args):
+        reads.append(1)
+        # The reset's own read, then three polls still on the old version.
+        return dict(before, state="GOOD_HEALTH") if len(reads) <= 4 else read(*args)
+
+    monkeypatch.setattr(client, "flow_facts", lagging)
+    records = provisioning.reset_pack(client, "p5-parameters", dry_run=False, flow_only=True,
+                                      wait=lambda: world.settle(deployment))
+
+    assert records[-1]["performed"] and read(deployment, flow)["flow_version_crn"] == baseline
+    assert len(reads) > 4
 
 
 def test_a_flow_without_a_fleet_record_takes_its_newest_baseline(tenant):
