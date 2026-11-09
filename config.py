@@ -86,6 +86,9 @@ _SUFFIX = ".mock" if MOCK else ""
 
 DB_PATH = os.path.join(DATA_DIR, f"healer{_SUFFIX}.db")
 CHECKPOINT_PATH = os.path.join(DATA_DIR, f"checkpoints{_SUFFIX}.sqlite")
+# The store's page cache. SQLite's default is 2 MB; live the store is over
+# 1 GB on EFS, where every page not cached is a network read (NFH-111).
+DB_CACHE_MB = max(2, _int("SELFHEAL_DB_CACHE_MB", 256))
 FLEET_FILE = os.path.join(DATA_DIR, f"fleet{_SUFFIX}.json")
 MOCK_WORLD_FILE = os.path.join(DATA_DIR, "mock_world.json")
 EDITS_DIR = os.path.join(DATA_DIR, "edits")

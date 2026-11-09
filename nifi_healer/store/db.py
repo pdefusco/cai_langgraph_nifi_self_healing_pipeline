@@ -117,12 +117,19 @@ class _TimedLock:
 
 
 def _callers(frame) -> tuple:
-    """The outermost Store method on the stack, and the function outside the store that called it."""
+    """
+    The outermost Store method on the stack, and the function outside the
+    store that called it. contextlib's frames are stepped over: from
+    _transaction's they would name `_transaction` and `contextlib.py:__exit__`.
+    """
 
     method = frame.f_code.co_name
 
-    while frame and frame.f_code.co_filename == __file__:
-        method, frame = frame.f_code.co_name, frame.f_back
+    while frame and frame.f_code.co_filename in (__file__, contextlib.__file__):
+        if frame.f_code.co_filename == __file__:
+            method = frame.f_code.co_name
+
+        frame = frame.f_back
 
     caller = (f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}" if frame else "?")
 
@@ -141,6 +148,8 @@ class Store:
         self.conn = sqlite3.connect(self.path, timeout=30, check_same_thread=False,
                                     isolation_level=None)
         self.conn.row_factory = sqlite3.Row
+        # Kept across transactions while this is the only connection writing (NFH-111).
+        self.conn.execute(f"PRAGMA cache_size = -{config.DB_CACHE_MB * 1024}")
 
         with open(SCHEMA_FILE) as handle:
             schema = handle.read()

@@ -152,6 +152,13 @@ and with the poller and two agent runs busy.
   laptop's SSD against 2 ms in one transaction. Now each batch is one transaction. Also logged: a hold of the
   store's lock or a wait for it over 1 s ("[store] slow: <method> held … after waiting …", with the thread and
   the caller), and a checkpoint read over 1 s, to find what else holds the panel. 728 pass.
+- 2026-11-09: deployed (4c341a5). The first minutes' log has no slow handler (none over 2 s) and no slow checkpoint
+  read. Panels' reads hold the lock ~0 s but wait 1.3–1.5 s behind the poller, whose six workers queue behind each
+  other's batches: most hold it 0.1–0.2 s, a few 1.2–2.5 s, the startup backfills among them (p25 686 samples, p23
+  429). Every batch was logged as "_transaction from contextlib.py:__exit__" (the caller walk stopped at contextlib),
+  so which writes are the long ones is not yet known; now each names its store method and caller. Also the store's
+  page cache, 2 MB by default against a 1.3 GB file on EFS, so a batch into kpi_samples' three B-trees read most of
+  its pages over the network with the lock held, is now 256 MB (SELFHEAL_DB_CACHE_MB). 730 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old

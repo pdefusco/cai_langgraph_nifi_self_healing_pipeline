@@ -36,6 +36,26 @@ def test_a_long_hold_and_the_wait_behind_it_are_logged_with_the_method_and_its_c
     assert "test_store_lock.py:test_a_long_hold" in lines[1]
 
 
+def test_a_slow_batch_is_logged_as_its_store_method_and_caller(tmp_path, monkeypatch, capsys):
+    # Live, every batch read "_transaction ... from contextlib.py:__exit__".
+    monkeypatch.setattr(db, "SLOW_LOCK_SECONDS", -1)
+    store = Store(str(tmp_path / "healer.db"))
+    capsys.readouterr()
+    store.add_samples("crn", [("a", 1.0, 1.0)])
+
+    line = capsys.readouterr().out.strip()
+
+    assert line.startswith("[store] slow: add_samples held the lock")
+    assert "test_store_lock.py:test_a_slow_batch" in line
+
+
+def test_the_page_cache_is_set_from_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(db.config, "DB_CACHE_MB", 64)
+    store = Store(str(tmp_path / "healer.db"))
+
+    assert store.conn.execute("PRAGMA cache_size").fetchone()[0] == -64 * 1024
+
+
 def test_a_quick_store_call_logs_nothing(tmp_path, capsys):
     store = Store(str(tmp_path / "healer.db"))
     store.incident("INC-1")
