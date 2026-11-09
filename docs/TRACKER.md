@@ -132,50 +132,9 @@ them.
 | NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
 | NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
 | NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
-| NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Open | |
+| NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
 
 ## Open tickets
-
-### NFH-111 · Perf · The app is slow live
-Live on 11-09, a few minutes after the 09:58 restart (2 CPU, 8 GB), S10's Review Queue panel was still loading
-after three minutes. A restart starts everything at once in one Python process: the poller's first rounds and a
-chart backfill for every deployment (~25), the agent runs for re-queued incidents, and the playbook ingest. Not
-yet known whether the panel waited behind that or is slow by itself. Every handler slower than 2 s logs
-"slow handler <name>: <s>" in the app log, and the System tab's App health has the CDP call times and the poller's
-lag. Next: those from the live app, and a timing of the Review Queue handlers on a mock the live fleet's size, alone
-and with the poller and two agent runs busy.
-- 2026-11-09: the log after the 09:58 restart: select_review 58.6 s, show_review 16.5 s, and Fleet, System,
-  Scorecard and the queue's packs 14–18 s together, with the container's CPU at 1.5% (p95 1.6%): waiting, not
-  working. All of them, the poller and the agent share the store's one connection behind one lock, on EFS, 1.3 GB.
-  The store is autocommit, so each row of a batch (a deployment's minute of KPIs, a backfill, the App health
-  sample) was its own transaction, a journal and an fsync each, with the lock held: 1500 rows took 0.75 s on a
-  laptop's SSD against 2 ms in one transaction. Now each batch is one transaction. Also logged: a hold of the
-  store's lock or a wait for it over 1 s ("[store] slow: <method> held … after waiting …", with the thread and
-  the caller), and a checkpoint read over 1 s, to find what else holds the panel. 728 pass.
-- 2026-11-09: deployed (4c341a5). The first minutes' log has no slow handler (none over 2 s) and no slow checkpoint
-  read. Panels' reads hold the lock ~0 s but wait 1.3–1.5 s behind the poller, whose six workers queue behind each
-  other's batches: most hold it 0.1–0.2 s, a few 1.2–2.5 s, the startup backfills among them (p25 686 samples, p23
-  429). Every batch was logged as "_transaction from contextlib.py:__exit__" (the caller walk stopped at contextlib),
-  so which writes are the long ones is not yet known; now each names its store method and caller. Also the store's
-  page cache, 2 MB by default against a 1.3 GB file on EFS, so a batch into kpi_samples' three B-trees read most of
-  its pages over the network with the lock held, is now 256 MB (SELFHEAL_DB_CACHE_MB). 730 pass.
-- 2026-11-09: deployed (95ea8ef); the user finds the Review Queue faster. Handlers are now 2–13 s (select_review
-  4–13 s, show_review 2–8 s), with App health 18 s and Soak 20 s. add_samples holds the lock 1.3–2.4 s in the first
-  polls. The new long holds are reads: Monitor's `history` (every KPI of a deployment over the chart window,
-  2.5–4.4 s; the fleet overview reads it for each deployment) and App health's `health` (2.1 s). Yet the user was on
-  the Review Queue: every tab's timers tick whether or not their tab is open, and the page load filled all eight tabs
-  at once, so Soak, App health, Monitor, Scorecard and System kept queuing in front of the Review Queue. Now only the
-  open tab's timers tick, and a tab loads when it is opened. The page load fills only the Fleet tab. The Review Queue
-  and Playbooks reopen through their follow handlers, which re-render only what changed, so a reason being typed
-  stays. Measured for next, not built: on a p24-shaped copy (2.3M samples, 1.3 GB), a covering index on kpi_samples
-  (deployment_crn, t, kpi_key, value) halves a 24 h `history` read (299 → 169 ms on an SSD, more on EFS, where it
-  saves a table read per row); it costs ~340 MB and a build on start. 731 pass.
-- 2026-11-09: built, as the user says the app's CAI resource profile can grow with what it needs. The covering index
-  kpi_samples_window replaces kpi_samples_by_time, which had its first two columns, so the time index's disk comes
-  back. `history` reads from the index alone; `first_sample_at` and `prune_samples` use its prefix, as they did the
-  old index's. The first start on the live store builds the index with the store locked (2.8 s for 2.3M rows on an
-  SSD; expect longer on EFS) before the UI and pollers come up. A test plans the store's own statements on a store
-  that has the old index. 732 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
@@ -354,6 +313,53 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
 ## Closed tickets
 
 Tickets 1–29 were done before this tracker began; see the index.
+
+### NFH-111 · Perf · The app is slow live
+Live on 11-09, a few minutes after the 09:58 restart (2 CPU, 8 GB), S10's Review Queue panel was still loading
+after three minutes. A restart starts everything at once in one Python process: the poller's first rounds and a
+chart backfill for every deployment (~25), the agent runs for re-queued incidents, and the playbook ingest. Not
+yet known whether the panel waited behind that or is slow by itself. Every handler slower than 2 s logs
+"slow handler <name>: <s>" in the app log, and the System tab's App health has the CDP call times and the poller's
+lag. Next: those from the live app, and a timing of the Review Queue handlers on a mock the live fleet's size, alone
+and with the poller and two agent runs busy.
+- 2026-11-09: the log after the 09:58 restart: select_review 58.6 s, show_review 16.5 s, and Fleet, System,
+  Scorecard and the queue's packs 14–18 s together, with the container's CPU at 1.5% (p95 1.6%): waiting, not
+  working. All of them, the poller and the agent share the store's one connection behind one lock, on EFS, 1.3 GB.
+  The store is autocommit, so each row of a batch (a deployment's minute of KPIs, a backfill, the App health
+  sample) was its own transaction, a journal and an fsync each, with the lock held: 1500 rows took 0.75 s on a
+  laptop's SSD against 2 ms in one transaction. Now each batch is one transaction. Also logged: a hold of the
+  store's lock or a wait for it over 1 s ("[store] slow: <method> held … after waiting …", with the thread and
+  the caller), and a checkpoint read over 1 s, to find what else holds the panel. 728 pass.
+- 2026-11-09: deployed (4c341a5). The first minutes' log has no slow handler (none over 2 s) and no slow checkpoint
+  read. Panels' reads hold the lock ~0 s but wait 1.3–1.5 s behind the poller, whose six workers queue behind each
+  other's batches: most hold it 0.1–0.2 s, a few 1.2–2.5 s, the startup backfills among them (p25 686 samples, p23
+  429). Every batch was logged as "_transaction from contextlib.py:__exit__" (the caller walk stopped at contextlib),
+  so which writes are the long ones is not yet known; now each names its store method and caller. Also the store's
+  page cache, 2 MB by default against a 1.3 GB file on EFS, so a batch into kpi_samples' three B-trees read most of
+  its pages over the network with the lock held, is now 256 MB (SELFHEAL_DB_CACHE_MB). 730 pass.
+- 2026-11-09: deployed (95ea8ef); the user finds the Review Queue faster. Handlers are now 2–13 s (select_review
+  4–13 s, show_review 2–8 s), with App health 18 s and Soak 20 s. add_samples holds the lock 1.3–2.4 s in the first
+  polls. The new long holds are reads: Monitor's `history` (every KPI of a deployment over the chart window,
+  2.5–4.4 s; the fleet overview reads it for each deployment) and App health's `health` (2.1 s). Yet the user was on
+  the Review Queue: every tab's timers tick whether or not their tab is open, and the page load filled all eight tabs
+  at once, so Soak, App health, Monitor, Scorecard and System kept queuing in front of the Review Queue. Now only the
+  open tab's timers tick, and a tab loads when it is opened. The page load fills only the Fleet tab. The Review Queue
+  and Playbooks reopen through their follow handlers, which re-render only what changed, so a reason being typed
+  stays. Measured for next, not built: on a p24-shaped copy (2.3M samples, 1.3 GB), a covering index on kpi_samples
+  (deployment_crn, t, kpi_key, value) halves a 24 h `history` read (299 → 169 ms on an SSD, more on EFS, where it
+  saves a table read per row); it costs ~340 MB and a build on start. 731 pass.
+- 2026-11-09: built, as the user says the app's CAI resource profile can grow with what it needs. The covering index
+  kpi_samples_window replaces kpi_samples_by_time, which had its first two columns, so the time index's disk comes
+  back. `history` reads from the index alone; `first_sample_at` and `prune_samples` use its prefix, as they did the
+  old index's. The first start on the live store builds the index with the store locked (2.8 s for 2.3M rows on an
+  SSD; expect longer on EFS) before the UI and pollers come up. A test plans the store's own statements on a store
+  that has the old index. 732 pass.
+- 2026-11-09: deployed (51eafb0). The first start built the index in 196 s with the store locked (logged as
+  get_store, from the RAG warm-up, the store's first opener); later starts skip it. Review Queue handlers are now
+  2.4–6.9 s, the worst in the first polls, when add_samples holds the lock 1.5–2.3 s and others wait up to 5.5 s
+  behind it, then 2.4–3 s. The user finds that good enough: the UI is to be rebuilt off Gradio later. Closed. Left,
+  if it is needed again: a read connection of its own for the UI, so a panel does not queue behind the poller's
+  writes, and the first polls' add_samples.
 
 ### NFH-108 · Fix · Nested groups and their ports cover other components on the canvas
 - 2026-11-08: seen live on p25 (the S99 re-baseline, NFH-64): in each group the group inside sat at (0, 0), the
