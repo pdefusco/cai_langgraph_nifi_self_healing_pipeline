@@ -136,8 +136,17 @@ them.
 | NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | In progress | |
 | NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | In progress | |
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
+| NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | Parked | |
 
 ## Open tickets
+
+### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
+Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
+task(s) at about 0.017/s each is about 0.13/s, below the intake of about 0.5/s"). The second try proposed the same
+8 tasks and was sent back for the same reason; only the third was valid. A try the checks answered should change.
+Ways in: see how the send-back reads in the prompt (prompts.FEEDBACK), whether the replay shows the same repeats
+across scenarios, and refuse a retry whose fix equals the one sent back (nodes._fix) with a sharper message.
+- 2026-11-09: seen on S10. The user: park it. Parked.
 
 ### NFH-114 · Perf · The diagnosis progress block takes a few seconds to appear after a Diagnose click
 Live on S10: the toast and "Sending…" come at once, but the progress block shows only a few awkward seconds later.
@@ -145,6 +154,10 @@ It comes with the panel the Diagnose handler returns, so it waits on that handle
 NFH-111) and then on the render. Ways in: return the block alone first, as `_sending` does, and the rest of the
 panel after; or wait for the new UI, which would show the block from the click (the Gradio UI is interim).
 - 2026-11-09: seen on S10. The user: keep it as it is for now, revisit later. Parked.
+- 2026-11-09: the S10 click's log: `slow handler diagnose: 28.6s`, during the startup backfill's lock waits. Before
+  the panel, `views.diagnose` probes the LLM endpoint (`llm.probe`, a GET of /models, up to 15 s, kept a minute,
+  and a token mint when one is due), reads the checkpoint (`graph.pending`) and walks the flow versions (`stale`);
+  then the panel renders. The probe is the first thing to take off the click's path.
 
 ### NFH-113 · Feature · Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way
 Live on 11-09 (S12, p3): Diagnose answered only in the line under the buttons, out of sight on a long panel, so the
@@ -158,6 +171,10 @@ user could not tell the request had landed; and while the agent ran, a few minut
   not every second. 734 pass. Next: seen live.
 - 2026-11-09: seen live on S10. The toast, the steps and the timers work; the user likes the walk through the
   lifecycle. The block takes a few seconds to appear (NFH-114, parked). The run itself went past 5 minutes.
+- 2026-11-09: the run took three tries: proposals 44 and 45 (8 tasks, the S10 trap) were sent back by the capacity
+  check, 46 was valid, and the block showed only the LLM step again, as if stuck. A try after the first now reads
+  "try 2 of 3" in the block's head, with "Try 1 was sent back: <the first problem>" beneath it, kept with the step
+  (nodes.steps) and in the panel's key, so the panel re-renders on each try. 736 pass.
 
 ### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
 Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no
@@ -166,6 +183,11 @@ longer runs) among 27, and only a review's panel says so: the queue's dropdown a
   header counts them ("N stale, diagnosed on a flow no longer deployed"). The same check as the panel's, from the
   store: one deployment read per deployment, no cdp call. The page's How to read says what stale means. Next: seen
   live. 732 pass.
+- 2026-11-09: seen live: S09 and S10 marked, the header "8 stale". But the queue's ticks took 7-19 s while the
+  poller caught up after a restart (about 4 s after): beyond the deployment read, each review on a moved flow read
+  the deployment's applied actions and plants again, two reads, each waiting on the store's lock, and a tick checks
+  twice. Now those are read once a deployment and only when a review's version differs (executor.deployed_by_us):
+  at most three reads a deployment however many reviews it has. 736 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old

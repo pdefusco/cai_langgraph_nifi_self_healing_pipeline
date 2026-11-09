@@ -437,20 +437,28 @@ def _ran(incident_id: str) -> None:
 def progress(incident_id: str) -> dict | None:
     """
     How far a running background run has got, for the review panel
-    (NFH-113): {step, step_started, started}, wall times; None when no
-    run is running. The step is None until the first timed node begins.
+    (NFH-113): {step, step_started, started} (wall times), and from the
+    LLM step on {attempt, attempts, sent_back}: which try of how many,
+    and the problems the last try was sent back for ([] on the first).
+    None when no run is running. The step is None until the first timed
+    node begins.
     """
 
     if (run_state(incident_id) or ("",))[0] != "running" or incident_id not in _started:
         return None
 
-    step, since = nodes.steps.get(incident_id) or (None, None)
+    step, since, attempts, feedback = nodes.steps.get(incident_id) or (None, None, 0, [])
     started = _started[incident_id]
 
     if since is not None and since < started:      # the last run's
         step, since = None, None
 
-    return {"step": step, "step_started": since, "started": started}
+    # The LLM step runs before its try is counted; the checks after it.
+    attempt = (attempts + 1 if step == "diagnose_and_propose" else
+               attempts if step in ("validate_proposal", "critique_proposal") else None)
+
+    return {"step": step, "step_started": since, "started": started, "attempt": attempt,
+            "attempts": nodes.MAX_ATTEMPTS, "sent_back": feedback if attempt and attempt > 1 else []}
 
 
 def submit(incident: dict, rediagnose: dict | None = None):

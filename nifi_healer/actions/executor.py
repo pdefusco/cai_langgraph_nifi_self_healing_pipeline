@@ -161,12 +161,11 @@ def rebased(client: Client, store, incident: dict) -> dict:
                 rebased_by=ours[current]["incident_id"])
 
 
-def _walk_back(store, deployment_crn: str, current: str, base: str) -> tuple:
+def deployed_by_us(store, deployment_crn: str) -> dict:
     """
-    Follow `current` back through the versions this app's own applied
-    actions, or its chaos injector, deployed, until `base` or a
-    version they did not deploy. Returns (where it stopped, {deployed
-    version: action}); a plant stands in as an action by "this app".
+    {flow version: action} for the versions this app's own applied
+    actions, or its chaos injector, deployed; a plant stands in as an
+    action by "this app".
     """
 
     ours = {r["to_flow_version_crn"]: {"to_flow_version_crn": r["to_flow_version_crn"],
@@ -175,6 +174,18 @@ def _walk_back(store, deployment_crn: str, current: str, base: str) -> tuple:
             for r in store.injections(deployment_crn=deployment_crn) if r.get("to_flow_version_crn")}
     ours.update({a["to_flow_version_crn"]: a for a in store.actions(deployment_crn=deployment_crn)
                  if a["status"] == "APPLIED" and a.get("to_flow_version_crn")})
+
+    return ours
+
+
+def _walk_back(store, deployment_crn: str, current: str, base: str, ours: dict | None = None) -> tuple:
+    """
+    Follow `current` back through the versions deployed_by_us() names
+    (`ours`, read when not given), until `base` or a version this app did
+    not deploy. Returns (where it stopped, ours).
+    """
+
+    ours = deployed_by_us(store, deployment_crn) if ours is None else ours
     crn, seen = current, set()
 
     while crn != base and crn in ours and crn not in seen:
@@ -184,11 +195,13 @@ def _walk_back(store, deployment_crn: str, current: str, base: str) -> tuple:
     return crn, ours
 
 
-def stale(store, incident: dict, current: str) -> bool:
+def stale(store, incident: dict, current: str, ours=None) -> bool:
     """
     Whether the incident was diagnosed on a flow version the deployment
     (now on `current`) no longer runs, for a reason other than this app's
-    own applied actions, which rebased() plans across.
+    own applied actions, which rebased() plans across. `ours`, when given,
+    is a callable returning the deployment's deployed_by_us(), so a caller
+    checking many incidents reads it once a deployment, and only if needed.
     """
 
     base = incident.get("expected_flow_version_crn") or ""
@@ -196,7 +209,7 @@ def stale(store, incident: dict, current: str) -> bool:
     if not base or not current or current == base:
         return False
 
-    return _walk_back(store, incident["deployment_crn"], current, base)[0] != base
+    return _walk_back(store, incident["deployment_crn"], current, base, ours() if ours else None)[0] != base
 
 
 def precheck(client: Client, store, incident: dict) -> str:

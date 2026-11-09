@@ -8,6 +8,7 @@ Times are tenant time (client.now()): in mock mode the clock runs
 MOCK_SPEED times faster than the wall, and fast-forward moves it.
 """
 
+import html
 import json
 import time
 from datetime import datetime, timezone
@@ -429,11 +430,18 @@ def queue_choices(store, keep: str | None = None, pack: str = "") -> list:
 def _stale(store, incidents: list) -> set:
     """
     The ids of the reviews among `incidents` that stale() would mark on
-    their panel, so the queue shows them before one is opened. One
-    deployment read per deployment, and no cdp call.
+    their panel, so the queue shows them before one is opened. At most
+    three store reads a deployment, however many reviews it has, and no
+    cdp call.
     """
 
-    deployed, outdated = {}, set()
+    deployed, ours, outdated = {}, {}, set()
+
+    def ours_on(crn):
+        if crn not in ours:
+            ours[crn] = executor.deployed_by_us(store, crn)
+
+        return ours[crn]
 
     for incident in incidents:
         if incident["status"] != "PENDING_REVIEW":
@@ -444,7 +452,7 @@ def _stale(store, incidents: list) -> set:
         if crn not in deployed:
             deployed[crn] = (store.deployment(crn) or {}).get("flow_version_crn") or ""
 
-        if executor.stale(store, incident, deployed[crn]):
+        if executor.stale(store, incident, deployed[crn], lambda: ours_on(crn)):
             outdated.add(incident["id"])
 
     return outdated
@@ -508,7 +516,9 @@ def review_key(store, incident_id: str | None) -> str:
     countdown = (f"{window['status']}:{int(max(0, window['due_at'] - get_client().now()) // 60)}"
                  if window else "")
 
-    step = (graph.progress(incident_id) or {}).get("step") if incident else None
+    # The try too: a send-back can take the run from the LLM step back to it between two ticks.
+    progress = (graph.progress(incident_id) or {}) if incident else {}
+    step = f"{progress.get('step')}:{progress.get('attempt')}" if progress else None
 
     return (f"{incident_id}|{incident and incident['status']}|{graph.run_state(incident_id) if incident else None}"
             f"|{step}|{countdown}")
@@ -561,10 +571,19 @@ def run_progress(incident_id: str) -> str:
 
     head = "The agent is diagnosing this incident"
 
+    if (attempt := progress.get("attempt") or 0) > 1:
+        head += f" · try {attempt} of {progress['attempts']}"
+
     if progress.get("started"):
         head += f" · running for {_elapsed(now - progress['started'])}"
 
-    return (f'<div class="nfh-run"><p>{head}</p><div class="nfh-bar"><span></span></div>'
+    # Why it is trying again: the checks (or the critic) sent the last try back.
+    back = progress.get("sent_back") or []
+    more = f" (and {len(back) - 1} more)" if len(back) > 1 else ""
+    back = (f'<p class="nfh-back">Try {attempt - 1} was sent back: {html.escape(back[0][:300])}{more}</p>'
+            if back else "")
+
+    return (f'<div class="nfh-run"><p>{head}</p>{back}<div class="nfh-bar"><span></span></div>'
             f'<ol class="nfh-steps">{"".join(items)}</ol></div>')
 
 
@@ -581,6 +600,7 @@ def _elapsed(seconds: float) -> str:
 RUN_CSS = """
 .nfh-run{border:1px solid var(--border-color-primary);border-radius:8px;padding:10px 14px;margin-bottom:8px}
 .nfh-run p{margin:0 0 8px}
+.nfh-back{color:var(--body-text-color-subdued)}
 .nfh-bar{height:6px;border-radius:3px;background:var(--neutral-200);overflow:hidden;position:relative}
 .nfh-bar span{position:absolute;top:0;bottom:0;width:30%;border-radius:3px;background:var(--color-accent);
   animation:nfh-slide 1.4s ease-in-out infinite}

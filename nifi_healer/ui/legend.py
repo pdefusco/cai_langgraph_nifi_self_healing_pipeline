@@ -80,7 +80,8 @@ with the KPI values the agent was shown.
   the Change above then shows it, and you approve it as usual.
 - **Approve** applies it. **Reject** closes the incident and needs a reason, which is kept. **Diagnose** asks the
   agent to look again; a note pops up to say whether it was taken. While the agent works, a bar above the proposal
-  shows its place in the queue, or the step it is on and how long it has run.
+  shows its place in the queue, or the step it is on and how long it has run; when the checks send a proposal
+  back, it says which try this is and why the last one went back.
 """
 
 HISTORY = f"""

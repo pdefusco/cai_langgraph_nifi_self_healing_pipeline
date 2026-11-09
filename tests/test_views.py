@@ -513,7 +513,8 @@ def test_a_review_being_diagnosed_again_still_says_so_once_its_run_is_running(ag
         assert '<li class="nfh-done">✓ Find playbooks and past cases</li>' in panel["run"]
         assert '<li class="nfh-now">▶ Diagnose and propose a fix (the LLM) · <span class="nfh-elapsed"' in panel["run"]
         assert "<li>○ Check the proposal</li>" in panel["run"] and "running for" in panel["run"]
-        assert "|diagnose_and_propose|" in views.review_key(store, incident["id"])
+        assert "|diagnose_and_propose:1|" in views.review_key(store, incident["id"])
+        assert "try " not in panel["run"] and "sent back" not in panel["run"]
 
     finally:
         release.set()
@@ -524,6 +525,64 @@ def test_a_review_being_diagnosed_again_still_says_so_once_its_run_is_running(ag
     assert panel["can_approve"] and "The new diagnosis." in panel["proposal"]
     assert "Being diagnosed again" not in panel["proposal"]
     assert panel["run"] == "" and graph.progress(incident["id"]) is None
+
+
+def test_a_try_the_checks_sent_back_says_which_try_and_why(monkeypatch):
+    # Live on S10: two tries were sent back for too few tasks; the block showed only the LLM step, as if stuck.
+    now = time.time()
+    monkeypatch.setattr(graph, "run_state", lambda _: ("running", 0, 0))
+    monkeypatch.setitem(graph._started, "INC-1", now - 300)
+    monkeypatch.setitem(nodes.steps, "INC-1", ("diagnose_and_propose", now - 20, 1,
+                                               ["S10 Partner Call: 8 task(s) is below the intake of <0.5/s>", "and"]))
+
+    block = views.run_progress("INC-1")
+    assert "The agent is diagnosing this incident · try 2 of 3 · running for" in block
+    assert ("Try 1 was sent back: S10 Partner Call: 8 task(s) is below the intake of &lt;0.5/s&gt; (and 1 more)"
+            in block)
+    assert '<li class="nfh-now">▶ Diagnose and propose a fix (the LLM)' in block
+
+    # The checks of the second try still say why the first went back; the key moves with the try.
+    nodes.steps["INC-1"] = ("validate_proposal", now - 2, 2, ["too few tasks"])
+    assert "try 2 of 3" in views.run_progress("INC-1") and "Try 1 was sent back: too few tasks" \
+        in views.run_progress("INC-1")
+    assert graph.progress("INC-1")["attempt"] == 2
+
+    nodes.steps["INC-1"] = ("validate_proposal", now - 2, 1, [])
+    assert "try " not in views.run_progress("INC-1")
+
+
+def test_the_queue_reads_what_this_app_deployed_once_a_deployment(monkeypatch):
+    # Live: tick_queue took 7-19 s; NFH-112's marks read the actions and plants again for every review.
+    class Store:
+        def __init__(self):
+            self.reads = []
+
+        def deployment(self, crn):
+            self.reads.append(("deployment", crn))
+            return {"flow_version_crn": "v3"}
+
+        def injections(self, deployment_crn):
+            self.reads.append(("injections", deployment_crn))
+            return []
+
+        def actions(self, deployment_crn):
+            self.reads.append(("actions", deployment_crn))
+            return [{"status": "APPLIED", "to_flow_version_crn": "v3", "from_flow_version_crn": "v2",
+                     "incident_id": "INC-0"}]
+
+    store = Store()
+    incidents = [{"id": f"INC-{n}", "status": "PENDING_REVIEW", "deployment_crn": crn,
+                  "expected_flow_version_crn": base}
+                 for n, (crn, base) in enumerate([("a", "v1"), ("a", "v2"), ("a", "v1"), ("b", "v3"), ("b", "v1")])]
+
+    # v2 -> v3 was this app's own, so only the reviews on v1 are stale.
+    assert views._stale(store, incidents) == {"INC-0", "INC-2", "INC-4"}
+    assert sorted(store.reads) == sorted([("deployment", "a"), ("injections", "a"), ("actions", "a"),
+                                          ("deployment", "b"), ("injections", "b"), ("actions", "b")])
+
+    # Nothing beyond the deployment when no review's version differs.
+    store.reads = []
+    assert views._stale(store, [dict(incidents[3])]) == set() and store.reads == [("deployment", "b")]
 
 
 def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):
