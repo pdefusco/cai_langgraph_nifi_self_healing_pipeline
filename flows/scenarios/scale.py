@@ -132,9 +132,10 @@ class Twinned:
         self.core(pg)
 
         if self.decoy:
-            DECOYS[self.decoy].build(_Flow(pg, "decoy", f"{self.id} {DECOY}", _slug(self.id, DECOY), column=1))
+            DECOYS[self.decoy].build(_Flow(pg, "decoy", f"{self.id} {DECOY}", _slug(self.id, DECOY),
+                                           column=free_column(pg)))
 
-        self.shapes = filler(pg, self.id, self.processors - len(pg.processors), column=2 if self.decoy else 1)
+        self.shapes = filler(pg, self.id, self.processors - len(pg.processors), column=free_column(pg))
 
 
 def twin(small: Scenario, scenario_id: str, *, processors: int, title: str = "", decoy: str = "") -> Scenario:
@@ -209,6 +210,19 @@ LEVELS = ("Region", "Site")
 CROSSING_STAGES = 3          # a crossing's stages inside its group, beside its source and sink above
 
 
+def free_column(pg) -> int:
+    """
+    The first column right of everything in a group so far, bends and
+    their labels included: a self-loop's take the column beside its
+    processor (NFH-108).
+    """
+
+    xs = [c["position"]["x"] for c in [*pg.processors.values(), *pg.input_ports.values(), *pg.output_ports.values()]]
+    xs += [g.position[0] for g in pg.groups] + [b["x"] for c in pg.connections for b in c["bends"]]
+
+    return int(max(xs, default=-COLUMN_SPACING) // COLUMN_SPACING) + 1
+
+
 def count(pg) -> int:
     """The processors in a group and the groups inside it."""
 
@@ -244,7 +258,7 @@ def fill_levels(groups: list, scenario_id: str, processors: int, offset: int = 0
             n += 1
 
         shapes = filler(group, scenario_id, share + (left - share * len(groups) if not index else 0),
-                        offset=n, seed=f":{index}" if index else "")
+                        offset=n, column=free_column(group), seed=f":{index}" if index else "")
         built += shapes
         n += len(shapes)
 

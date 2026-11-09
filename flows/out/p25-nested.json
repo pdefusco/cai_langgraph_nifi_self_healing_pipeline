@@ -7770,7 +7770,7 @@
                     "name": "S99 Carts Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -7811,7 +7811,7 @@
                     "name": "S99 Carts Balance",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -7850,7 +7850,7 @@
                     "name": "S99 Carts Lane 1",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -7888,7 +7888,7 @@
                     "name": "S99 Carts Lane 2",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -7926,7 +7926,7 @@
                     "name": "S99 Carts Lane 3",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 800.0
                     },
                     "properties": {
@@ -7964,7 +7964,7 @@
                     "name": "S99 Carts Join Lanes",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 1000.0
                     },
                     "properties": {
@@ -8004,7 +8004,7 @@
                     "name": "S99 Carts Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 840.0,
                       "y": 1200.0
                     },
                     "properties": {
@@ -8042,7 +8042,7 @@
                     "name": "S99 Wishlists Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -8083,7 +8083,7 @@
                     "name": "S99 Wishlists Parse",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -8121,7 +8121,7 @@
                     "name": "S99 Wishlists Check",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -8164,7 +8164,7 @@
                     "name": "S99 Wishlists Reject DLQ",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -8202,7 +8202,7 @@
                     "name": "S99 Wishlists Format",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 800.0
                     },
                     "properties": {
@@ -8242,7 +8242,7 @@
                     "name": "S99 Wishlists Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 1260.0,
                       "y": 1000.0
                     },
                     "properties": {
@@ -8280,7 +8280,7 @@
                     "name": "S99 Suppliers Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1260.0,
+                      "x": 1680.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -8323,7 +8323,7 @@
                     "name": "S99 Suppliers Rate Limit",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1260.0,
+                      "x": 1680.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -8363,7 +8363,7 @@
                     "name": "S99 Suppliers Tag",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1260.0,
+                      "x": 1680.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -8403,7 +8403,7 @@
                     "name": "S99 Suppliers Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1260.0,
+                      "x": 1680.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -8441,7 +8441,7 @@
                     "name": "S99 Contracts Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1680.0,
+                      "x": 2100.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -8482,7 +8482,7 @@
                     "name": "S99 Contracts Dedupe",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1680.0,
+                      "x": 2100.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -8520,7 +8520,7 @@
                     "name": "S99 Contracts Score",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1680.0,
+                      "x": 2100.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -8558,7 +8558,7 @@
                     "name": "S99 Contracts Normalize",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1680.0,
+                      "x": 2100.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -8598,7 +8598,7 @@
                     "name": "S99 Contracts Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 1680.0,
+                      "x": 2100.0,
                       "y": 800.0
                     },
                     "properties": {
@@ -18075,7 +18075,7 @@
                 "name": "S101 Coupons Feed",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 420.0,
+                  "x": 0.0,
                   "y": 0.0
                 },
                 "properties": {
@@ -18116,7 +18116,7 @@
                 "name": "S101 Coupons Mask",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 420.0,
+                  "x": 0.0,
                   "y": 200.0
                 },
                 "properties": {
@@ -18154,7 +18154,7 @@
                 "name": "S101 Coupons Parse",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 420.0,
+                  "x": 0.0,
                   "y": 400.0
                 },
                 "properties": {
@@ -18194,7 +18194,7 @@
                 "name": "S101 Coupons Store",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 420.0,
+                  "x": 0.0,
                   "y": 600.0
                 },
                 "properties": {
@@ -18232,7 +18232,7 @@
                 "name": "S101 Carts Feed",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 0.0
                 },
                 "properties": {
@@ -18273,7 +18273,7 @@
                 "name": "S101 Carts Balance",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 200.0
                 },
                 "properties": {
@@ -18312,7 +18312,7 @@
                 "name": "S101 Carts Lane 1",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 400.0
                 },
                 "properties": {
@@ -18350,7 +18350,7 @@
                 "name": "S101 Carts Lane 2",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 600.0
                 },
                 "properties": {
@@ -18388,7 +18388,7 @@
                 "name": "S101 Carts Lane 3",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 800.0
                 },
                 "properties": {
@@ -18426,7 +18426,7 @@
                 "name": "S101 Carts Join Lanes",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 1000.0
                 },
                 "properties": {
@@ -18466,7 +18466,7 @@
                 "name": "S101 Carts Store",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 840.0,
+                  "x": 420.0,
                   "y": 1200.0
                 },
                 "properties": {
@@ -18504,7 +18504,7 @@
                 "name": "S101 Wishlists Feed",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 0.0
                 },
                 "properties": {
@@ -18545,7 +18545,7 @@
                 "name": "S101 Wishlists Stamp",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 200.0
                 },
                 "properties": {
@@ -18583,7 +18583,7 @@
                 "name": "S101 Wishlists Normalize",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 400.0
                 },
                 "properties": {
@@ -18621,7 +18621,7 @@
                 "name": "S101 Wishlists Convert",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 600.0
                 },
                 "properties": {
@@ -18659,7 +18659,7 @@
                 "name": "S101 Wishlists Mask",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 800.0
                 },
                 "properties": {
@@ -18699,7 +18699,7 @@
                 "name": "S101 Wishlists Store",
                 "penaltyDuration": "30 sec",
                 "position": {
-                  "x": 1260.0,
+                  "x": 840.0,
                   "y": 1000.0
                 },
                 "properties": {
@@ -22113,7 +22113,7 @@
                     "name": "S102 Timesheets Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -22154,7 +22154,7 @@
                     "name": "S102 Timesheets Balance",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -22193,7 +22193,7 @@
                     "name": "S102 Timesheets Lane 1",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -22231,7 +22231,7 @@
                     "name": "S102 Timesheets Lane 2",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -22269,7 +22269,7 @@
                     "name": "S102 Timesheets Lane 3",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 800.0
                     },
                     "properties": {
@@ -22307,7 +22307,7 @@
                     "name": "S102 Timesheets Lane 4",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 1000.0
                     },
                     "properties": {
@@ -22345,7 +22345,7 @@
                     "name": "S102 Timesheets Join Lanes",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 1200.0
                     },
                     "properties": {
@@ -22385,7 +22385,7 @@
                     "name": "S102 Timesheets Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 420.0,
+                      "x": 0.0,
                       "y": 1400.0
                     },
                     "properties": {
@@ -22423,7 +22423,7 @@
                     "name": "S102 Assets Feed",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 0.0
                     },
                     "properties": {
@@ -22464,7 +22464,7 @@
                     "name": "S102 Assets Score",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 200.0
                     },
                     "properties": {
@@ -22502,7 +22502,7 @@
                     "name": "S102 Assets Parse",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 400.0
                     },
                     "properties": {
@@ -22540,7 +22540,7 @@
                     "name": "S102 Assets Dedupe",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 600.0
                     },
                     "properties": {
@@ -22578,7 +22578,7 @@
                     "name": "S102 Assets Validate",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 800.0
                     },
                     "properties": {
@@ -22616,7 +22616,7 @@
                     "name": "S102 Assets Stamp",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 1000.0
                     },
                     "properties": {
@@ -22654,7 +22654,7 @@
                     "name": "S102 Assets Mask",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 1200.0
                     },
                     "properties": {
@@ -22694,7 +22694,7 @@
                     "name": "S102 Assets Store",
                     "penaltyDuration": "30 sec",
                     "position": {
-                      "x": 840.0,
+                      "x": 420.0,
                       "y": 1400.0
                     },
                     "properties": {

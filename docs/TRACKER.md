@@ -292,6 +292,12 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   row's room before the Store, and the ports above and below the stages. Positions only: ids, connections and
   every check are unchanged, so moving p25 to it needs no queue emptied. A test checks no component covers another
   in any pack. Live once p25 is re-baselined onto it.
+- 2026-11-09: pushed as 866f3f5; p25 re-baselined onto it (V.3, no queues emptied), and in NiFi each level reads top
+  to bottom, Feed, group, Store, with the ports at the ends of the crossing's stages. But S99 Validator's failure loop
+  bends out to the left edge of the filler beside it, so its label covers that processor; S50's does the same on p22,
+  as does its decoy's loop. A twin's filler, and its decoy, now start at the column after everything in the group so
+  far, bends included, so a loop and its label have the column beside it to themselves. Positions only, in p22 and
+  p25. The test now also puts a label on each bend. Live once p22 and p25 are re-baselined onto it.
 
 ## Closed tickets
 

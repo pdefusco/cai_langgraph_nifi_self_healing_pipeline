@@ -378,17 +378,32 @@ def test_the_edges_of_a_nested_scenario_go_through_its_ports():
 BOX = {"processors": (350, 130), "processGroups": (380, 176), "inputPorts": (240, 48), "outputPorts": (240, 48)}
 
 
+LABEL = (240, 56)    # a connection's label, centred on a bend
+
+
+def _meet(a, b) -> bool:
+    return a[1] < b[1] + b[3] and b[1] < a[1] + a[3] and a[2] < b[2] + b[4] and b[2] < a[2] + a[4]
+
+
 def _overlaps(group: dict, path: str = "") -> list:
     path = f"{path}/{group['name']}"
-    boxes = [(c["name"], c["position"]["x"], c["position"]["y"], *BOX[kind]) for kind in BOX for c in group[kind]]
-    found = [(path, a[0], b[0]) for i, a in enumerate(boxes) for b in boxes[i + 1:]
-             if a[1] < b[1] + b[3] and b[1] < a[1] + a[3] and a[2] < b[2] + b[4] and b[2] < a[2] + a[4]]
+    boxes = [(c["name"], c["position"]["x"], c["position"]["y"], *BOX[kind], c["identifier"])
+             for kind in BOX for c in group[kind]]
+    found = [(path, a[0], b[0]) for i, a in enumerate(boxes) for b in boxes[i + 1:] if _meet(a, b)]
+
+    for connection in group["connections"]:
+        ends = {connection["source"]["id"], connection["destination"]["id"]}
+        labels = [(connection["name"], bend["x"] - LABEL[0] / 2, bend["y"] - LABEL[1] / 2, *LABEL)
+                  for bend in connection["bends"]]
+        found += [(path, label[0], box[0]) for label in labels for box in boxes
+                  if box[5] not in ends and _meet(label, box)]
 
     return found + [hit for child in group["processGroups"] for hit in _overlaps(child, path)]
 
 
 def test_no_component_covers_another_on_the_canvas():
-    # Live (NFH-108): on p25, each group inside sat on its crossing's source, and its ports on a stage and on filler.
+    # Live (NFH-108): on p25, each group inside sat on its crossing's source, and its ports on a stage and on
+    # filler; S99 Validator's failure loop bent out onto the filler beside it.
     from flows import packs
 
     for name in packs.PACKS:
