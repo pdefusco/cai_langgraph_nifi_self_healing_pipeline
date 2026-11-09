@@ -9,17 +9,21 @@ everything that happens to them.
 One connection, shared by the poller and the agent threads behind a
 lock. The default rollback journal, not WAL: on CAI the project files
 are network storage (EFS), where WAL's shared-memory index is unsafe.
-Writes are small and infrequent, so the lock is never contended long.
+A batch of rows is one transaction (_transaction): each commit is an
+fsync, which is slow on EFS, and the lock is held for it (NFH-111).
 
 Rows come back as plain dicts, with each `*_json` column also decoded
 into the same name without the suffix (`signals_json` -> `signals`).
 """
 
 import bisect
+import contextlib
 import json
 import os
 import sqlite3
+import sys
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -72,6 +76,59 @@ def _columns(fields: dict) -> dict:
 _JSON_FIELDS = {"alerts", "signals", "action", "citations", "validation", "edits", "argv",
                 "result", "details", "sources", "problems", "steps"}
 
+# A hold of the store's lock, or a wait for it, longer than this is logged.
+SLOW_LOCK_SECONDS = 1.0
+
+
+class _TimedLock:
+    """
+    The store's RLock, timed: a hold or a wait over SLOW_LOCK_SECONDS logs
+    the store method, its caller and the thread. Live, panels took 16–58 s
+    with the container's CPU at 1.5%, waiting on something (NFH-111).
+    """
+
+    def __init__(self):
+        self._lock, self._local = threading.RLock(), threading.local()
+
+    def __enter__(self):
+        depth = getattr(self._local, "depth", 0)
+        began = time.monotonic()
+        self._lock.acquire()
+        self._local.depth = depth + 1
+
+        if not depth:
+            self._local.got = time.monotonic()
+            self._local.waited = self._local.got - began
+
+        return self
+
+    def __exit__(self, *exc):
+        self._local.depth -= 1
+        outer = not self._local.depth
+        held = time.monotonic() - self._local.got if outer else 0.0
+        self._lock.release()
+
+        if outer and max(held, self._local.waited) > SLOW_LOCK_SECONDS:
+            method, caller = _callers(sys._getframe(1))
+            print(f"[store] slow: {method} held the lock {held:.1f}s after waiting {self._local.waited:.1f}s "
+                  f"({threading.current_thread().name}, from {caller})", flush=True)
+
+        return False
+
+
+def _callers(frame) -> tuple:
+    """The outermost Store method on the stack, and the function outside the store that called it."""
+
+    method = frame.f_code.co_name
+
+    while frame and frame.f_code.co_filename == __file__:
+        method, frame = frame.f_code.co_name, frame.f_back
+
+    caller = (f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_code.co_name}" if frame else "?")
+
+    return method, caller
+
+
 # A playbook edit still waiting on the drafter or a reviewer.
 OPEN_EDITS = ("DRAFTING", "PROPOSED")
 
@@ -80,7 +137,7 @@ class Store:
     def __init__(self, path: str | None = None):
         self.path = path or config.DB_PATH
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        self.lock = threading.RLock()
+        self.lock = _TimedLock()
         self.conn = sqlite3.connect(self.path, timeout=30, check_same_thread=False,
                                     isolation_level=None)
         self.conn.row_factory = sqlite3.Row
@@ -172,6 +229,27 @@ class Store:
         with self.lock:
             return _row(self.conn.execute(sql, params).fetchone())
 
+    @contextlib.contextmanager
+    def _transaction(self):
+        """
+        A batch of rows in one commit. In autocommit each row of an
+        executemany is its own transaction, a journal and an fsync each:
+        1500 rows took 0.75 s on a laptop's SSD against 2 ms in one, and on
+        EFS a deployment's minute of KPIs held the lock for seconds (NFH-111).
+        """
+
+        with self.lock:
+            self.conn.execute("BEGIN")
+
+            try:
+                yield
+
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+
+            self.conn.execute("COMMIT")
+
     def _insert(self, table: str, fields: dict) -> int:
         fields = _columns(fields)
         names = ", ".join(fields)
@@ -238,7 +316,7 @@ class Store:
     def add_samples(self, deployment_crn: str, samples: list) -> None:
         """samples: [(kpi_key, t, value)]; a bucket already stored is kept."""
 
-        with self.lock:
+        with self._transaction():
             self.conn.executemany(
                 "INSERT OR IGNORE INTO kpi_samples (deployment_crn, kpi_key, t, value) "
                 "VALUES (?, ?, ?, ?)",
@@ -267,7 +345,7 @@ class Store:
 
         added = []
 
-        with self.lock:
+        with self._transaction():
             for key, points in by_key.items():
                 low = min(t for t, _ in points) - spacing
                 high = max(t for t, _ in points) + spacing
@@ -317,7 +395,7 @@ class Store:
     def add_changes(self, deployment_crn: str, pack: str, changes: list) -> int:
         """changes: [{event_crn, t, kind, name}]; an event already stored is kept."""
 
-        with self.lock:
+        with self._transaction():
             before = self.conn.total_changes
             self.conn.executemany(
                 "INSERT OR IGNORE INTO changes (deployment_crn, event_crn, pack, t, kind, name) "
@@ -660,7 +738,7 @@ class Store:
         rows = [(t, key, float(value)) for key, value in values.items()
                 if isinstance(value, (int, float)) and not isinstance(value, bool)]
 
-        with self.lock:
+        with self._transaction():
             self.conn.executemany("INSERT OR REPLACE INTO health_samples (t, key, value) VALUES (?, ?, ?)", rows)
 
     def health(self, key: str, since: float = 0.0) -> list:

@@ -47,6 +47,9 @@ from nifi_healer.store.db import get_store
 # Incident statuses a run can start from.
 RUNNABLE = ("NEW", "DIAGNOSING")
 
+# A checkpoint read longer than this is logged.
+SLOW_STATE_SECONDS = 1.0
+
 _lock = threading.Lock()
 _graph = None
 _connection = None
@@ -255,10 +258,23 @@ def retry_failed(now: float | None = None) -> int:
     return queued
 
 
+def _snapshot(incident_id: str):
+    """The run's checkpoint; a read over SLOW_STATE_SECONDS is logged, with its thread (NFH-111)."""
+
+    began = time.monotonic()
+    snapshot = get_graph().get_state(_config(incident_id))
+    took = time.monotonic() - began
+
+    if took > SLOW_STATE_SECONDS:
+        nodes.log(f"{incident_id}: reading its checkpoint took {took:.1f}s ({threading.current_thread().name})")
+
+    return snapshot
+
+
 def pending(incident_id: str) -> dict | None:
     """The review payload if the incident's run is paused at human_review."""
 
-    snapshot = get_graph().get_state(_config(incident_id))
+    snapshot = _snapshot(incident_id)
 
     for item in snapshot.interrupts or ():
         return item.value
@@ -267,7 +283,7 @@ def pending(incident_id: str) -> dict | None:
 
 
 def state(incident_id: str) -> dict:
-    return get_graph().get_state(_config(incident_id)).values
+    return _snapshot(incident_id).values
 
 
 def forget(incident_ids: list) -> int:

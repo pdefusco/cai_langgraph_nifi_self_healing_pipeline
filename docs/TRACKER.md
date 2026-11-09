@@ -132,8 +132,26 @@ them.
 | NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
 | NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
 | NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
+| NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Open | |
 
 ## Open tickets
+
+### NFH-111 · Perf · The app is slow live
+Live on 11-09, a few minutes after the 09:58 restart (2 CPU, 8 GB), S10's Review Queue panel was still loading
+after three minutes. A restart starts everything at once in one Python process: the poller's first rounds and a
+chart backfill for every deployment (~25), the agent runs for re-queued incidents, and the playbook ingest. Not
+yet known whether the panel waited behind that or is slow by itself. Every handler slower than 2 s logs
+"slow handler <name>: <s>" in the app log, and the System tab's App health has the CDP call times and the poller's
+lag. Next: those from the live app, and a timing of the Review Queue handlers on a mock the live fleet's size, alone
+and with the poller and two agent runs busy.
+- 2026-11-09: the log after the 09:58 restart: select_review 58.6 s, show_review 16.5 s, and Fleet, System,
+  Scorecard and the queue's packs 14–18 s together, with the container's CPU at 1.5% (p95 1.6%): waiting, not
+  working. All of them, the poller and the agent share the store's one connection behind one lock, on EFS, 1.3 GB.
+  The store is autocommit, so each row of a batch (a deployment's minute of KPIs, a backfill, the App health
+  sample) was its own transaction, a journal and an fsync each, with the lock held: 1500 rows took 0.75 s on a
+  laptop's SSD against 2 ms in one transaction. Now each batch is one transaction. Also logged: a hold of the
+  store's lock or a wait for it over 1 s ("[store] slow: <method> held … after waiting …", with the thread and
+  the caller), and a checkpoint read over 1 s, to find what else holds the panel. 728 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
