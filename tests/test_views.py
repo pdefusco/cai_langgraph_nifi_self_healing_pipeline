@@ -478,6 +478,46 @@ def test_a_review_waiting_to_be_diagnosed_again_says_so_and_takes_no_decision(ag
     assert panel["can_approve"] and "Being diagnosed again" not in panel["proposal"]
 
 
+def test_a_review_being_diagnosed_again_still_says_so_once_its_run_is_running(agent):
+    # Live (NFH-110): once a worker took S09's run the graph was past its pause, so the panel showed the old
+    # proposal from the store with nothing saying it was being replaced.
+    world, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    started, release = threading.Event(), threading.Event()
+
+    def held(messages):
+        started.set()
+        release.wait(10)
+        return proposal(S01_FIX, diagnosis="The new diagnosis.")(messages)
+
+    install(ScriptedLLM(proposal(S01_FIX), held))
+    graph.start(incident["id"])
+    provisioning.import_flow(client, "p1-throughput", new_baseline=True)
+    world.skip(31 * 60)
+    provisioning.reset_pack(client, "p1-throughput", dry_run=False, flow_only=True,
+                            wait=lambda: world.settle(incident["deployment_crn"]))
+    Poller(client, store).poll_now()
+
+    try:
+        assert views.diagnose(incident["id"], "ops").startswith("Diagnosing")
+        assert started.wait(10) and graph.run_state(incident["id"])[0] == "running"
+        assert graph.pending(incident["id"]) is None
+        panel = views.review(store, client, incident["id"])
+
+        assert panel["proposal"].index("**Being diagnosed again.**") < panel["proposal"].index("**Diagnosis.**")
+        assert "S01 Consumer is the bottleneck" in panel["proposal"]
+        assert not (panel["pending"] or panel["can_approve"] or panel["can_diagnose"] or panel["can_hold"])
+
+    finally:
+        release.set()
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    panel = views.review(store, client, incident["id"])
+    assert panel["can_approve"] and "The new diagnosis." in panel["proposal"]
+    assert "Being diagnosed again" not in panel["proposal"]
+
+
 def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):
     agent("p1-throughput")
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))

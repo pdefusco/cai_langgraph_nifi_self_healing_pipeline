@@ -154,6 +154,11 @@ the queued run. Autonomy's tick already waits on run_state; the reviewer's path 
 - 2026-11-09: while a run is queued or running on a pending review, the panel heads the proposal "Being diagnosed
   again: queued, n of m waiting" (or running), says it is the one being replaced, and turns its decisions off; and
   decide() refuses with "being diagnosed again". 725 pass. Live once the app is pulled and restarted.
+- 2026-11-09: live on S09 (p3, marked stale by NFH-112): Diagnose showed "Being diagnosed again" while the run was
+  queued, but once a worker took it the line went, and the old proposal read as the finished new one; the user
+  took it for done with its buttons still off (rightly: DIAGNOSING). A running graph is past its pause, so there is
+  no paused review, and the panel shows the stored proposal; the line was tied to the paused review. Now it is tied
+  to the run, queued or running, and a test holds the LLM mid-run. 733 pass.
 
 ### NFH-109 · Fix · The Review panel stays on another incident than the dropdown names
 Live on 11-09 the Incident dropdown named S49 (p22) and the panel under it showed S01 (p1), the queue's first,

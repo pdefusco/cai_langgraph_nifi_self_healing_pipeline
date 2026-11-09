@@ -878,8 +878,9 @@ def review(store, client, incident_id: str | None) -> dict:
     applying = bool(run and run[0] == "applying")
     outdated = stale(store, incident) if payload and not applying and run is None else ""
 
-    # The paused review stays until a run sent to diagnose it again gets there (NFH-110).
-    replacing = bool(payload and run and run[0] in ("queued", "running"))
+    # The old proposal stays until a run sent to diagnose it again replaces it (NFH-110): the paused
+    # review's while the run is queued, then the stored one, as a running graph is past its pause.
+    replacing = bool(run and run[0] in ("queued", "running"))
 
     if replacing:
         text.insert(1, (f"**Being diagnosed again:** queued, {run[1]} of {run[2]} waiting." if run[0] == "queued"
