@@ -104,11 +104,15 @@ PREVIOUS = """
 Diagnosis: {diagnosis}
 Steps: {steps}"""
 
+# A retry that proposes a fix this run already sent back, changed in nothing that counts (NFH-115).
+REPEATED = ("this is the fix try {attempt} proposed, unchanged, and the checks sent it back for the problems below; "
+            "change what they name or choose another fix")
+
 REPAIR = ("Your reply could not be used: {error}\n"
           "Reply again with only the JSON object described in the instructions.")
 
 PROMPT_VERSION = hashlib.sha256(
-    (SYSTEM + USER + FEEDBACK + PREVIOUS + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
+    (SYSTEM + USER + FEEDBACK + PREVIOUS + REPEATED + REPAIR + catalog.describe_for_prompt()).encode()).hexdigest()[:10]
 
 # With SELFHEAL_TOOLS, after SYSTEM (agent/tools.py).
 TOOLS = """

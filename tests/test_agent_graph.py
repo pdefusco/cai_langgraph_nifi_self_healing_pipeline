@@ -222,7 +222,10 @@ def test_invalid_after_all_attempts_goes_to_review(agent):
     graph.start(incident["id"])
     review = graph.pending(incident["id"])
 
-    assert not review["plan"]["ok"] and "1 to 8" in review["plan"]["problems"][0]
+    # The same fix again is named as a repeat (NFH-115).
+    repeat, bounds = review["plan"]["problems"]
+    assert not review["plan"]["ok"] and "1 to 8" in bounds
+    assert repeat.startswith("this is the fix try 2 proposed, unchanged, and the checks sent it back")
 
     graph.resume(incident["id"], {"decision": "approve"})
     assert "failed validation" in graph.pending(incident["id"])["error"]

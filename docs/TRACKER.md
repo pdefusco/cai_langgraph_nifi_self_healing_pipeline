@@ -107,7 +107,7 @@ them.
 | NFH-82 | Feature | The prompt says, before the agent proposes, which backlogged stages more capacity would not help | Dropped | 55526fb, 9848eee, 61e8bde |
 | NFH-83 | Fix | The capacity check asks a fix to drain the backlog in the verify window, and reads the intake behind a held-back fan-out | Done | 0eeab70, fab34b9 |
 | NFH-84 | Feature | The replay deals every run the same rounds, and `--compare` pairs them | Done | 54662b0 |
-| NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | Open | |
+| NFH-85 | Fix | The capacity check sends back the design fixes of S10 and S13 | In progress | |
 | NFH-86 | Feature | Draw several first proposals and keep the valid fix most of them agree on | Done | d88ce9b |
 | NFH-87 | Fix | A merge's small output reads as the slow stage (S24, S25), and an expiring queue hides the intake | Dropped | 43f6939, 07c85de |
 | NFH-88 | Fix | The capacity check reads a held-back split's own rate as the intake once its backlog is older than 2 h (S24) | Dropped | e6648f7, a810646, 3ade318 |
@@ -136,7 +136,7 @@ them.
 | NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | Done | 027c726, 7d51855 |
 | NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | Parked | |
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
-| NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | Parked | |
+| NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | In progress | |
 
 ## Open tickets
 
@@ -147,6 +147,13 @@ task(s) at about 0.017/s each is about 0.13/s, below the intake of about 0.5/s")
 Ways in: see how the send-back reads in the prompt (prompts.FEEDBACK), whether the replay shows the same repeats
 across scenarios, and refuse a retry whose fix equals the one sent back (nodes._fix) with a sharper message.
 - 2026-11-09: seen on S10. The user: park it. Parked.
+- 2026-11-09: the user: start on it. A run keeps each try's steps (`tried` in the state), and a retry whose fix is
+  one it already proposed, at the same values (`nodes._fix`), is sent back with "this is the fix try N proposed,
+  unchanged, and the checks sent it back for the problems below; change what they name or choose another fix"
+  before the problems (prompts.REPEATED, so a new PROMPT_VERSION). A capacity send-back limited by the rate per
+  task now also says how many tasks that rate would take ("it needs about 33 tasks") and, if that is more than it
+  can run, to find what makes each task slow: S10's 8 tasks went back as below the intake, with no sign that more
+  tasks were not the way. Test: S10 scripted to 8, 8, then the design fix. Next: seen live.
 
 ### NFH-114 · Perf · The diagnosis progress block takes a few seconds to appear after a Diagnose click
 Live on S10: the toast and "Sending…" come at once, but the progress block shows only a few awkward seconds later.
@@ -227,6 +234,13 @@ passes as a warning, so both still work; the agent's first try isn't valid.
 - 2026-10-26: found on the NFH-84 A/A. Open.
 - 2026-10-27: NFH-90's probe found a third: S07 at 20 ms (50/s) is sent back on the first try, though it worked and
   cleared in 3 of 3 rounds.
+- 2026-11-09: a probe ran every pack's design and acceptable fixes through the check: only S10's and S13's are sent
+  back now (S07's 20 ms passes since NFH-83). S10: the rate per task is read as each call waits out the 60 secs
+  connect timeout; a fix that shortens a `... Timeout` property on the processor now makes each task as many times
+  faster (60/5, `_waits_less`), so 4 tasks are 0.8/s against 0.5/s, and 8 tasks alone at 60 secs are still sent
+  back (0.13/s). S13: the fix stops s13-expiring expiring, and the check read the queue as the fix leaves it, with
+  no backlog; it now reads it as it was, expiring, so it says nothing (as for S25). `test_no_design_fix_is_sent_back`
+  now runs over every pack, acceptable fixes included, S07's too. Next: S10 and S13 valid on the first try.
 
 ### NFH-50 · Ops · Phase 4 M6: live rollout and the review pass
 p1–p13 are deployed on pdf1019-cdp-env, each EXTRA_SMALL ×1. Every pack's first incidents are being reviewed against

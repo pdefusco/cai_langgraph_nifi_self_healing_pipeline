@@ -15,9 +15,12 @@ Capacity after the change, in FlowFiles per second across the nodes:
     schedule (one FlowFile per run, or what the processor is measured to
     take per run if that is more);
   - a processor below its ceiling with a backlog in front is limited by
-    its work per FlowFile: its measured rate per task, times the tasks.
+    its work per FlowFile: its measured rate per task, times the tasks,
+    and faster by as much as the fix shortens a timeout it waits out (S10).
     Without its own rate KPI that is unknown, and so it is when a queue
     after it is measured full: the stage after it is the limit (S30).
+    A queue in front that expired FlowFiles before the fix shows no backlog
+    however far behind it is (S13).
 
 Intake, the highest of what is measured:
   - its own rate in, plus the growth of the queue in front of it;
@@ -39,6 +42,8 @@ isn't known, or the step lowers capacity, nothing is said. The problems go
 back to the agent as validation problems while it has attempts left, and
 show as warnings after that (agent/nodes.py).
 """
+
+import math
 
 import config
 from nifi_healer.actions import catalog
@@ -304,25 +309,47 @@ def _blocked(inv: dict, rows: dict, name: str) -> bool:
     return any(readings.full(rows.get(("connection", c["name"], "queued_count")), c) for c in _out(inv, name))
 
 
+def _waits_less(before: dict, after: dict) -> float:
+    """
+    How many times faster a task gets through a FlowFile once the fix
+    shortens a timeout it waits out: a call that times out at 60 secs takes
+    one at 5 secs (S10). 1 when no timeout is shortened. Every call is taken
+    to wait it out, so it leans towards passing.
+    """
+
+    was, ratio = before.get("properties") or {}, 1.0
+
+    for key, value in (after.get("properties") or {}).items():
+        old, new = parse_duration(was.get(key), 0.0), parse_duration(value, 0.0)
+
+        if key.endswith("Timeout") and old > new > 0:
+            ratio = max(ratio, old / new)
+
+    return ratio
+
+
 def _capacity(inv: dict, before: dict, after: dict, rows: dict, backlog: bool, nodes: int) -> tuple:
-    """(FlowFiles per second after the change or None, how it was worked out)."""
+    """(FlowFiles per second after the change or None, how it was worked out, the rate per task if that limits it)."""
 
     tasks = _int(after.get("concurrent_tasks"))
     ceiling, was = _ceiling(after, nodes), _ceiling(before, nodes)
     rate = _rate(rows, before["name"])
     per_run = max(1.0, rate / was) if rate is not None and was else 1.0
-    found = (ceiling * per_run, f"{tasks} task(s) every {after.get('run_schedule')}") if ceiling else (None, "")
+    found = (ceiling * per_run, f"{tasks} task(s) every {after.get('run_schedule')}", None) if ceiling \
+        else (None, "", None)
 
     # Held back by a full queue after it (S30's picking, behind labelling), it is not busy: its rate per task
     # is not its work per FlowFile (NFH-65 measures that queue).
     if rate is not None and rate > 0 and backlog and (was is None or rate < AT_CEILING * was) \
             and not _blocked(inv, rows, before["name"]):
         # Busy, not waiting between runs: each task does what it does now.
-        per_task = rate / _int(before.get("concurrent_tasks"))
+        faster = _waits_less(before, after)
+        per_task = rate / _int(before.get("concurrent_tasks")) * faster
         worked = per_task * tasks
 
         if found[0] is None or worked < found[0]:
-            found = (worked, f"{tasks} task(s) at about {_number(per_task)}/s each")
+            found = (worked, f"{tasks} task(s) at about {_number(per_task)}/s each"
+                             + (" with the shorter timeout" if faster > 1 else ""), per_task)
 
     return found
 
@@ -358,6 +385,7 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
 
     rows = {(r["kind"], r["component"], r["metric"]): r for r in readings.for_incident(incident, store, now)}
     before, after = _by_target(old), _by_target(new)
+    connections = {c["name"]: c for c in old["connections"]}
     nodes = max(1, int(nodes or 1))
     signalled = {s.get("kpi") for s in incident.get("signals") or []}
     problems, considered, measured, backed = [], 0, 0, 0
@@ -376,7 +404,8 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         if not more_tasks and not period < period_was:
             continue    # a step that lowers capacity is for something else (a runaway source, the CPU)
 
-        queues = [_backlog(rows, c, signalled) for c in _inbound(new, name)]
+        # A queue the same fix stops expiring showed no backlog until now (S13).
+        queues = [_backlog(rows, connections.get(c["name"], c), signalled) for c in _inbound(new, name)]
 
         if not queues:
             continue    # a source: nothing waits in front of it
@@ -388,7 +417,7 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
 
         backlog = any(queues)
         backed += backlog
-        capacity, how = _capacity(new, was, now_is, rows, backlog, nodes)
+        capacity, how, per_task = _capacity(new, was, now_is, rows, backlog, nodes)
         intake = _intake(new, rows, name, nodes)
         behind = _behind(new, rows, name)
 
@@ -406,12 +435,19 @@ def check(report: dict, incident: dict, store, now: float, nodes: int = 1) -> li
         found = f"{name}: {how} is about {_number(capacity)}/s, {short} the intake of about {_number(intake)}/s."
 
         if not behind:
-            problems.append(f"{found} Size it so the new capacity exceeds the intake with room to drain the backlog.")
+            found += " Size it so the new capacity exceeds the intake with room to drain the backlog."
 
         else:
-            problems.append(f"{found} About {_number(behind)} FlowFiles also wait upstream of its full input queue, "
-                            f"which stays at its limit until they are through. To clear them within "
-                            f"{config.VERIFY_WINDOW_SECONDS // 60} min it needs about {_number(needed)}/s.")
+            found += (f" About {_number(behind)} FlowFiles also wait upstream of its full input queue, which stays "
+                      f"at its limit until they are through. To clear them within "
+                      f"{config.VERIFY_WINDOW_SECONDS // 60} min it needs about {_number(needed)}/s.")
+
+        if per_task:
+            # What the tasks alone would take, so a retry isn't the same too-few again (NFH-115).
+            found += (f" At that rate a task, it needs about {math.ceil(needed / per_task)} tasks; if that is more "
+                      f"than it can run, find what makes each task slow.")
+
+        problems.append(found)
 
     if measured and measured == considered and not backed:
         problems.append("None of the processors changed has a backlog in front of it; find the stage whose "

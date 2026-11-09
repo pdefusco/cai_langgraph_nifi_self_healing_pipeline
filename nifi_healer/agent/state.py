@@ -26,6 +26,7 @@ class AgentState(TypedDict, total=False):
     vote: dict               # with SELFHEAL_SAMPLES, how the drawn proposals agreed; {} for one draw
     tool_calls: list         # with SELFHEAL_TOOLS, the proposal's tool calls: {tool, args, result}
     feedback: list           # problems with the last proposal, for the next attempt
+    tried: list              # [(attempt, steps)] this run's agent proposals, to name a repeat (NFH-115)
     source: str              # "agent" | "review" | "rollback": who wrote the steps being validated
     review: dict             # {decision, reason, reviewer, steps}
     review_error: str        # why the last decision was not accepted

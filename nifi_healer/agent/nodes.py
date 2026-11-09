@@ -188,7 +188,7 @@ def gather_context(state: dict) -> dict:
 
     context["readings"] = readings.render(rows, found)
 
-    return {"incident": incident, "context": context, "attempts": 0, "feedback": [],
+    return {"incident": incident, "context": context, "attempts": 0, "feedback": [], "tried": [],
             "source": "agent", "error": "", "review_error": ""}
 
 
@@ -465,6 +465,18 @@ def validate_proposal(state: dict) -> dict:
         else:
             report["warnings"].extend(report["capacity"])
 
+    tried = list(state.get("tried") or [])
+
+    if state.get("source") == "agent":
+        steps = report["steps"] or proposal.get("steps") or []
+        repeat = _repeat(steps, tried)
+
+        if repeat and not report["ok"]:
+            report["problems"] = [prompts.REPEATED.format(attempt=repeat)] + report["problems"]
+
+        if steps:
+            tried.append((state.get("attempts", 0), steps))
+
     if report["ok"] and report["family"] == catalog.NONE:
         status = "NO_ACTION"
 
@@ -490,7 +502,19 @@ def validate_proposal(state: dict) -> dict:
     log(f"{incident['id']}: proposal {proposal_id} {status}"
         + (f": {'; '.join(report['problems'])}" if report["problems"] else ""))
 
-    return {"plan": report, "proposal_id": proposal_id, "feedback": report["problems"]}
+    return {"plan": report, "proposal_id": proposal_id, "feedback": report["problems"], "tried": tried}
+
+
+def _repeat(steps: list, tried: list) -> int | None:
+    """The latest attempt this run that proposed the same fix, at the same values, else None."""
+
+    try:
+        fix = _fix(steps) if steps else None
+
+        return next((attempt for attempt, earlier in reversed(tried) if _fix(earlier) == fix), None) if fix else None
+
+    except Exception:  # steps the catalog can't read are refused for that, not compared
+        return None
 
 
 def _capacity(full: dict, incident: dict, state: dict) -> list:

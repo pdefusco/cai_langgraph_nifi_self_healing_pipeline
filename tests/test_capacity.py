@@ -84,14 +84,51 @@ def test_no_design_fix_is_sent_back(agent, monkeypatch, watch_all):
     names = ("p1-throughput", "p2-backpressure", "p8-orders", "p9-clickstream", "p10-iot", "p11-payments",
              "p12-warehouse", "p13-billing")
     _, client, store, incidents, _ = agent(*names)
-    # S07's acceptable 100 ms and 4 tasks keep pace with the fan-out at best, and leave its backlog in place
-    # (NFH-83); they are sent back.
     fixes = [(s, list(packs.SCENARIOS[s].expected)) for s in incidents] + \
-        [(s, [step]) for s in incidents for step in packs.SCENARIOS[s].acceptable if s != "S07"]
+        [(s, [step]) for s in incidents for step in packs.SCENARIOS[s].acceptable]
 
     # S04 opens later, on a DataFlow alert; the oracle replay covers it.
     assert {s.id for n in names for s in packs.PACKS[n].scenarios} - set(incidents) == {"S04"}
     assert [(s, steps) for s, steps in fixes if problems(client, store, incidents[s], steps)] == []
+
+
+OTHERS = [n for n in packs.PACKS if n not in ("p1-throughput", "p2-backpressure", "p8-orders", "p9-clickstream",
+                                              "p10-iot", "p11-payments", "p12-warehouse", "p13-billing")]
+
+
+@pytest.mark.parametrize("name", OTHERS)
+def test_no_design_fix_is_sent_back_in_any_pack(agent, name):
+    # S10's fix shortens the timeout its tasks wait out, S13's stops its queue expiring (NFH-85).
+    _, client, store, incidents, _ = agent(name)
+    fixes = [(s, list(packs.SCENARIOS[s].expected)) for s in incidents] + \
+        [(s, [step]) for s in incidents for step in packs.SCENARIOS[s].acceptable]
+
+    assert [(s, steps) for s, steps in fixes if problems(client, store, incidents[s], steps)] == []
+
+
+def test_more_tasks_waiting_out_the_same_timeout_are_sent_back(agent):
+    # S10's trap: 8 tasks that each still wait 60 secs on the partner keep nowhere near the intake.
+    _, client, store, incidents, _ = agent("p3-errors")
+    [short] = problems(client, store, incidents["S10"], [tasks("S10 Partner Call", 8)])
+
+    assert "8 task(s) at about 0.017/s each is about 0.13/s, below the intake" in short
+
+
+def test_a_retry_that_repeats_the_fix_is_told_so(agent):
+    # S10, live: tries 1 and 2 were the same 8 tasks, word for word (NFH-115).
+    _, _, store, incidents, install = agent("p3-errors")
+    incident = incidents["S10"]
+    model = install(ScriptedLLM(*[proposal([tasks("S10 Partner Call", 8)])] * 2,
+                                proposal(list(packs.SCENARIOS["S10"].expected))))
+
+    graph.start(incident["id"])
+    first, second = (model.calls[i][1].content for i in (1, 2))
+
+    # Each send-back says how many tasks the rate per task would take, and to look for what makes a task slow.
+    assert "it needs about 33 tasks; if that is more than it can run, find what makes each task slow" in first
+    assert "this is the fix try 1 proposed, unchanged" not in first
+    assert "- this is the fix try 1 proposed, unchanged, and the checks sent it back" in second
+    assert [p["status"] for p in store.proposals(incident["id"])] == ["SUPERSEDED", "SUPERSEDED", "VALID"]
 
 
 def test_the_wrong_stage_is_sent_back(agent):
