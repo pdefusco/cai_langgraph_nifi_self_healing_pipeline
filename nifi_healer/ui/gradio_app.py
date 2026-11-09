@@ -324,13 +324,14 @@ def _panel(incident_id) -> tuple:
 # for seconds on a large flow (its definition is read from the tenant), so
 # a follow that fired for the last pick can land after the next pick's
 # panel: live, S51's showed over S52's until the next follow (NFH-100).
+# Each holds [incident, follows since that named another].
 _picks = {}
 
 
 def _pick(request, incident_id):
     if session := getattr(request, "session_hash", None):
         _picks.pop(session, None)
-        _picks[session] = incident_id
+        _picks[session] = [incident_id, 0]
 
         while len(_picks) > 1000:
             _picks.pop(next(iter(_picks)))
@@ -341,7 +342,32 @@ def _picked_since(request, incident_id) -> bool:
 
     session = getattr(request, "session_hash", None)
 
-    return bool(session) and _picks.get(session, incident_id) != incident_id
+    return bool(session) and _picks.get(session, [incident_id])[0] != incident_id
+
+
+def _named_again(request, incident_id) -> bool:
+    """
+    Whether this is the second follow in a row to name incident_id over
+    the session's pick, which it then takes. A tick sends the dropdown as
+    it was when it fired, and one is in flight at a time, so only the
+    first can name an incident picked before; the second names what the
+    dropdown shows. (A select that started after the next pick took the
+    pick back: live, S01's panel stayed under S49 in the dropdown, NFH-109.)
+    """
+
+    entry = _picks.get(getattr(request, "session_hash", None))
+
+    if not entry:
+        return False
+
+    entry[1] += 1
+
+    if entry[1] < 2:
+        return False
+
+    _pick(request, incident_id)
+
+    return True
 
 
 @_timed
@@ -358,7 +384,7 @@ def follow_review(incident_id, seen, request: gr.Request = None):
 
     key = views.review_key(get_store(), incident_id)
 
-    if key == seen or _picked_since(request, incident_id):
+    if key == seen or _picked_since(request, incident_id) and not _named_again(request, incident_id):
         return (gr.skip(),) * (PANEL_OUTPUTS + 1)
 
     out = _panel(incident_id)

@@ -593,6 +593,23 @@ def test_a_follow_that_lands_after_the_next_pick_is_dropped(agent, monkeypatch):
     assert gradio_app.follow_review(s02, "", browser)[-1] == views.review_key(store, s02)
 
 
+def test_a_select_that_starts_after_the_next_pick_does_not_keep_the_panel(agent):
+    # Live (NFH-109): the dropdown named S49 and the panel stayed on S01, the queue's first.
+    _, _, store, incidents, _ = agent("p1-throughput")
+    s01, s02 = incidents["S01"]["id"], incidents["S02"]["id"]
+    browser = types.SimpleNamespace(session_hash="a")
+    skipped = (gr.skip(),) * (gradio_app.PANEL_OUTPUTS + 1)
+
+    gradio_app.select_review(s02, browser)
+    *_, seen = gradio_app.select_review(s01, browser)  # sent before the pick of S02, started after it
+
+    # The first follow may be one sent before the pick; the second is the dropdown as it is.
+    assert gradio_app.follow_review(s02, seen, browser) == skipped
+    *_, seen = gradio_app.follow_review(s02, seen, browser)
+    assert seen == views.review_key(store, s02)
+    assert gradio_app.follow_review(s02, seen, browser) == skipped
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 

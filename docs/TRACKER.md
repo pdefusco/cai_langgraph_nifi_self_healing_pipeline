@@ -130,8 +130,22 @@ them.
 | NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
 | NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
 | NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
+| NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
 
 ## Open tickets
+
+### NFH-109 · Fix · The Review panel stays on another incident than the dropdown names
+Live on 11-09 the Incident dropdown named S49 (p22) and the panel under it showed S01 (p1), the queue's first,
+which the page picks when it loads. NFH-100's guard keeps each session's latest pick, taken when a pick's render
+*starts*, and drops any render or follow for another incident. A render sent before the next pick but started
+after it (renders queue: one at a time per event, and a page load sends two) takes the pick back, so the newer
+pick's render is dropped, and every follow after, which names what the dropdown shows, is dropped too: the panel
+stays wrong until the next pick. Not confirmed which render it was (the app log would show a slow handler).
+- 2026-11-09: a follow that names another incident than the pick is still dropped once, as it may have been sent
+  before the pick (a tick sends the dropdown as it was when it fired, and one is in flight at a time); the second
+  in a row names what the dropdown shows, takes the pick and renders it, so the panel comes back within ~6 s.
+  NFH-100's case, a follow landing after the next pick, is still dropped. 724 pass. Live once the app is pulled and
+  restarted.
 
 ### NFH-92 · Ops · Replay every scenario
 Since NFH-84 the LLM replays have run 14 fault scenarios and S19, and each change's oracle check the same set or the 20
