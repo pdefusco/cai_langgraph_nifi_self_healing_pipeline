@@ -787,7 +787,7 @@ def build() -> gr.Blocks:
                     + (" · autonomy on (trusted low-risk fixes approve themselves)" if config.AUTONOMY else ""))
 
         with gr.Tabs() as tabs:
-            with gr.Tab("Fleet"):
+            with gr.Tab("Fleet") as fleet_tab:
                 _legend(legend.FLEET)
 
                 fleet_header = gr.Markdown()
@@ -812,7 +812,7 @@ def build() -> gr.Blocks:
                                    show_progress="hidden")
                 kpi_pick.change(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
 
-            with gr.Tab("Review Queue"):
+            with gr.Tab("Review Queue") as queue_tab:
                 _legend(legend.REVIEW)
 
                 with gr.Row():
@@ -878,9 +878,9 @@ def build() -> gr.Blocks:
                     target.input(pick_target, inputs=[action, target, form_targets, *fields], outputs=fields)
 
                 seen = gr.State("")
-                queue_timer = gr.Timer(5.0)
-                packs_timer = gr.Timer(30.0)
-                follow_timer = gr.Timer(3.0)
+                queue_timer = gr.Timer(5.0, active=False)
+                packs_timer = gr.Timer(30.0, active=False)
+                follow_timer = gr.Timer(3.0, active=False)
 
                 queue_pick.change(select_review, inputs=[queue_pick], outputs=panel + [seen])
                 queue_pack.change(filter_queue, inputs=[queue_pack, queue_pick], outputs=[queue_pick, queue_line])
@@ -905,7 +905,7 @@ def build() -> gr.Blocks:
                 hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
                 diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
-            with gr.Tab("History", id="history"):
+            with gr.Tab("History", id="history") as history_tab:
                 _legend(legend.HISTORY)
 
                 history_refresh = gr.Button("Refresh")
@@ -957,7 +957,7 @@ def build() -> gr.Blocks:
                 rollback_btn.click(propose_rollback, inputs=[history_pick, fix_pick, rollback_reason, fix_reviewer],
                                    outputs=corrected)
 
-            with gr.Tab("Playbooks"):
+            with gr.Tab("Playbooks") as pb_tab:
                 _legend(legend.PLAYBOOKS)
 
                 with gr.Row():
@@ -990,7 +990,7 @@ def build() -> gr.Blocks:
 
                 pb_panel = [pb_html, pb_text, pb_approve, pb_reject, pb_revert, pb_redraft]
                 pb_seen = gr.State("")
-                pb_timer = gr.Timer(5.0)
+                pb_timer = gr.Timer(5.0, active=False)
 
                 pb_pick.change(select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
                 pb_view.change(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick])
@@ -1009,7 +1009,7 @@ def build() -> gr.Blocks:
                 pb_revert.click(_playbook_decision("revert"), inputs=pb_inputs, outputs=pb_outputs)
                 pb_redraft.click(_playbook_decision("redraft"), inputs=pb_inputs, outputs=pb_outputs)
 
-            with gr.Tab("Monitor"):
+            with gr.Tab("Monitor") as mon_tab:
                 _legend(legend.MONITOR)
 
                 with gr.Row():
@@ -1026,7 +1026,7 @@ def build() -> gr.Blocks:
                     mon_change = gr.Dropdown(label="Change", choices=[], scale=3, allow_custom_value=True)
 
                 mon_html = gr.HTML(js_on_load=monitor.JS)
-                mon_timer = gr.Timer(30.0)
+                mon_timer = gr.Timer(30.0, active=False)
                 mon_inputs = [mon_pack, mon_range, mon_change]
                 fleet_inputs = [mon_range, fleet_query, fleet_sort, fleet_attention, mon_pack]
                 fleet_out = dict(inputs=fleet_inputs, outputs=[fleet_html], show_progress="hidden")
@@ -1045,7 +1045,7 @@ def build() -> gr.Blocks:
                 fleet_html.click(pick_fleet, inputs=[mon_range], outputs=[mon_pack, mon_html, mon_change]).then(
                     show_fleet, **fleet_out)
 
-            with gr.Tab("Scorecard"):
+            with gr.Tab("Scorecard") as score_tab:
                 _legend(legend.SCORECARD)
 
                 with gr.Row():
@@ -1065,18 +1065,18 @@ def build() -> gr.Blocks:
                 score_since.change(show_scorecard, **score_inputs)
                 score_group.change(show_scorecard, **score_inputs)
 
-            with gr.Tab("Soak"):
+            with gr.Tab("Soak") as soak_tab:
                 _legend(legend.SOAK)
 
                 soak_refresh = gr.Button("Refresh")
                 soak_html = gr.HTML(js_on_load=monitor.JS)
-                soak_timer = gr.Timer(60.0)
+                soak_timer = gr.Timer(60.0, active=False)
 
                 soak_refresh.click(show_soak, outputs=[soak_html])
                 soak_timer.tick(show_soak, outputs=[soak_html], show_progress="hidden")
-                soak_html.click(open_in_history, outputs=[tabs, history_pick])
+                to_history = soak_html.click(open_in_history, outputs=[tabs, history_pick])
 
-            with gr.Tab("System"):
+            with gr.Tab("System") as system_tab:
                 _legend(legend.SYSTEM)
 
                 system_md = gr.Markdown()
@@ -1097,7 +1097,7 @@ def build() -> gr.Blocks:
                 system_result = gr.Markdown()
                 health_html = gr.HTML(js_on_load=monitor.JS)
                 selftest_out = gr.JSON(label="Selftest")
-                health_timer = gr.Timer(60.0)
+                health_timer = gr.Timer(60.0, active=False)
 
                 system_refresh.click(refresh_system, outputs=[system_md]).then(show_health, outputs=[health_html])
                 health_timer.tick(show_health, outputs=[health_html], show_progress="hidden")
@@ -1116,22 +1116,48 @@ def build() -> gr.Blocks:
         demo.load(who_is_reviewing, outputs=[reviewer])
         demo.load(who_is_reviewing, outputs=[fix_reviewer])
         demo.load(who_is_reviewing, outputs=[pb_reviewer])
-        demo.load(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
-            select_playbook_edit, inputs=[pb_pick], outputs=pb_panel + [pb_seen])
-        demo.load(playbook_patch, outputs=[pb_patch])
-        demo.load(refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line])
-        demo.load(refresh_queue, inputs=[queue_pick], outputs=[queue_pick]).then(
-            select_review, inputs=[queue_pick], outputs=panel + [seen])
-        demo.load(refresh_history, inputs=[history_pick], outputs=[history_table, history_pick, history_detail]).then(
-            pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
-        demo.load(refresh_system, outputs=[system_md])
-        demo.load(show_health, outputs=[health_html])
-        demo.load(show_scorecard, **score_inputs)
-        demo.load(show_soak, outputs=[soak_html])
-        demo.load(refresh_monitor, inputs=mon_inputs, outputs=[mon_pack, mon_html, mon_change]).then(
-            show_fleet, **fleet_out)
+        # Only the open tab's timers tick, and a tab loads when it is opened (NFH-111): with every tab
+        # refreshing at once, Soak, App health and Monitor's reads queued in front of the Review Queue's.
+        timers = {"Fleet": [fleet_timer, choices_timer], "Review Queue": [queue_timer, packs_timer, follow_timer],
+                  "Playbooks": [pb_timer], "Monitor": [mon_timer], "Soak": [soak_timer], "System": [health_timer]}
+        every_timer = [timer for group in timers.values() for timer in group]
+
+        def opened(tab, name):
+            return tab.select(_ticking(timers, name), outputs=every_timer, show_progress="hidden", queue=False)
+
+        opened(fleet_tab, "Fleet").then(refresh_fleet, inputs=[kpi_pick], outputs=fleet_outputs)
+        # The timers' own handlers: they re-render only what changed, so a reason being typed stays.
+        opened(queue_tab, "Review Queue").then(
+            refresh_queue_packs, inputs=[queue_pack], outputs=[queue_pack, queue_line]).then(
+            tick_queue, inputs=[queue_pick, queue_pack], outputs=[queue_pick, queue_line]).then(
+            follow_review, inputs=[queue_pick, seen], outputs=panel + [seen])
+        opened(pb_tab, "Playbooks").then(refresh_playbooks, inputs=[pb_view, pb_pick], outputs=[pb_pick]).then(
+            follow_playbook_edit, inputs=[pb_pick, pb_seen], outputs=pb_panel + [pb_seen]).then(
+            playbook_patch, outputs=[pb_patch])
+
+        for event in (opened(history_tab, "History"), to_history.then(_ticking(timers, "History"),
+                                                                      outputs=every_timer, queue=False)):
+            event.then(refresh_history, inputs=[history_pick],
+                       outputs=[history_table, history_pick, history_detail]).then(
+                pick_fix, inputs=[history_pick, fix_pick], outputs=[fix_pick])
+
+        opened(mon_tab, "Monitor").then(refresh_monitor, inputs=mon_inputs,
+                                        outputs=[mon_pack, mon_html, mon_change]).then(show_fleet, **fleet_out)
+        opened(score_tab, "Scorecard").then(show_scorecard, **score_inputs)
+        opened(soak_tab, "Soak").then(show_soak, outputs=[soak_html])
+        opened(system_tab, "System").then(refresh_system, outputs=[system_md]).then(
+            show_health, outputs=[health_html])
 
     return demo
+
+
+def _ticking(timers: dict, tab: str):
+    """A tab's select: its timers on, every other tab's off."""
+
+    def update():
+        return [gr.Timer(active=name == tab) for name, group in timers.items() for _ in group]
+
+    return update
 
 
 def main() -> None:

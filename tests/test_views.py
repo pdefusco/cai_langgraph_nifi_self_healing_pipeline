@@ -652,6 +652,28 @@ def test_a_select_that_starts_after_the_next_pick_does_not_keep_the_panel(agent)
     assert gradio_app.follow_review(s02, seen, browser) == skipped
 
 
+def test_only_the_open_tabs_timers_tick_and_a_tab_loads_when_opened(agent):
+    # Live, every tab refreshed at once and their reads queued in front of the Review Queue's (NFH-111).
+    agent("p1-throughput")
+    config = gradio_app.build().config
+    timers = [c for c in config["components"] if c["type"] == "timer"]
+    tabs = {c["id"]: c["props"]["label"] for c in config["components"] if c["type"] == "tabitem"}
+    selects = {tabs[target]: d for d in config["dependencies"] for target, event in d["targets"]
+               if target in tabs and event == "select"}
+    loads = {d["api_name"].rstrip("_0123456789") for d in config["dependencies"]
+             if d["targets"] and d["targets"][0][1] == "load"}
+
+    assert [t["props"]["value"] for t in timers if t["props"]["active"]] == [1.0, 15.0]  # the Fleet tab's
+    assert set(selects) == set(tabs.values())
+    assert all(sorted(d["outputs"]) == sorted(t["id"] for t in timers) for d in selects.values())
+    assert loads == {"refresh_kpi_choices", "who_is_reviewing"}  # the page itself loads only the Fleet tab
+
+    groups = {"Fleet": [1, 2], "Review Queue": [3], "Soak": [4]}
+    active = [update.active for update in gradio_app._ticking(groups, "Fleet")()]
+    assert active == [True, True, False, False]
+    assert [update.active for update in gradio_app._ticking(groups, "History")()] == [False] * 4
+
+
 def test_blocks_build_and_handlers(agent):
     _, _, store, incidents, _ = agent("p1-throughput")
 

@@ -159,6 +159,17 @@ and with the poller and two agent runs busy.
   so which writes are the long ones is not yet known; now each names its store method and caller. Also the store's
   page cache, 2 MB by default against a 1.3 GB file on EFS, so a batch into kpi_samples' three B-trees read most of
   its pages over the network with the lock held, is now 256 MB (SELFHEAL_DB_CACHE_MB). 730 pass.
+- 2026-11-09: deployed (95ea8ef); the user finds the Review Queue faster. Handlers are now 2–13 s (select_review
+  4–13 s, show_review 2–8 s), with App health 18 s and Soak 20 s. add_samples holds the lock 1.3–2.4 s in the first
+  polls. The new long holds are reads: Monitor's `history` (every KPI of a deployment over the chart window,
+  2.5–4.4 s; the fleet overview reads it for each deployment) and App health's `health` (2.1 s). Yet the user was on
+  the Review Queue: every tab's timers tick whether or not their tab is open, and the page load filled all eight tabs
+  at once, so Soak, App health, Monitor, Scorecard and System kept queuing in front of the Review Queue. Now only the
+  open tab's timers tick, and a tab loads when it is opened. The page load fills only the Fleet tab. The Review Queue
+  and Playbooks reopen through their follow handlers, which re-render only what changed, so a reason being typed
+  stays. Measured for next, not built: on a p24-shaped copy (2.3M samples, 1.3 GB), a covering index on kpi_samples
+  (deployment_crn, t, kpi_key, value) halves a 24 h `history` read (299 → 169 ms on an SSD, more on EFS, where it
+  saves a table read per row); it costs ~340 MB and a build on start. 731 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
