@@ -134,7 +134,7 @@ them.
 | NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | Done | f7e1a2e, 69e4cc4 |
 | NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
 | NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | Done | 027c726, 7d51855 |
-| NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | In progress | |
+| NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | Parked | |
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | Parked | |
 
@@ -175,6 +175,8 @@ user could not tell the request had landed; and while the agent ran, a few minut
   check, 46 was valid, and the block showed only the LLM step again, as if stuck. A try after the first now reads
   "try 2 of 3" in the block's head, with "Try 1 was sent back: <the first problem>" beneath it, kept with the step
   (nodes.steps) and in the panel's key, so the panel re-renders on each try. 736 pass.
+- 2026-11-09: S11 diagnosed in ~1 min on its first try, so the try line had no cause to show. Everything else is seen
+  live; the try line waits for a run the checks send back. The user: park it until then. Parked (b5b3f53, 7d51855).
 
 ### NFH-109 · Fix · The Review panel stays on another incident than the dropdown names
 Live on 11-09 the Incident dropdown named S49 (p22) and the panel under it showed S01 (p1), the queue's first,
