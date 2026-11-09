@@ -430,6 +430,48 @@ def test_a_review_diagnosed_on_a_version_no_longer_deployed_is_diagnosed_again(a
     assert panel["can_approve"] and not panel["can_diagnose"] and "Stale" not in panel["proposal"]
 
 
+def test_a_review_waiting_to_be_diagnosed_again_says_so_and_takes_no_decision(agent):
+    # Live (NFH-110): S49's v1 proposal, queued to be diagnosed again, read as the new one, its buttons live.
+    world, client, store, incidents, install = agent("p1-throughput")
+    incident = incidents["S01"]
+    install(ScriptedLLM(proposal(S01_FIX), proposal(S01_FIX)))
+    graph.start(incident["id"])
+    first = graph.pending(incident["id"])["proposal_id"]
+
+    provisioning.import_flow(client, "p1-throughput", new_baseline=True)
+    world.skip(31 * 60)
+    provisioning.reset_pack(client, "p1-throughput", dry_run=False, flow_only=True,
+                            wait=lambda: world.settle(incident["deployment_crn"]))
+    Poller(client, store).poll_now()
+
+    # Every worker busy, so the run waits its turn.
+    busy = threading.Event()
+    blockers = [graph._executor().submit(busy.wait) for _ in range(config.AGENT_WORKERS)]
+
+    try:
+        assert views.diagnose(incident["id"], "ops").startswith("Queued")
+        panel = views.review(store, client, incident["id"])
+
+        assert "**Being diagnosed again:** queued, 1 of 1 waiting." in panel["proposal"]
+        assert "Stale" not in panel["proposal"]
+        assert not (panel["pending"] or panel["can_approve"] or panel["can_diagnose"] or panel["can_hold"])
+
+        for decision in ("approve", "reject", "edit"):
+            assert "is being diagnosed again" in views.decide(incident["id"], decision, "ops", "no", S01_FIX)
+
+        assert graph.pending(incident["id"])["proposal_id"] == first and not store.reviews(incident["id"])
+
+    finally:
+        busy.set()
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    assert all(b.done() for b in blockers)
+    panel = views.review(store, client, incident["id"])
+    assert graph.pending(incident["id"])["proposal_id"] != first
+    assert panel["can_approve"] and "Being diagnosed again" not in panel["proposal"]
+
+
 def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):
     agent("p1-throughput")
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))

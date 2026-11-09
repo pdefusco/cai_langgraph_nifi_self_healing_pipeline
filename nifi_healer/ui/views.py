@@ -850,6 +850,15 @@ def review(store, client, incident_id: str | None) -> dict:
     applying = bool(run and run[0] == "applying")
     outdated = stale(store, incident) if payload and not applying and run is None else ""
 
+    # The paused review stays until a run sent to diagnose it again gets there (NFH-110).
+    replacing = bool(payload and run and run[0] in ("queued", "running"))
+
+    if replacing:
+        text.insert(1, (f"**Being diagnosed again:** queued, {run[1]} of {run[2]} waiting." if run[0] == "queued"
+                        else "**Being diagnosed again.**")
+                    + " This is the proposal being replaced; the new one shows here when it is ready, "
+                      "and decisions wait for it.")
+
     if outdated:
         text.append(outdated)
 
@@ -866,10 +875,11 @@ def review(store, client, incident_id: str | None) -> dict:
         "commands": "\n\n".join(plan.get("commands") or []),
         "steps": list(proposal.get("steps") or []),
         "targets": ((graph.state(incident_id).get("context") or {}).get("targets") or {}) if payload else {},
-        "can_approve": bool(payload and plan.get("ok")) and not applying,
+        "can_approve": bool(payload and plan.get("ok")) and not applying and not replacing,
         "can_diagnose": (orphaned or bool(outdated)) and run is None,
-        "can_hold": bool(payload and window and window["status"] == autonomy.WAITING) and not applying,
-        "pending": bool(payload) and not applying,
+        "can_hold": bool(payload and window and window["status"] == autonomy.WAITING) and not applying
+                    and not replacing,
+        "pending": bool(payload) and not applying and not replacing,
         "status": incident["status"],
     }
 
@@ -884,8 +894,14 @@ def decide(incident_id: str | None, decision: str, reviewer: str = "", reason: s
     if not incident_id:
         return "Select an incident first."
 
-    if (graph.run_state(incident_id) or ("",))[0] == "applying":
+    run = (graph.run_state(incident_id) or ("",))[0]
+
+    if run == "applying":
         return f"{incident_id}'s approval is being applied; History shows the result."
+
+    # A decision now would race the run queued to replace this proposal (NFH-110).
+    if run in ("queued", "running"):
+        return f"{incident_id} is being diagnosed again; decide on its new proposal once it shows here."
 
     waiting = graph.pending(incident_id)
 

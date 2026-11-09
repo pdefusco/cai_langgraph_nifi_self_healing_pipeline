@@ -131,8 +131,19 @@ them.
 | NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
 | NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
 | NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
+| NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
 
 ## Open tickets
+
+### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
+Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
+proposal with nothing saying it was being replaced: the Stale line goes once a run is queued, and Approve, Reject,
+Edit and Hold stayed live. The paused review stays pending until the run gets there (the re-diagnosis is a resume
+into gather_context), and decide() refused only while a decision was being applied, so a decision then would race
+the queued run. Autonomy's tick already waits on run_state; the reviewer's path didn't.
+- 2026-11-09: while a run is queued or running on a pending review, the panel heads the proposal "Being diagnosed
+  again: queued, n of m waiting" (or running), says it is the one being replaced, and turns its decisions off; and
+  decide() refuses with "being diagnosed again". 725 pass. Live once the app is pulled and restarted.
 
 ### NFH-109 · Fix · The Review panel stays on another incident than the dropdown names
 Live on 11-09 the Incident dropdown named S49 (p22) and the panel under it showed S01 (p1), the queue's first,
