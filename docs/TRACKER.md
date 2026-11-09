@@ -131,9 +131,9 @@ them.
 | NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
 | NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
 | NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
-| NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
+| NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | Done | f7e1a2e, 69e4cc4 |
 | NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
-| NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | In progress | |
+| NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | Done | 027c726, 7d51855 |
 | NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | In progress | |
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | Parked | |
@@ -175,34 +175,6 @@ user could not tell the request had landed; and while the agent ran, a few minut
   check, 46 was valid, and the block showed only the LLM step again, as if stuck. A try after the first now reads
   "try 2 of 3" in the block's head, with "Try 1 was sent back: <the first problem>" beneath it, kept with the step
   (nodes.steps) and in the panel's key, so the panel re-renders on each try. 736 pass.
-
-### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
-Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no
-longer runs) among 27, and only a review's panel says so: the queue's dropdown and its header do not.
-- 2026-11-09: a stale review's dropdown label now reads "… · awaiting review · stale · 4 d old", and the queue's
-  header counts them ("N stale, diagnosed on a flow no longer deployed"). The same check as the panel's, from the
-  store: one deployment read per deployment, no cdp call. The page's How to read says what stale means. Next: seen
-  live. 732 pass.
-- 2026-11-09: seen live: S09 and S10 marked, the header "8 stale". But the queue's ticks took 7-19 s while the
-  poller caught up after a restart (about 4 s after): beyond the deployment read, each review on a moved flow read
-  the deployment's applied actions and plants again, two reads, each waiting on the store's lock, and a tick checks
-  twice. Now those are read once a deployment and only when a review's version differs (executor.deployed_by_us):
-  at most three reads a deployment however many reviews it has. 736 pass.
-
-### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
-Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
-proposal with nothing saying it was being replaced: the Stale line goes once a run is queued, and Approve, Reject,
-Edit and Hold stayed live. The paused review stays pending until the run gets there (the re-diagnosis is a resume
-into gather_context), and decide() refused only while a decision was being applied, so a decision then would race
-the queued run. Autonomy's tick already waits on run_state; the reviewer's path didn't.
-- 2026-11-09: while a run is queued or running on a pending review, the panel heads the proposal "Being diagnosed
-  again: queued, n of m waiting" (or running), says it is the one being replaced, and turns its decisions off; and
-  decide() refuses with "being diagnosed again". 725 pass. Live once the app is pulled and restarted.
-- 2026-11-09: live on S09 (p3, marked stale by NFH-112): Diagnose showed "Being diagnosed again" while the run was
-  queued, but once a worker took it the line went, and the old proposal read as the finished new one; the user
-  took it for done with its buttons still off (rightly: DIAGNOSING). A running graph is past its pause, so there is
-  no paused review, and the panel shows the stored proposal; the line was tied to the paused review. Now it is tied
-  to the run, queued or running, and a test holds the LLM mid-run. 733 pass.
 
 ### NFH-109 · Fix · The Review panel stays on another incident than the dropdown names
 Live on 11-09 the Incident dropdown named S49 (p22) and the panel under it showed S01 (p1), the queue's first,
@@ -369,6 +341,38 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ## Closed tickets
+
+### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
+Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no
+longer runs) among 27, and only a review's panel says so: the queue's dropdown and its header do not.
+- 2026-11-09: a stale review's dropdown label now reads "… · awaiting review · stale · 4 d old", and the queue's
+  header counts them ("N stale, diagnosed on a flow no longer deployed"). The same check as the panel's, from the
+  store: one deployment read per deployment, no cdp call. The page's How to read says what stale means. Next: seen
+  live. 732 pass.
+- 2026-11-09: seen live: S09 and S10 marked, the header "8 stale". But the queue's ticks took 7-19 s while the
+  poller caught up after a restart (about 4 s after): beyond the deployment read, each review on a moved flow read
+  the deployment's applied actions and plants again, two reads, each waiting on the store's lock, and a tick checks
+  twice. Now those are read once a deployment and only when a review's version differs (executor.deployed_by_us):
+  at most three reads a deployment however many reviews it has. 736 pass.
+- 2026-11-09: after the restart the queue's ticks took 2.2-2.9 s (7-19 s before, about 4 s once the poller had
+  caught up) and refresh_queue 2.6 s (3-10 s). Done.
+
+### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
+Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old
+proposal with nothing saying it was being replaced: the Stale line goes once a run is queued, and Approve, Reject,
+Edit and Hold stayed live. The paused review stays pending until the run gets there (the re-diagnosis is a resume
+into gather_context), and decide() refused only while a decision was being applied, so a decision then would race
+the queued run. Autonomy's tick already waits on run_state; the reviewer's path didn't.
+- 2026-11-09: while a run is queued or running on a pending review, the panel heads the proposal "Being diagnosed
+  again: queued, n of m waiting" (or running), says it is the one being replaced, and turns its decisions off; and
+  decide() refuses with "being diagnosed again". 725 pass. Live once the app is pulled and restarted.
+- 2026-11-09: live on S09 (p3, marked stale by NFH-112): Diagnose showed "Being diagnosed again" while the run was
+  queued, but once a worker took it the line went, and the old proposal read as the finished new one; the user
+  took it for done with its buttons still off (rightly: DIAGNOSING). A running graph is past its pause, so there is
+  no paused review, and the panel shows the stored proposal; the line was tied to the paused review. Now it is tied
+  to the run, queued or running, and a test holds the LLM mid-run. 733 pass.
+- 2026-11-09: seen live on S09, S12, S10 and S11: "Being diagnosed again" while queued and running, the decisions
+  off, then the new proposal with them back. Done.
 
 Tickets 1–29 were done before this tracker began; see the index.
 
