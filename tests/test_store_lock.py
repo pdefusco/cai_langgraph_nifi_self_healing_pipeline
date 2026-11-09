@@ -77,3 +77,33 @@ def test_a_batch_of_samples_is_one_transaction(tmp_path):
         store.add_samples("crn", [("c", 2.0, 1.0), ("d", 2.0, object())])
 
     assert store.samples("crn", "c") == [] and not store.conn.in_transaction
+
+
+def test_the_monitor_window_is_read_from_a_covering_index(tmp_path):
+    # Live, a deployment's window read 2.5-4.4 s: a table row per sample on EFS (NFH-111).
+    path = str(tmp_path / "healer.db")
+    old = sqlite3.connect(path)
+    old.executescript("CREATE TABLE kpi_samples (deployment_crn TEXT NOT NULL, kpi_key TEXT NOT NULL, "
+                      "t REAL NOT NULL, value REAL, PRIMARY KEY (deployment_crn, kpi_key, t));"
+                      "CREATE INDEX kpi_samples_by_time ON kpi_samples (deployment_crn, t);")
+    old.close()
+    store = Store(path)
+    store.upsert_deployment("crn", "p1", {}, 0.0)
+    store.add_samples("crn", [("a", 1.0, 1.0), ("b", 2.0, 2.0)])
+
+    def plans(call):
+        traced = []
+        store.conn.set_trace_callback(traced.append)
+        call()
+        store.conn.set_trace_callback(None)
+        reads = [sql for sql in traced if "FROM kpi_samples" in sql]
+        return [" ".join(r[-1] for r in store.conn.execute("EXPLAIN QUERY PLAN " + sql)) for sql in reads]
+
+    indexes = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' "
+                                                "AND tbl_name = 'kpi_samples' AND sql IS NOT NULL")}
+
+    assert indexes == {"kpi_samples_window"}
+    assert ["COVERING INDEX kpi_samples_window" in p for p in plans(lambda: store.history("crn", 0, 1))] == [True]
+    assert ["kpi_samples_window" in p for p in plans(lambda: store.first_sample_at("crn"))] == [True]
+    assert ["kpi_samples_window" in p for p in plans(lambda: store.prune_samples(0))] == [True]
+    assert store.history("crn", 0, 1) == {"a": {1: 1.0}, "b": {2: 2.0}}

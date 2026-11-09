@@ -170,6 +170,12 @@ and with the poller and two agent runs busy.
   stays. Measured for next, not built: on a p24-shaped copy (2.3M samples, 1.3 GB), a covering index on kpi_samples
   (deployment_crn, t, kpi_key, value) halves a 24 h `history` read (299 → 169 ms on an SSD, more on EFS, where it
   saves a table read per row); it costs ~340 MB and a build on start. 731 pass.
+- 2026-11-09: built, as the user says the app's CAI resource profile can grow with what it needs. The covering index
+  kpi_samples_window replaces kpi_samples_by_time, which had its first two columns, so the time index's disk comes
+  back. `history` reads from the index alone; `first_sample_at` and `prune_samples` use its prefix, as they did the
+  old index's. The first start on the live store builds the index with the store locked (2.8 s for 2.3M rows on an
+  SSD; expect longer on EFS) before the UI and pollers come up. A test plans the store's own statements on a store
+  that has the old index. 732 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old

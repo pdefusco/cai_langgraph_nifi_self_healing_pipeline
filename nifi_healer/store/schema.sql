@@ -43,8 +43,12 @@ CREATE TABLE IF NOT EXISTS kpi_samples (
 
 -- The Monitor tab reads a time window of every KPI of a deployment, and
 -- its first sample: by time, not by key, or each read scans all history.
-CREATE INDEX IF NOT EXISTS kpi_samples_by_time
-    ON kpi_samples (deployment_crn, t);
+-- Covering, so a window is read from the index alone, not a table row per
+-- sample (NFH-111). It replaces kpi_samples_by_time, its first two columns.
+-- On a store that has the old index, the first start builds this one.
+CREATE INDEX IF NOT EXISTS kpi_samples_window
+    ON kpi_samples (deployment_crn, t, kpi_key, value);
+DROP INDEX IF EXISTS kpi_samples_by_time;
 
 -- What changed on a deployment and when, from its CDF event log
 -- (list-deployment-events): flow version, parameters, sizing, KPIs.
