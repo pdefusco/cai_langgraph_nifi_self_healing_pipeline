@@ -1573,6 +1573,7 @@ def system(snapshot: dict, client) -> str:
         ("Verify", f"settle {config.VERIFY_SETTLE_SECONDS}s, window {config.VERIFY_WINDOW_SECONDS}s"),
         ("Autonomy", _autonomy_state(store)),
         ("Trusted fixes", trusted),
+        ("Answer-key reviewer", _auto_review_state()),
         ("Chaos", _chaos_state(store, snapshot["now"])),
         ("Data", f"`{config.DB_PATH}`, checkpoints `{config.CHECKPOINT_PATH}`, Chroma `{config.CHROMA_DIR}`"),
     ]
@@ -1581,6 +1582,17 @@ def system(snapshot: dict, client) -> str:
         rows.append(("Mock clock", f"{config.MOCK_SPEED:g}x wall time, tenant time {clock(snapshot['now'])}"))
 
     return "| | |\n|---|---|\n" + "\n".join(f"| {k} | {v} |" for k, v in rows)
+
+
+def _auto_review_state() -> str:
+    if not config.AUTO_REVIEW:
+        return "off (SELFHEAL_AUTO_REVIEW=true decides reviews from the scenarios' design fixes, for testing)"
+
+    armed = ("approves armed writes too (SELFHEAL_AUTO_REVIEW_ARMED)" if config.AUTO_REVIEW_ARMED
+             else "approves only while writes are disarmed")
+
+    return (f"**on**: decides every review on a scenario pack as the Scorecard grades it, and approves playbook "
+            f"drafts that pass their checks; {armed}")
 
 
 def _autonomy_state(store) -> str:

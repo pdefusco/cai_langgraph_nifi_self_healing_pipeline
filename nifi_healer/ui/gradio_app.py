@@ -31,7 +31,7 @@ from nifi_healer.actions import catalog
 from nifi_healer.agent import autonomy, graph
 from nifi_healer.cdp.client import get_client
 from nifi_healer.rag import retriever
-from nifi_healer.runtime import poller as poller_module
+from nifi_healer.runtime import auto_review, poller as poller_module
 from nifi_healer.store.db import get_store
 from nifi_healer.ui import legend, monitor, playbooks, scorecard, soak, views
 
@@ -73,7 +73,10 @@ def startup() -> None:
 
 
 def _tick(client, store) -> None:
-    """Every KPI poll: ask the LLM again for diagnoses it didn't answer, then autonomy's veto windows."""
+    """
+    Every KPI poll: ask the LLM again for diagnoses it didn't answer, then
+    autonomy's veto windows, then the answer-key reviewer if it is on.
+    """
 
     if config.AUTO_DIAGNOSE:
         try:
@@ -83,6 +86,13 @@ def _tick(client, store) -> None:
             log(f"retrying diagnoses failed: {type(exc).__name__}: {exc}")
 
     autonomy.tick(client, store)
+
+    if config.AUTO_REVIEW:
+        try:
+            auto_review.tick(client, store)
+
+        except Exception as exc:  # the next poll tries again
+            log(f"the answer-key reviewer failed: {type(exc).__name__}: {exc}")
 
 
 def _warm_playbooks() -> None:

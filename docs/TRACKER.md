@@ -137,8 +137,25 @@ them.
 | NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | Parked | |
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | In progress | |
+| NFH-116 | Feature | An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts | In progress | |
 
 ## Open tickets
+
+### NFH-116 · Feature · An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts
+Testing on the packs live takes a person at the Review Queue for every review, and on the Playbooks tab for every
+draft a rejection makes: hours for a pass over the fleet. For testing only, the app can decide them itself.
+- 2026-11-09: the user asked to run the testing programmatically, playbooks included; their answers: grade by the
+  answer key, approve the drafts that pass their checks, run inside the app. `runtime/auto_review.py`, on with
+  `SELFHEAL_AUTO_REVIEW` (off by default), runs on the poller's tick after autonomy's. Each review waiting for a
+  person, oldest first: stale, it is diagnosed again (as Diagnose does); on a scenario with no design label, left for
+  a person; invalid after every try, rejected with its first problem; the design or an acceptable fix
+  (`scorecard.match`), approved, a dry run while disarmed (armed, only with `SELFHEAL_AUTO_REVIEW_ARMED` too);
+  anything else rejected with a general reason (nothing needs a change, part of the fix, too little of it, the right
+  component with the wrong change, the wrong kind of fix, the wrong component), never the design fix, since memory
+  and the drafter read it. A playbook draft that passes the drafter's checks is approved; one that fails waits for a
+  person. Every decision goes through the Review Queue's own paths as "answer key (auto-review)" and is logged
+  (`[auto-review]`), with one "done" line when nothing waits, runs or drafts. Its approvals count as a person's
+  towards autonomy's trust. System tab row and legend line. Tests: tests/test_auto_review.py.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
