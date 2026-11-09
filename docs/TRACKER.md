@@ -129,7 +129,7 @@ them.
 | NFH-105 | Fix | A target named by the inventory's group header, "Top / Sub / Name", is not found, and a path skips the capacity check | Done | 82d4883 |
 | NFH-106 | Fix | The scorecard grades a target named "Sub / Name", with spaces, as the wrong lever | Done | 6a5a7c4 |
 | NFH-107 | Fix | A flow-only reset says it is done when CDF took the swap but never applied it | Done | d004bc9, 120f2dd, 997c7a7 |
-| NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | In progress | |
+| NFH-108 | Fix | On p25's canvas the groups inside sit on their crossing's source, and their ports on a stage and on filler | Done | 866f3f5, 0054a11 |
 
 ## Open tickets
 
@@ -284,6 +284,10 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   50% → 75%, worked 58% → 67%. after-3 had both S25 rounds at a working value and both S27 routes at Reject DLQ, so
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
+## Closed tickets
+
+Tickets 1–29 were done before this tracker began; see the index.
+
 ### NFH-108 · Fix · Nested groups and their ports cover other components on the canvas
 - 2026-11-08: seen live on p25 (the S99 re-baseline, NFH-64): in each group the group inside sat at (0, 0), the
   builder's default, on the crossing's Feed, under the labels of its own port connections. Inside it the input port
@@ -298,10 +302,8 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   as does its decoy's loop. A twin's filler, and its decoy, now start at the column after everything in the group so
   far, bends included, so a loop and its label have the column beside it to themselves. Positions only, in p22 and
   p25. The test now also puts a label on each bend. Live once p22 and p25 are re-baselined onto it.
-
-## Closed tickets
-
-Tickets 1–29 were done before this tracker began; see the index.
+- 2026-11-09: pushed as 0054a11; p25 (V.4) and p22 re-baselined onto it, no queues emptied. In NiFi S99's and S50's
+  failure loops, and S50's decoy's, have their labels clear of the filler. Done in 866f3f5, 0054a11.
 
 ### NFH-107 · Fix · A flow-only reset says it is done when CDF took the swap but never applied it
 - 2026-11-07: found on p3's S09 re-baseline (NFH-64). `run_steps` waits for the flow to be steady, which it already is
