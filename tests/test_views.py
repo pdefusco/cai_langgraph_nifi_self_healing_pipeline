@@ -399,6 +399,8 @@ def test_a_review_diagnosed_on_a_version_no_longer_deployed_is_diagnosed_again(a
 
     panel = views.review(store, client, incident["id"])
     assert panel["pending"] and not panel["can_diagnose"] and "Stale" not in panel["proposal"]
+    assert "stale" not in {v: k for k, v in views.queue_choices(store)}[incident["id"]]
+    assert "stale" not in views.queue_summary(store)
     first = graph.pending(incident["id"])["proposal_id"]
 
     provisioning.import_flow(client, "p1-throughput", new_baseline=True)
@@ -410,6 +412,10 @@ def test_a_review_diagnosed_on_a_version_no_longer_deployed_is_diagnosed_again(a
     panel = views.review(store, client, incident["id"])
     assert panel["pending"] and panel["can_diagnose"]
     assert "**Stale.** This was diagnosed on flow v1, and the deployment now runs v2" in panel["proposal"]
+    # The queue says so before the review is opened.
+    label = {v: k for k, v in views.queue_choices(store)}[incident["id"]]
+    assert "· awaiting review · stale · " in label
+    assert "· 1 stale, diagnosed on a flow no longer deployed" in views.queue_summary(store)
 
     try:
         assert views.diagnose(incident["id"], "ops").startswith("Diagnosing")

@@ -133,8 +133,17 @@ them.
 | NFH-109 | Fix | The Review Queue panel can stay on one incident while the dropdown names another, until the next pick | In progress | |
 | NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
 | NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
+| NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | In progress | |
 
 ## Open tickets
+
+### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
+Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no
+longer runs) among 27, and only a review's panel says so: the queue's dropdown and its header do not.
+- 2026-11-09: a stale review's dropdown label now reads "… · awaiting review · stale · 4 d old", and the queue's
+  header counts them ("N stale, diagnosed on a flow no longer deployed"). The same check as the panel's, from the
+  store: one deployment read per deployment, no cdp call. The page's How to read says what stale means. Next: seen
+  live. 732 pass.
 
 ### NFH-110 · Fix · A review waiting to be diagnosed again reads as the new proposal
 Live on 11-09 Diagnose on S49's stale review (p22) queued a run behind others, and the panel kept S49's old

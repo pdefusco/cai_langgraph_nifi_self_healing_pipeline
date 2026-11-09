@@ -415,14 +415,39 @@ def queue_choices(store, keep: str | None = None, pack: str = "") -> list:
     if keep and keep not in {i["id"] for i in incidents}:
         incidents += [i for i in [store.incident(keep)] if i]
 
-    choices, now = [], get_client().now()
+    choices, now, outdated = [], get_client().now(), _stale(store, incidents)
 
     for incident in incidents:
         waiting = "awaiting review" if incident["status"] == "PENDING_REVIEW" else incident["status"].lower()
+        waiting += " · stale" if incident["id"] in outdated else ""
         choices.append((f"{incident['id']} · {incident['pack']} › {incident['process_group']} · {waiting} · "
                         f"{_age(now - incident['opened_at'])} old", incident["id"]))
 
     return choices
+
+
+def _stale(store, incidents: list) -> set:
+    """
+    The ids of the reviews among `incidents` that stale() would mark on
+    their panel, so the queue shows them before one is opened. One
+    deployment read per deployment, and no cdp call.
+    """
+
+    deployed, outdated = {}, set()
+
+    for incident in incidents:
+        if incident["status"] != "PENDING_REVIEW":
+            continue
+
+        crn = incident["deployment_crn"]
+
+        if crn not in deployed:
+            deployed[crn] = (store.deployment(crn) or {}).get("flow_version_crn") or ""
+
+        if executor.stale(store, incident, deployed[crn]):
+            outdated.add(incident["id"])
+
+    return outdated
 
 
 def _age(seconds: float) -> str:
@@ -461,6 +486,9 @@ def queue_summary(store, pack: str = "") -> str:
 
     if reviews:
         parts.append(f"oldest {_age(now - reviews[0]['opened_at'])} old ({reviews[0]['id']}, {reviews[0]['pack']})")
+
+    if outdated := _stale(store, reviews):
+        parts.append(f"{len(outdated)} stale, diagnosed on a flow no longer deployed")
 
     for status, label in (("NEW", "new"), ("DIAGNOSING", "being diagnosed"), ("APPLYING", "being applied")):
         count = sum(1 for i in incidents if i["status"] == status)

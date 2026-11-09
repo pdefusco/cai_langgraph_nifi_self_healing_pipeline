@@ -51,7 +51,9 @@ Every change the agent wants to make waits here for a person. Nothing is written
 approves it{'' if config.ARMED else ', and while writes are disarmed an approval is only a dry run'}.{_AUTONOMY}
 
 **The queue**: reviews first, the oldest at the top. **Deployment** narrows it to one deployment; the line beneath
-says how many are waiting and how long the oldest has waited.
+says how many are waiting and how long the oldest has waited. A review marked **stale** was diagnosed on a flow
+version the deployment no longer runs (a re-deploy from outside this app); its panel says why, and **Diagnose**
+replaces it with a diagnosis of the running flow.
 
 **Left: the evidence.** The signals that opened the incident (a KPI over its threshold, an alert, a data imbalance),
 with the KPI values the agent was shown.
