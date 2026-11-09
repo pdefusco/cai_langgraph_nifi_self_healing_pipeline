@@ -135,8 +135,16 @@ them.
 | NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
 | NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | In progress | |
 | NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | In progress | |
+| NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
 
 ## Open tickets
+
+### NFH-114 · Perf · The diagnosis progress block takes a few seconds to appear after a Diagnose click
+Live on S10: the toast and "Sending…" come at once, but the progress block shows only a few awkward seconds later.
+It comes with the panel the Diagnose handler returns, so it waits on that handler's store reads (2.4–6.9 s live,
+NFH-111) and then on the render. Ways in: return the block alone first, as `_sending` does, and the rest of the
+panel after; or wait for the new UI, which would show the block from the click (the Gradio UI is interim).
+- 2026-11-09: seen on S10. The user: keep it as it is for now, revisit later. Parked.
 
 ### NFH-113 · Feature · Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way
 Live on 11-09 (S12, p3): Diagnose answered only in the line under the buttons, out of sight on a long panel, so the
@@ -148,6 +156,8 @@ user could not tell the request had landed; and while the agent ran, a few minut
   one under way and how long it and the run have taken, counted on in the page between renders. The step is kept
   in memory by the timed nodes (graph.progress) and is in the panel's key, so the panel re-renders once a step,
   not every second. 734 pass. Next: seen live.
+- 2026-11-09: seen live on S10. The toast, the steps and the timers work; the user likes the walk through the
+  lifecycle. The block takes a few seconds to appear (NFH-114, parked). The run itself went past 5 minutes.
 
 ### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
 Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no
