@@ -508,8 +508,99 @@ def review_key(store, incident_id: str | None) -> str:
     countdown = (f"{window['status']}:{int(max(0, window['due_at'] - get_client().now()) // 60)}"
                  if window else "")
 
+    step = (graph.progress(incident_id) or {}).get("step") if incident else None
+
     return (f"{incident_id}|{incident and incident['status']}|{graph.run_state(incident_id) if incident else None}"
-            f"|{countdown}")
+            f"|{step}|{countdown}")
+
+
+# A run's steps as the review panel names them (NFH-113), in order.
+RUN_STEPS = [("gather_context", "Read the flow and its KPIs"), ("retrieve_playbooks", "Find playbooks and past cases"),
+             ("diagnose_and_propose", "Diagnose and propose a fix (the LLM)"),
+             ("validate_proposal", "Check the proposal")]
+ROLLBACK_STEPS = [("propose_rollback", "Draft the rollback"), ("validate_proposal", "Check the proposal")]
+CRITIC_STEP = ("critique_proposal", "A second LLM reviews the proposal")
+
+
+def run_progress(incident_id: str) -> str:
+    """
+    The review panel's progress block while a run is queued or running,
+    else "" (NFH-113): a moving bar, the steps with the one under way, and
+    how long it has run, which the page counts on between renders (RUN_JS).
+    """
+
+    run = graph.run_state(incident_id)
+
+    if not run or run[0] not in ("queued", "running"):
+        return ""
+
+    if run[0] == "queued":
+        head = (f"Queued for diagnosis: <b>{run[1]}</b> of {run[2]} waiting, "
+                f"{config.AGENT_WORKERS} diagnosed at a time.")
+
+        return f'<div class="nfh-run"><p>{head}</p><div class="nfh-bar"><span></span></div></div>'
+
+    now = time.time()
+    progress = graph.progress(incident_id) or {}
+    current = progress.get("step")
+    steps = ROLLBACK_STEPS if current == "propose_rollback" else RUN_STEPS + (
+        [CRITIC_STEP] if config.CRITIC or current == CRITIC_STEP[0] else [])
+    names = [name for name, _ in steps]
+    at = names.index(current) if current in names else -1
+    items = []
+
+    for i, (name, label) in enumerate(steps):
+        if i < at:
+            items.append(f'<li class="nfh-done">✓ {label}</li>')
+
+        elif i == at:
+            items.append(f'<li class="nfh-now">▶ {label} · {_elapsed(now - progress["step_started"])}</li>')
+
+        else:
+            items.append(f'<li>○ {label}</li>')
+
+    head = "The agent is diagnosing this incident"
+
+    if progress.get("started"):
+        head += f" · running for {_elapsed(now - progress['started'])}"
+
+    return (f'<div class="nfh-run"><p>{head}</p><div class="nfh-bar"><span></span></div>'
+            f'<ol class="nfh-steps">{"".join(items)}</ol></div>')
+
+
+def _elapsed(seconds: float) -> str:
+    """A span the page's script counts on from `seconds`."""
+
+    seconds = max(0, int(seconds))
+    text = f"{seconds} s" if seconds < 60 else f"{seconds // 60} min {seconds % 60} s"
+
+    return f'<span class="nfh-elapsed" data-elapsed="{seconds}">{text}</span>'
+
+
+# The progress block's look.
+RUN_CSS = """
+.nfh-run{border:1px solid var(--border-color-primary);border-radius:8px;padding:10px 14px;margin-bottom:8px}
+.nfh-run p{margin:0 0 8px}
+.nfh-bar{height:6px;border-radius:3px;background:var(--neutral-200);overflow:hidden;position:relative}
+.nfh-bar span{position:absolute;top:0;bottom:0;width:30%;border-radius:3px;background:var(--color-accent);
+  animation:nfh-slide 1.4s ease-in-out infinite}
+@keyframes nfh-slide{0%{left:-30%}100%{left:100%}}
+.nfh-steps{list-style:none;padding:0;margin:8px 0 0}
+.nfh-steps li{color:var(--body-text-color-subdued);margin:2px 0}
+.nfh-steps li.nfh-done{color:var(--body-text-color)}
+.nfh-steps li.nfh-now{color:var(--body-text-color);font-weight:600}
+"""
+
+# The progress block's script (gr.HTML's js_on_load: `element` is the component).
+RUN_JS = """
+setInterval(() => {
+  for (const el of element.querySelectorAll(".nfh-elapsed[data-elapsed]")) {
+    if (!el.dataset.t0) el.dataset.t0 = Date.now() - 1000 * Number(el.dataset.elapsed);
+    const s = Math.floor((Date.now() - Number(el.dataset.t0)) / 1000);
+    el.textContent = s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+  }
+}, 1000);
+"""
 
 
 def _latest_proposal(store, incident_id: str) -> dict | None:
@@ -749,7 +840,7 @@ def review(store, client, incident_id: str | None) -> dict:
 
     blank = {"evidence": "Select an incident.", "proposal": "", "change": "", "commands": "",
              "steps": [], "targets": {}, "can_approve": False, "can_diagnose": False, "can_hold": False, "pending": False,
-             "status": ""}
+             "status": "", "run": ""}
     incident = store.incident(incident_id) if incident_id else None
 
     if not incident:
@@ -806,7 +897,8 @@ def review(store, client, incident_id: str | None) -> dict:
             text = ORPHANED
 
         return dict(blank, evidence="\n".join(evidence), proposal=text, status=incident["status"],
-                    can_diagnose=(incident["status"] in graph.RUNNABLE or orphaned) and run is None)
+                    can_diagnose=(incident["status"] in graph.RUNNABLE or orphaned) and run is None,
+                    run=run_progress(incident_id))
 
     if proposal.get("parse_error"):
         text = ["### No usable proposal",
@@ -910,6 +1002,7 @@ def review(store, client, incident_id: str | None) -> dict:
                     and not replacing,
         "pending": bool(payload) and not applying and not replacing,
         "status": incident["status"],
+        "run": run_progress(incident_id) if replacing else "",
     }
 
 

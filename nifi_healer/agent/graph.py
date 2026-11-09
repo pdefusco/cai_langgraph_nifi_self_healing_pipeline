@@ -61,6 +61,7 @@ _applying: dict = {}  # incident id -> Future, from resume_in_background() until
 _apply_failed: dict = {}  # incident id -> why its last background approval raised, until the next one
 _llm_failed: dict = {}  # incident id -> (runs in a row the LLM didn't answer or that raised, wall time of the last)
 _run_failed: dict = {}  # incident id -> why its last run raised, until a run ends without raising
+_started: dict = {}  # incident id -> wall time its background run began, while it runs
 
 # Approvals applied at once; each one waits minutes for its deployment.
 APPLY_WORKERS = 4
@@ -387,12 +388,17 @@ def run_failure(incident_id: str) -> str:
 
 
 def _run(incident_id: str) -> None:
+    _started[incident_id] = time.time()
+
     try:
         start(incident_id)
 
     except Exception as exc:  # a failed run must not kill the worker
         _stopped(incident_id, exc)
         return
+
+    finally:
+        _ran(incident_id)
 
     with _lock:
         _run_failed.pop(incident_id, None)
@@ -407,6 +413,8 @@ def _run(incident_id: str) -> None:
 
 
 def _rediagnose(incident_id: str, decision: dict) -> None:
+    _started[incident_id] = time.time()
+
     try:
         resume(incident_id, decision)
 
@@ -414,8 +422,35 @@ def _rediagnose(incident_id: str, decision: dict) -> None:
         _stopped(incident_id, exc, "diagnosing again")
         return
 
+    finally:
+        _ran(incident_id)
+
     with _lock:
         _run_failed.pop(incident_id, None)
+
+
+def _ran(incident_id: str) -> None:
+    _started.pop(incident_id, None)
+    nodes.steps.pop(incident_id, None)
+
+
+def progress(incident_id: str) -> dict | None:
+    """
+    How far a running background run has got, for the review panel
+    (NFH-113): {step, step_started, started}, wall times; None when no
+    run is running. The step is None until the first timed node begins.
+    """
+
+    if (run_state(incident_id) or ("",))[0] != "running" or incident_id not in _started:
+        return None
+
+    step, since = nodes.steps.get(incident_id) or (None, None)
+    started = _started[incident_id]
+
+    if since is not None and since < started:      # the last run's
+        step, since = None, None
+
+    return {"step": step, "step_started": since, "started": started}
 
 
 def submit(incident: dict, rediagnose: dict | None = None):

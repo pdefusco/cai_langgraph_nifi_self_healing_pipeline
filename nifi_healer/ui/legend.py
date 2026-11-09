@@ -79,7 +79,8 @@ with the KPI values the agent was shown.
   parameter context of this group) and its values. Change it and press **Submit edit** to re-validate your version;
   the Change above then shows it, and you approve it as usual.
 - **Approve** applies it. **Reject** closes the incident and needs a reason, which is kept. **Diagnose** asks the
-  agent to look again.
+  agent to look again; a note pops up to say whether it was taken. While the agent works, a bar above the proposal
+  shows its place in the queue, or the step it is on and how long it has run.
 """
 
 HISTORY = f"""

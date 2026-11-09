@@ -254,8 +254,8 @@ def _queue_at(incident_id):
 # The step form's boxes: each row's action, target and fields (NFH-58).
 FORM_BOXES = catalog.MAX_STEPS * (2 + views.FORM_FIELDS)
 # show_review's outputs: evidence, proposal, change, commands, the form's rows and boxes, the names it
-# offers, and the five buttons (Hold among them).
-PANEL_OUTPUTS = 4 + catalog.MAX_STEPS + FORM_BOXES + 1 + 5
+# offers, the five buttons (Hold among them), and a run's progress (NFH-113).
+PANEL_OUTPUTS = 4 + catalog.MAX_STEPS + FORM_BOXES + 1 + 5 + 1
 
 
 def _form(view) -> list:
@@ -304,7 +304,7 @@ def show_review(incident_id):
     return (view["evidence"], view["proposal"], view["change"], view["commands"], *_form(view), view["targets"],
             gr.Button(interactive=view["can_approve"]),
             gr.Button(interactive=pending), gr.Button(interactive=pending),
-            gr.Button(interactive=view["can_diagnose"]), gr.Button(visible=view["can_hold"]))
+            gr.Button(interactive=view["can_diagnose"]), gr.Button(visible=view["can_hold"]), view["run"])
 
 
 def _panel(incident_id) -> tuple:
@@ -461,11 +461,31 @@ def diagnose(incident_id, shown=None, reviewer="", request: gr.Request = None):
 
     if permission.upper() == "RO" and incident_id and graph.pending(incident_id):
         # Diagnosing an open review again replaces its proposal: a decision.
-        return _answer(f"{login or 'You'} can only view this project, so the review was not diagnosed "
-                       "again; a project collaborator with write access decides.", incident_id)
+        message = (f"{login or 'You'} can only view this project, so the review was not diagnosed "
+                   "again; a project collaborator with write access decides.")
+        gr.Warning(message, title="Not sent")
 
-    return _answer(_shows_another(incident_id, shown)
-                   or views.diagnose(incident_id, (reviewer or "").strip() or login), incident_id)
+        return _answer(message, incident_id)
+
+    if mismatch := _shows_another(incident_id, shown):
+        gr.Warning(mismatch, title="Not sent")
+
+        return _answer(mismatch, incident_id)
+
+    message = views.diagnose(incident_id, (reviewer or "").strip() or login)
+
+    # A toast as well as the line under the buttons, which is out of sight on a long panel (NFH-113).
+    if message.startswith(("Diagnosing", "Queued")):
+        gr.Info(message, title="Diagnosis requested")
+
+    else:
+        gr.Warning(message, title="Not diagnosed")
+
+    return _answer(message, incident_id)
+
+
+def _sending():
+    return gr.Button(interactive=False), "Sending the request to diagnose…"
 
 
 @_timed
@@ -828,6 +848,7 @@ def build() -> gr.Blocks:
                         evidence = gr.Markdown()
 
                     with gr.Column(scale=3):
+                        run_html = gr.HTML(js_on_load=views.RUN_JS)
                         proposal = gr.Markdown()
 
                 gr.Markdown("**Change**")
@@ -867,7 +888,7 @@ def build() -> gr.Blocks:
 
                 review_result = gr.Markdown()
                 panel = [evidence, proposal, change, commands, *step_rows, *step_boxes, form_targets,
-                         approve_btn, edit_btn, reject_btn, diagnose_btn, hold_btn]
+                         approve_btn, edit_btn, reject_btn, diagnose_btn, hold_btn, run_html]
                 width = 2 + views.FORM_FIELDS
 
                 for i in range(catalog.MAX_STEPS):
@@ -903,7 +924,10 @@ def build() -> gr.Blocks:
                     _decide("edit"), inputs=decision_inputs, outputs=decision_outputs)
                 reject_btn.click(_decide("reject"), inputs=decision_inputs, outputs=decision_outputs)
                 hold_btn.click(_decide("hold"), inputs=decision_inputs, outputs=decision_outputs)
-                diagnose_btn.click(diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
+                # Said at once, before the store is reached (NFH-113).
+                diagnose_btn.click(_sending, outputs=[diagnose_btn, review_result], queue=False,
+                                   show_progress="hidden").then(
+                    diagnose, inputs=[queue_pick, seen, reviewer], outputs=decision_outputs)
 
             with gr.Tab("History", id="history") as history_tab:
                 _legend(legend.HISTORY)
@@ -1164,4 +1188,4 @@ def main() -> None:
     startup()
     build().queue(default_concurrency_limit=4).launch(
         server_name=config.APP_HOST, server_port=config.APP_PORT, show_error=True,
-        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS + playbooks.CSS + soak.CSS)
+        theme=gr.themes.Soft(), css=monitor.CSS + scorecard.CSS + playbooks.CSS + soak.CSS + views.RUN_CSS)

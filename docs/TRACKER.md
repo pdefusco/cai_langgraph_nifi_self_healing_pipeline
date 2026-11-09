@@ -134,8 +134,20 @@ them.
 | NFH-110 | Fix | A stale review sent to be diagnosed again shows its old proposal as current, with its decisions live | In progress | |
 | NFH-111 | Perf | The app is slow live: a Review Queue panel took 3+ min to load after a restart | Done | 4c341a5, 95ea8ef, 0f5464a, 51eafb0 |
 | NFH-112 | Fix | Which reviews are stale shows only on each one's panel, not in the queue | In progress | |
+| NFH-113 | Feature | Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way | In progress | |
 
 ## Open tickets
+
+### NFH-113 · Feature · Diagnose gives no sign it was clicked, and nothing shows a diagnosis under way
+Live on 11-09 (S12, p3): Diagnose answered only in the line under the buttons, out of sight on a long panel, so the
+user could not tell the request had landed; and while the agent ran, a few minutes, nothing on the panel moved.
+- 2026-11-09: a click on Diagnose turns the button off and says "Sending the request…" at once (queue=False, before
+  the store is reached), and the answer pops up as a toast: "Diagnosis requested" when it was taken, "Not
+  diagnosed" or "Not sent" with why when not. While a run is queued or running, a block above the proposal shows a
+  moving bar and the queue place, or the steps (read the flow, playbooks, the LLM's diagnosis, the checks) with the
+  one under way and how long it and the run have taken, counted on in the page between renders. The step is kept
+  in memory by the timed nodes (graph.progress) and is in the panel's key, so the panel re-renders once a step,
+  not every second. 734 pass. Next: seen live.
 
 ### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
 Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no

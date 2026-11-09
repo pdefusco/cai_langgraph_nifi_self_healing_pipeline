@@ -459,6 +459,7 @@ def test_a_review_waiting_to_be_diagnosed_again_says_so_and_takes_no_decision(ag
         panel = views.review(store, client, incident["id"])
 
         assert "**Being diagnosed again:** queued, 1 of 1 waiting." in panel["proposal"]
+        assert "Queued for diagnosis: <b>1</b> of 1 waiting" in panel["run"] and "nfh-bar" in panel["run"]
         assert "Stale" not in panel["proposal"]
         assert not (panel["pending"] or panel["can_approve"] or panel["can_diagnose"] or panel["can_hold"])
 
@@ -508,6 +509,12 @@ def test_a_review_being_diagnosed_again_still_says_so_once_its_run_is_running(ag
         assert "S01 Consumer is the bottleneck" in panel["proposal"]
         assert not (panel["pending"] or panel["can_approve"] or panel["can_diagnose"] or panel["can_hold"])
 
+        # Where the run is (NFH-113): the LLM's step under way, the ones before it done.
+        assert '<li class="nfh-done">✓ Find playbooks and past cases</li>' in panel["run"]
+        assert '<li class="nfh-now">▶ Diagnose and propose a fix (the LLM) · <span class="nfh-elapsed"' in panel["run"]
+        assert "<li>○ Check the proposal</li>" in panel["run"] and "running for" in panel["run"]
+        assert "|diagnose_and_propose|" in views.review_key(store, incident["id"])
+
     finally:
         release.set()
         graph._executor().shutdown(wait=True)
@@ -516,6 +523,7 @@ def test_a_review_being_diagnosed_again_still_says_so_once_its_run_is_running(ag
     panel = views.review(store, client, incident["id"])
     assert panel["can_approve"] and "The new diagnosis." in panel["proposal"]
     assert "Being diagnosed again" not in panel["proposal"]
+    assert panel["run"] == "" and graph.progress(incident["id"]) is None
 
 
 def test_a_locked_database_names_itself_and_another_app_process(agent, monkeypatch, tmp_path):
@@ -845,3 +853,33 @@ def test_choosing_an_action_names_its_fields_and_shows_the_next_step():
 
     fields = gradio_app.pick_target("SET_RETRY_POLICY", "S01 Consumer", targets, None, None, None)
     assert [f["choices"] for f in fields[:1]] == [list(catalog.BACKOFF_MECHANISMS)]
+
+
+def test_diagnose_says_at_once_it_was_sent_and_toasts_whether_it_was_taken(agent, monkeypatch):
+    # Live (NFH-113): nothing showed a click on Diagnose had landed, and its answer was below the fold.
+    _, client, store, incidents, install = agent("p1-throughput")
+    s01 = incidents["S01"]["id"]
+    toasts = []
+    monkeypatch.setattr(gr, "Info", lambda message, title=None, **_: toasts.append(("info", title, message)))
+    monkeypatch.setattr(gr, "Warning", lambda message, title=None, **_: toasts.append(("warning", title, message)))
+
+    button, line = gradio_app._sending()
+    assert button.interactive is False and line.startswith("Sending")
+
+    install(ScriptedLLM(proposal(S01_FIX)))
+
+    try:
+        assert gradio_app.diagnose(s01)[0].startswith(("Diagnosing", "Queued"))
+
+    finally:
+        graph._executor().shutdown(wait=True)
+        graph._pool = None
+
+    assert toasts == [("info", "Diagnosis requested", toasts[0][2])] and s01 in toasts[0][2]
+
+    gradio_app.diagnose(s01)        # now a review, and not stale: nothing to diagnose
+    assert toasts[-1][:2] == ("warning", "Not diagnosed") and "nothing to diagnose" in toasts[-1][2]
+
+    demo = gradio_app.build()
+    sending = next(d for d in demo.fns.values() if d.fn is gradio_app._sending)
+    assert sending.queue is False

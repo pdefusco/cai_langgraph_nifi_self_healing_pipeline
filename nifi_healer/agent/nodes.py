@@ -78,6 +78,11 @@ def _status(incident_id: str, status: str) -> None:
 STARTS = ("gather_context", "propose_rollback")
 
 
+# Each incident's latest timed step, (name, wall time it began): the review
+# panel's progress while a run is running (NFH-113). Memory only.
+steps: dict = {}
+
+
 def timed(name: str, node):
     """
     `node`, adding its wall seconds to the state's timings under `name`
@@ -86,6 +91,7 @@ def timed(name: str, node):
     """
 
     def run(state: dict) -> dict:
+        steps[state.get("incident_id")] = (name, time.time())
         started = time.perf_counter()
         found = node(state)
         seconds = time.perf_counter() - started
