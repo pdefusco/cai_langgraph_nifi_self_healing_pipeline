@@ -11,6 +11,7 @@ import pytest
 import config
 from flows import packs
 from nifi_healer.agent import graph
+from nifi_healer.rag import drafter
 from nifi_healer.runtime import auto_review as ar
 from nifi_healer.ui import gradio_app, legend, views
 
@@ -121,3 +122,45 @@ def test_the_system_tab_says_whether_it_is_on(monkeypatch):
     monkeypatch.setattr(config, "AUTO_REVIEW", True)
     assert "approves only while writes are disarmed" in views._auto_review_state()
     assert "**Answer-key reviewer**" in legend.SYSTEM
+
+
+def test_a_draft_an_approval_made_stale_is_drafted_again(drafting, monkeypatch, capsys):
+    # Live, round 1: S20's draft was written while another of the same section waited; approving that one
+    # left it STALE, and its reason never reached the playbook.
+    _, client, store, incidents, install = drafting("p1-throughput")
+    monkeypatch.setattr(config, "ARMED", False)
+    s02 = incidents["S02"]["id"]
+    install(ScriptedLLM(proposal([WRONG], diagnosis="S02 Drain yields too long", cite=[SECTION]),
+                        edit_reply(CPU), edit_reply(CPU)))
+    graph.start(s02)
+    ar.tick(client, store)
+    settle()
+    [edit] = store.playbook_edits()
+    store.update_playbook_edit(edit["id"], status="STALE")
+
+    ar.tick(client, store)
+    settle()
+    assert store.playbook_edit(edit["id"])["status"] == "PROPOSED"
+    ar.tick(client, store)
+    assert store.playbook_edit(edit["id"])["status"] == "APPLIED"
+
+    # Once only: stale again, it waits for a person.
+    store.update_playbook_edit(edit["id"], status="STALE")
+    ar.tick(client, store)
+    assert store.playbook_edit(edit["id"])["status"] == "STALE"
+    assert capsys.readouterr().out.count("STALE, drafting it again: Drafting PE-") == 1
+
+
+def test_a_persons_stale_draft_is_left_alone(drafting, monkeypatch):
+    _, client, store, incidents, install = drafting("p1-throughput")
+    monkeypatch.setattr(config, "ARMED", False)
+    s02 = incidents["S02"]["id"]
+    install(ScriptedLLM(proposal([WRONG], diagnosis="S02 Drain yields too long", cite=[SECTION]), edit_reply(CPU)))
+    graph.start(s02)
+    graph.resume(s02, {"decision": "reject", "reason": "not this", "reviewer": "ops"})
+    settle()
+    [edit] = store.playbook_edits()
+    store.update_playbook_edit(edit["id"], status="STALE")
+
+    ar.tick(client, store)
+    assert store.playbook_edit(edit["id"])["status"] == "STALE" and not drafter._waiting

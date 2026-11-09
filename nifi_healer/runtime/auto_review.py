@@ -23,7 +23,10 @@ Each review waiting for a person, oldest first:
 
 A playbook edit drafted from a rejection that passes the drafter's checks
 is approved, so the agent reads it from its next diagnosis; one that
-fails them waits for a person.
+fails them waits for a person. A draft whose section an approval changed
+first (STALE), or whose drafting failed, is drafted again, once, as Draft
+again does, so its reason is not lost; only one drafted from this
+reviewer's rejection, so a person's old draft is left as it is.
 
 Every decision goes through the Review Queue's own paths (views.decide,
 views.diagnose, views.approve_playbook_edit) as REVIEWER, and is logged.
@@ -55,7 +58,7 @@ COMPONENT = ("The wrong component: the cause is elsewhere in this group. Trace t
 INVALID = "It did not pass the checks: {problem}"
 
 _said = set()          # what was logged once: (incident id, why), ("edit", id), "done"
-_tried_edits = set()   # playbook edits this process tried to approve
+_tried_edits = set()   # playbook edits this process tried to approve, or drafted again
 
 
 def log(message: str) -> None:
@@ -163,20 +166,37 @@ def _review(store, incident: dict) -> None:
         log(f"{iid} ({scenario.id}): reject, {reason} {views.decide(iid, REJECT, REVIEWER, reason)}")
 
 
+def _ours(store, row: dict) -> bool:
+    """Whether the edit was drafted from this reviewer's rejection, not a person's feedback."""
+
+    return any(r["decision"] == REJECT and r["reviewer"] == REVIEWER
+               for s in drafter.sources_of(row) for r in store.reviews(s["incident_id"]))
+
+
 def _edits(store) -> bool:
     """Approve the proposed playbook edits that pass the checks; True while a draft is being written."""
 
     drafting = False
 
-    for row in store.playbook_edits(("DRAFTING", "PROPOSED")):
+    for row in store.playbook_edits(("DRAFTING", "PROPOSED", "STALE", "FAILED")):
         if row["status"] == "DRAFTING":
             drafting = drafting or drafter.drafting(row["id"])
             continue
 
-        if row["id"] in _tried_edits:
+        key = (row["id"], row["status"])
+
+        if key in _tried_edits:
             continue
 
-        _tried_edits.add(row["id"])
+        _tried_edits.add(key)
+
+        if row["status"] in ("STALE", "FAILED"):
+            if (row["id"], "again") not in _tried_edits and _ours(store, row):
+                _tried_edits.add((row["id"], "again"))
+                log(f"PE-{row['id']}: {row['status']}, drafting it again: {views.redraft_playbook_edit(row['id'])}")
+                drafting = True
+
+            continue
 
         if row.get("problems"):
             log(f"PE-{row['id']}: fails the drafter's checks, left for a person: {'; '.join(row['problems'])}")

@@ -156,6 +156,12 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   person. Every decision goes through the Review Queue's own paths as "answer key (auto-review)" and is logged
   (`[auto-review]`), with one "done" line when nothing waits, runs or drafts. Its approvals count as a person's
   towards autonomy's trust. System tab row and legend line. Tests: tests/test_auto_review.py.
+- 2026-11-09: be2ac72. Live round 1, the reviews waiting since 11-06/07 (older prompt versions): 20 approved (4
+  of them stale, diagnosed again first: S50, S98–S100), 7 rejected (S04, S07, S08, S10, S11, S12, S20), 4 drafts
+  approved, PE-7 skipped by the drafter. PE-5 (S20) was lost: drafted while PE-3 of the same section waited, it went
+  STALE when PE-3 was approved. A STALE or FAILED draft from the reviewer's own rejection is now drafted again,
+  once (a person's is left alone). The "done" line comes before the rejected groups reopen after
+  `SELFHEAL_INCIDENT_COOLDOWN`: round 2 is their fresh diagnoses.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
