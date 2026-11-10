@@ -5,6 +5,7 @@ and a playbook draft that passes its checks is approved.
 """
 
 import re
+import threading
 
 import pytest
 
@@ -16,10 +17,11 @@ from nifi_healer.runtime import auto_review as ar
 from nifi_healer.ui import gradio_app, legend, views
 
 from test_agent_graph import S01_FIX, ScriptedLLM, agent, proposal  # noqa: F401 (agent is a fixture)
-from test_playbook_edits import CPU, SECTION, drafting, edit_reply, settle  # noqa: F401 (drafting is a fixture)
+from test_playbook_edits import CPU, SECOND, SECTION, drafting, edit_reply, settle  # noqa: F401 (a fixture)
 
 S = packs.SCENARIOS
 WRONG = {"action": "SET_PENALTY_YIELD", "target": "S02 Drain", "yield_duration": "3 sec"}
+OTHER = {"action": "SET_PENALTY_YIELD", "target": "S01 Consumer", "yield_duration": "3 sec"}
 
 
 @pytest.fixture(autouse=True)
@@ -149,6 +151,41 @@ def test_a_draft_an_approval_made_stale_is_drafted_again(drafting, monkeypatch, 
     ar.tick(client, store)
     assert store.playbook_edit(edit["id"])["status"] == "STALE"
     assert capsys.readouterr().out.count("STALE, drafting it again: Drafting PE-") == 1
+
+
+def test_drafts_of_one_section_become_one_before_it_is_approved(drafting, monkeypatch):
+    # Live, round 2: PE-13 was approved while PE-10, of the same section, was being written; PE-10 went STALE.
+    _, client, store, incidents, install = drafting("p1-throughput")
+    monkeypatch.setattr(config, "ARMED", False)
+    s01, s02 = incidents["S01"]["id"], incidents["S02"]["id"]
+    writing, release = threading.Event(), threading.Event()
+
+    def held(messages):
+        writing.set()
+        release.wait(30)
+
+        return edit_reply(SECOND)(messages)
+
+    install(ScriptedLLM(proposal([OTHER], diagnosis="S01 Consumer yields too long", cite=[SECTION]),
+                        proposal([WRONG], diagnosis="S02 Drain yields too long", cite=[SECTION]),
+                        edit_reply(CPU), held))
+    graph.start(s01)
+    graph.start(s02)
+
+    ar.tick(client, store)                        # rejects both: two drafts of SECTION
+    assert writing.wait(30)
+    first = next(e for e in store.playbook_edits() if e["status"] == "PROPOSED")
+    ar.tick(client, store)
+    assert store.playbook_edit(first["id"])["status"] == "PROPOSED"
+
+    release.set()
+    settle()
+    [second] = store.playbook_edits(("PROPOSED",))
+    assert store.playbook_edit(first["id"])["status"] == "SUPERSEDED"
+    assert {s["incident_id"] for s in drafter.sources_of(second)} == {s01, s02}
+
+    ar.tick(client, store)
+    assert store.playbook_edit(second["id"])["status"] == "APPLIED"
 
 
 def test_a_persons_stale_draft_is_left_alone(drafting, monkeypatch):

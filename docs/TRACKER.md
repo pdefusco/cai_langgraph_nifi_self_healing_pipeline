@@ -162,6 +162,12 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   STALE when PE-3 was approved. A STALE or FAILED draft from the reviewer's own rejection is now drafted again,
   once (a person's is left alone). The "done" line comes before the rejected groups reopen after
   `SELFHEAL_INCIDENT_COOLDOWN`: round 2 is their fresh diagnoses.
+- 2026-11-09: a9f3933. Live, after the restart: PE-13, PE-10 and PE-5 (all STALE, one section) were drafted again
+  together; PE-13 was approved while PE-10 was being written, so PE-10 went STALE a second time and was left for a
+  person. Redrafting alone can't win that race. Now no draft is approved while one is being written: a draft takes
+  over the open drafts of its section and carries their reasons, so a section's drafts become one before it changes.
+  Also seen: groups approved as dry runs keep their faults while disarmed, so they reopen after the cooldown and are
+  diagnosed again, round after round; "done" holds only until then.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
