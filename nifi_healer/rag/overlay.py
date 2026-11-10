@@ -11,8 +11,10 @@ written: the git clone stays clean, so a pull can always fast-forward.
 An edit applies only while its section still reads as the drafter saw
 it (old_text). If the section now reads as the edit does, git has it
 (MERGED, from patch() committed); any other text means the file changed
-under it (STALE), and the file wins. Edits apply in id order, so a later
-edit of a section reads the earlier one's text.
+under it (STALE), and the file wins. Edits apply in the order they were
+approved, so a later edit of a section reads the earlier one's text: a
+draft written again on a newer edit's text is approved after it, though
+its id is older (NFH-117).
 """
 
 import difflib
@@ -74,6 +76,12 @@ def section_slug(section_id: str) -> str:
     return (section_id or "").split("#", 1)[-1]
 
 
+def order(edit: dict) -> tuple:
+    """When it was approved, then its id (an edit from before approvals were timed)."""
+
+    return edit.get("decided_at") or 0.0, edit["id"]
+
+
 def apply(raw: str, edits: list) -> tuple:
     """(the playbook's markdown with its edits, {edit id: APPLIED | MERGED | STALE})."""
 
@@ -82,7 +90,7 @@ def apply(raw: str, edits: list) -> tuple:
     sections = [[heading, text] for heading, text in sections]
     states = {}
 
-    for edit in sorted(edits, key=lambda e: e["id"]):
+    for edit in sorted(edits, key=order):
         new, old = clean(edit.get("new_text")), clean(edit.get("old_text"))
         wanted = section_slug(edit["section_id"]) if edit.get("section_id") else slug(edit.get("heading") or "")
         found = next((s for s in sections if slug(s[0]) == wanted), None)

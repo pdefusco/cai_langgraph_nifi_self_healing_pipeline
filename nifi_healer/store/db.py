@@ -658,9 +658,9 @@ class Store:
         return self._all("SELECT * FROM playbook_edits ORDER BY id DESC")
 
     def applied_playbook_edits(self) -> list:
-        """The edits the overlay applies, oldest first: a later edit of a section reads the earlier one's text."""
+        """The edits the overlay applies, in the order they were approved (rag/overlay.order)."""
 
-        return self._all("SELECT * FROM playbook_edits WHERE status = 'APPLIED' ORDER BY id")
+        return self._all("SELECT * FROM playbook_edits WHERE status = 'APPLIED' ORDER BY decided_at, id")
 
     # -- auto-approvals and settings ----------------------------------------
 

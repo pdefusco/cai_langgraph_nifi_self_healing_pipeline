@@ -1097,8 +1097,8 @@ def live_edits(path: str) -> list:
 
         try:
             return [dict(row) for row in connection.execute(
-                "SELECT id, playbook, section_id, heading, old_text, new_text FROM playbook_edits "
-                "WHERE status = 'APPLIED' ORDER BY id")]
+                "SELECT id, playbook, section_id, heading, old_text, new_text, decided_at FROM playbook_edits "
+                "WHERE status = 'APPLIED' ORDER BY decided_at, id")]
 
         finally:
             connection.close()

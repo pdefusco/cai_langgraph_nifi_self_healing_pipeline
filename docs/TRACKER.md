@@ -138,8 +138,18 @@ them.
 | NFH-114 | Perf | The diagnosis progress block takes a few seconds to appear after a Diagnose click | Parked | |
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | In progress | |
 | NFH-116 | Feature | An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts | In progress | |
+| NFH-117 | Fix | A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE | In progress | |
 
 ## Open tickets
+
+### NFH-117 · Fix · A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE
+Live, with the answer-key reviewer (11-10): PE-5 (S20's rejection) was drafted again on the text PE-13 had made of
+"Diagnosis: confirm it is the consumer", and approved after it. The overlay applied the approved edits in id order,
+PE-5 first, against the file's own text, so it no longer fitted and was marked STALE at the next index
+(`[rag] playbook edit 5: stale`): approved, yet never read. A person's Draft again does the same.
+- 2026-11-10: the overlay applies edits in the order they were approved (`overlay.order`: decided_at, then id),
+  as the store and the replay now read them. Test: test_edits_apply_in_the_order_they_were_approved. PE-5 itself
+  stays STALE in the live store; with NFH-116's redraft of a STALE draft it is drafted once more after a restart.
 
 ### NFH-116 · Feature · An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts
 Testing on the packs live takes a person at the Review Queue for every review, and on the Playbooks tab for every
@@ -183,6 +193,9 @@ across scenarios, and refuse a retry whose fix equals the one sent back (nodes._
   task now also says how many tasks that rate would take ("it needs about 33 tasks") and, if that is more than it
   can run, to find what makes each task slow: S10's 8 tasks went back as below the intake, with no sign that more
   tasks were not the way. Test: S10 scripted to 8, 8, then the design fix. Next: seen live.
+- 2026-11-10: seen live with the answer-key reviewer (NFH-116). S10, twice: 2 tasks went back with "it needs about
+  33 tasks; if that is more than it can run, find what makes each task slow", and the retry changed the fix: once
+  part of the design fix (rejected), once the design fix. In ~55 decisions no run was sent back twice for one fix.
 
 ### NFH-114 · Perf · The diagnosis progress block takes a few seconds to appear after a Diagnose click
 Live on S10: the toast and "Sending…" come at once, but the progress block shows only a few awkward seconds later.

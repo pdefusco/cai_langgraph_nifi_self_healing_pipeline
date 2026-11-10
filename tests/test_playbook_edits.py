@@ -73,6 +73,16 @@ def test_an_edit_replaces_one_section():
     assert states == {1: overlay.APPLIED, 2: overlay.APPLIED} and "New advice here.\nAnd more." in chained
 
 
+def test_edits_apply_in_the_order_they_were_approved():
+    # Live: PE-5, drafted again on PE-13's text and approved after it, was dropped as STALE (NFH-117).
+    new = "<!-- actions: NO_ACTION -->\n\nNew advice here."
+    newer, redrafted = dict(edit(13, new), decided_at=100.0), dict(edit(5, new + "\nAnd more.", old=new),
+                                                                   decided_at=200.0)
+    chained, states = overlay.apply(RAW, [redrafted, newer])
+
+    assert states == {5: overlay.APPLIED, 13: overlay.APPLIED} and "New advice here.\nAnd more." in chained
+
+
 def test_a_new_section_is_appended_once():
     added, states = overlay.apply(RAW, [edit(3, "Brand new guidance.", old="", section="", heading="Third section")])
 
