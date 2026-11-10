@@ -142,8 +142,25 @@ them.
 | NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | 59c06db |
 | NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | Done | d3ff6d0 |
 | NFH-120 | Fix | A playbook draft can tag its section with a symptom no incident has | Done | 7427084 |
+| NFH-121 | Fix | An armed flow edit that lands is recorded FAILED, read before CDF starts the swap | In progress | b5053a5 |
+| NFH-122 | Fix | A new playbook section folded into another one is added again at every start | Done | |
 
 ## Open tickets
+
+### NFH-121 · Fix · An armed flow edit that lands is recorded FAILED, read before CDF starts the swap
+Live, the first armed run with the answer-key reviewer (11-10, 17:25–21:31): 22 of 25 approved writes ended FAILED
+with "the deployment runs …/v.N (CONCERNING_HEALTH or GOOD_HEALTH), not the new …/v.N+1", every one a flow edit; the
+three APPLIED (S17, S18, S21) were a parameter update and a resize. The writes had landed: each deployment's next
+incident read the new version ("someone changed it, so diagnose again"), and S16, S98, S53, S07, S49, S100, S05, S01,
+S02, S51, S52, S15, S14, S09 and S08 never opened again. `executor._execute` read the deployed flow once after
+`wait()`, `provisioning._wait_for_flow`, which returns as soon as the flow is steady, and the flow is steady before
+CDF starts a swap. So nothing was verified or learned from, and the FAILED rows still counted for the cooldown and
+the 3-a-day cap (p1 and p3 hit it at about 19:17; the reviewer approved their stuck reviews every minute after).
+- 2026-11-10: a flow edit and a rollback wait with `provisioning._wait_for_version`, as the provisioning reset does:
+  until the flow runs the new version and is steady, CDF fails the swap, or the 45 min deadline. The error names
+  the detailed state. FAILED rows still count for the guards: a failed swap can still have touched the deployment.
+  Tests: test_a_swap_that_reads_the_old_version_for_a_while_is_applied, test_a_swap_cdf_fails_is_failed. Next: an
+  armed run with flow edits APPLIED and verified.
 
 ### NFH-117 · Fix · A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE
 Live, with the answer-key reviewer (11-10): PE-5 (S20's rejection) was drafted again on the text PE-13 had made of
@@ -235,6 +252,14 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   expiring connection still loses data. Dropped: a heading repeated as a line, and a symptoms line naming the
   playbook's title, which took the section's backlog tag away (NFH-120). All eight changed sections checked against
   HEAD.
+- 2026-11-10: the armed run's patch (PE-137, 144, 148, 158, 163, 164, 165, 168). Kept, rewritten generally: a
+  fan-out sink waiting between runs is often fixed smallest by 0 sec, one already at 0 sec only by more tasks, and
+  one that drops what it takes in loses data; a queue falling bucket after bucket is draining and is judged by its
+  drain time (Bursty arrivals, for S12, S50 and S99's draining reopens). Dropped as wrong: "the stage that feeds the
+  first full queue upstream is the bottleneck" (it is the stage the last full one feeds), "shorten a schedule above
+  0 sec before adding tasks" (it helps only a consumer at its ceiling), "penalty yield" as a fix. Dropped as already
+  there: expiration before tuning, measure rates both ways, and PE-164's new section repeating "Trace the symptom
+  back", marked `folded:` so it is not added again (NFH-122). A heading repeated as a line dropped again.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
@@ -456,6 +481,14 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ## Closed tickets
+
+### NFH-122 · Fix · A new playbook section folded into another one is added again at every start
+Live, in the armed run's patch (11-10): PE-164 added "Always trace symptom back to the originating stage", which
+repeats the folded "Trace the symptom back to the originating stage". The overlay adds a new-section edit whenever
+git has no section with its heading, so folding it into the existing section, which leaves no such heading, brought
+it back at every start, and only Revert on the Playbooks tab would stop it.
+- 2026-11-10: a playbook's front matter lists the slugs of such headings under `folded:`, and the overlay leaves an
+  edit adding one STALE. backlog-slow-consumer.md folds PE-164's. Test: in test_a_new_section_is_appended_once.
 
 ### NFH-120 · Fix · A playbook draft can tag its section with a symptom no incident has
 Live, in the patch of the answer-key reviewer's applied edits (11-10): "Diagnosis: confirm it is the consumer" gained

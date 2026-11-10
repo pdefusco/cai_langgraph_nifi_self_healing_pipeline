@@ -3,6 +3,7 @@ title: Backlog behind a slow consumer
 collection: nifi_playbooks
 symptoms: [backlog]
 actions: [SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE, NO_ACTION]
+folded: [always-trace-symptom-back-to-the-originating-stage]
 ---
 
 # Backlog behind a slow consumer
@@ -137,6 +138,10 @@ peaks get higher each time. Then add drain capacity (Concurrent Tasks on the
 consumer), sized against the peak intake and the backlog a burst leaves, so
 each burst clears before the next. A sawtooth that returns to near zero
 every cycle and stays under the threshold needs no action.
+
+A queue whose count falls bucket after bucket is draining: its consumer
+already takes more than arrives. It needs no change unless it will not
+clear in time, so judge it by its drain time, not by its level.
 
 ## Unreachable endpoint slow consumer: route failures, lower timeout, increase capacity
 <!-- actions: ROUTE_RELATIONSHIP_TO_DLQ, SET_PROCESSOR_PROPERTY, SET_CONCURRENT_TASKS -->

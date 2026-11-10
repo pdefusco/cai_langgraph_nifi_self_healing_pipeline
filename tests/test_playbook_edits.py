@@ -92,6 +92,11 @@ def test_a_new_section_is_appended_once():
     _, states = overlay.apply(RAW, [edit(4, "Again.", old="", section="", heading="First section")])
     assert states == {4: overlay.STALE}
 
+    # Nor is one folded into another section (NFH-122: PE-164 repeated "Trace the symptom back…").
+    folded = RAW.replace("collection: nifi_playbooks\n", "collection: nifi_playbooks\nfolded: [third-section]\n")
+    same, states = overlay.apply(folded, [edit(3, "Brand new guidance.", old="", section="", heading="Third section")])
+    assert states == {3: overlay.STALE} and same == folded
+
 
 def test_a_changed_section_is_stale_and_a_committed_one_merged():
     stale, states = overlay.apply(RAW, [edit(1, "Mine.", old="What it said before git changed it.")])

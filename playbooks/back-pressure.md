@@ -56,10 +56,13 @@ still grow after the change, the threshold was never the cause.
 
 SplitText, DuplicateFlowFile and similar processors turn one FlowFile into
 many. If the processor after the fan-out is scheduled slowly, the queue
-between them fills and the splitter stalls. Speed up the consumer: a run
-schedule of 0 sec (run whenever there is work) or more Concurrent Tasks on a
-short schedule. A consumer that takes in nothing at all is stopped or
-misconfigured, not slow: see the backlog playbook's diagnosis.
+between them fills and the splitter stalls. Speed up the consumer. On a
+consumer that waits between runs, a run schedule of 0 sec (run whenever
+there is work) is often the smallest change; on one already at 0 sec, only
+more Concurrent Tasks help. A consumer that takes in nothing at all is
+stopped or misconfigured, not slow, and one that drops what it takes in (an
+auto-terminated failure relationship, for one) loses data: see the backlog
+playbook's diagnosis.
 
 Size it against what the fan-out sends, not what it takes in: 2 FlowFiles/s
 split 50 ways is 100/s. A consumer on 1 task every 20 ms has a ceiling of

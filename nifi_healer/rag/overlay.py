@@ -15,12 +15,18 @@ under it (STALE), and the file wins. Edits apply in the order they were
 approved, so a later edit of a section reads the earlier one's text: a
 draft written again on a newer edit's text is approved after it, though
 its id is older (NFH-117).
+
+A new section folded into another one leaves no heading behind, so its
+edit would be added again; the playbook's front matter lists such
+headings' slugs under `folded:`, and an edit adding one is STALE (NFH-122).
 """
 
 import difflib
 import hashlib
 import os
 import re
+
+import yaml
 
 APPLIED, MERGED, STALE = "APPLIED", "MERGED", "STALE"
 
@@ -87,6 +93,7 @@ def apply(raw: str, edits: list) -> tuple:
 
     top, body = front(raw)
     head, sections = split(body)
+    folded = set(((yaml.safe_load(_FRONT.match(top).group(1)) if top else None) or {}).get("folded") or [])
     sections = [[heading, text] for heading, text in sections]
     states = {}
 
@@ -98,7 +105,7 @@ def apply(raw: str, edits: list) -> tuple:
         if found is not None and clean(found[1]) == new:
             states[edit["id"]] = MERGED
 
-        elif found is None and not edit.get("section_id") and wanted:
+        elif found is None and not edit.get("section_id") and wanted and wanted not in folded:
             sections.append([edit["heading"].strip(), new + "\n"])
             states[edit["id"]] = APPLIED
 
