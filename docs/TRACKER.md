@@ -141,7 +141,7 @@ them.
 | NFH-117 | Fix | A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE | In progress | |
 | NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | 59c06db |
 | NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | Done | d3ff6d0 |
-| NFH-120 | Fix | A playbook draft can tag its section with a symptom no incident has | Done | |
+| NFH-120 | Fix | A playbook draft can tag its section with a symptom no incident has | Done | 7427084 |
 
 ## Open tickets
 
