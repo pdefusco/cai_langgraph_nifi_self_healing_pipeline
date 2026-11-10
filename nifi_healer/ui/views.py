@@ -1805,8 +1805,9 @@ def revert_playbook_edit(edit_id, reason: str, reviewer: str = "") -> str:
     if not (reason or "").strip():
         return "A reason is required: why the agent should stop reading this edit."
 
+    # In the order the overlay applies them (NFH-117), not by id.
     later = [e for e in store.applied_playbook_edits()
-             if e["id"] > row["id"] and drafter.target_id(e) == drafter.target_id(row)]
+             if overlay.order(e) > overlay.order(row) and drafter.target_id(e) == drafter.target_id(row)]
 
     if later:
         return (f"PE-{later[-1]['id']} rewrote this section after PE-{row['id']}; "

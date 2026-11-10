@@ -349,6 +349,12 @@ def check(edit: dict, raws: dict, found: dict | None = None) -> list:
     if re.search(r"^#{1,2}\s", text, re.M):
         problems.append("the text has a # or ## heading line; the section keeps its heading, so give only its body")
 
+    # The prompt shows each section as "[id] heading" (NFH-118: live, the bursty-arrivals section kept the label).
+    label = re.search(r"^\s*\[([\w.-]+#[\w-]+)\]", text, re.M)
+
+    if label:
+        problems.append(f"the text copies the section label [{label.group(1)}]; give only the section's body")
+
     if len(text) < MIN_TEXT:
         problems.append(f"the text is {len(text)} characters; a section needs at least {MIN_TEXT}")
 

@@ -188,6 +188,27 @@ def test_drafts_of_one_section_become_one_before_it_is_approved(drafting, monkey
     assert store.playbook_edit(second["id"])["status"] == "APPLIED"
 
 
+def test_an_applied_edit_a_new_playbook_made_stale_is_not_drafted_again(drafting, monkeypatch, capsys):
+    # The tidied playbooks replace the reviewer's applied edits; drafting them again would bring them back.
+    _, client, store, incidents, install = drafting("p1-throughput")
+    monkeypatch.setattr(config, "ARMED", False)
+    s02 = incidents["S02"]["id"]
+    install(ScriptedLLM(proposal([WRONG], diagnosis="S02 Drain yields too long", cite=[SECTION]), edit_reply(CPU)))
+    graph.start(s02)
+    ar.tick(client, store)
+    settle()
+    ar.tick(client, store)
+    [edit] = store.playbook_edits(("APPLIED",))
+
+    ar.reset()                                    # a restart, with the new file: the overlay marks it STALE
+    store.update_playbook_edit(edit["id"], status="STALE")
+    ar.tick(client, store)
+    ar.tick(client, store)
+
+    assert store.playbook_edit(edit["id"])["status"] == "STALE" and not drafter._waiting
+    assert capsys.readouterr().out.count(f"PE-{edit['id']}: STALE after it was applied") == 1
+
+
 def test_a_persons_stale_draft_is_left_alone(drafting, monkeypatch):
     _, client, store, incidents, install = drafting("p1-throughput")
     monkeypatch.setattr(config, "ARMED", False)

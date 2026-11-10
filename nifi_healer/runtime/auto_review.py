@@ -32,7 +32,9 @@ section's drafts become one before the section changes. A draft whose
 section an approval changed first (STALE), or whose drafting failed, is
 drafted again, once, as Draft again does, so its reason is not lost;
 only one drafted from this reviewer's rejection, so a person's old draft
-is left as it is.
+is left as it is, and never one that went STALE after it was applied:
+its section was changed by a person (a new version of the file, a
+revert), and drafting it again would undo that.
 
 Every decision goes through the Review Queue's own paths (views.decide,
 views.diagnose, views.approve_playbook_edit) as REVIEWER, and is logged.
@@ -196,7 +198,13 @@ def _edits(store) -> bool:
         if row["status"] in ("STALE", "FAILED") and (row["id"], "again") not in _tried_edits:
             _tried_edits.add((row["id"], "again"))
 
-            if _ours(store, row):
+            # One applied, then STALE, had its section changed under it by a person: a new version of the file,
+            # or a revert. Drafting it again would undo that.
+            if row["status"] == "STALE" and row.get("reviewer"):
+                _once(("edit", row["id"], "applied"), f"PE-{row['id']}: STALE after it was applied (its section "
+                                                      "changed in git, or an edit before it was reverted); left as it is")
+
+            elif _ours(store, row):
                 log(f"PE-{row['id']}: {row['status']}, drafting it again: {views.redraft_playbook_edit(row['id'])}")
                 drafting = True
 

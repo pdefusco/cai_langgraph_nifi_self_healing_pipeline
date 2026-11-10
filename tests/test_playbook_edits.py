@@ -155,6 +155,8 @@ def test_check_refuses_what_the_agent_must_not_read():
     assert "restart the deployment" in problems(ok + " If that fails, restart the deployment.")
     assert "heading line" in problems(ok + "\n\n## Another heading")
     assert "front matter" in problems("---\n" + ok)
+    assert f"copies the section label [{SECTION}]" in problems(f"[{SECTION}] Raise Concurrent Tasks\n" + ok)
+    assert problems(ok + "\n\n[1] A footnote.") == ""
     assert "CRN" in problems(ok + " As on crn:cdp:df:us-west-1:abc:deployment:x/y.")
     assert "names an incident" in problems(ok + " As in INC-20261015-005651-S01-a3f0.")
     assert "characters" in problems("Raise it.")
@@ -333,6 +335,18 @@ def test_a_rejection_becomes_an_edit_the_agent_reads(drafting):
     assert views.revert_playbook_edit(row["id"], "too narrow", "ops").startswith("Reverted")
     assert {e["status"] for e in store.playbook_edits()} == {"REVERTED"}
     assert CPU not in indexed(SECTION) and retriever.edition() == "" and views.playbook_patch() == ""
+
+
+def test_revert_goes_in_the_order_the_edits_were_approved(drafting):
+    # PE-5 drafted again on PE-13's text and approved after it (NFH-117): PE-5 is the one to revert first.
+    _, _, store, _, _ = drafting("p1-throughput")
+    ids = [store.add_playbook_edit("rejection", f"INC-{n}", n, 0.0, status="APPLIED", playbook=PLAYBOOK,
+                                   section_id=SECTION, heading="Raise", old_text="a", new_text="b", decided_at=at)
+           for n, at in ((1, 200.0), (2, 100.0))]
+    older, newer = ids
+
+    assert f"revert PE-{older} first" in views.revert_playbook_edit(newer, "too narrow")
+    assert views.revert_playbook_edit(older, "too narrow", "ops").startswith("Reverted")
 
 
 def test_a_wrong_fix_label_drafts_once(drafting):

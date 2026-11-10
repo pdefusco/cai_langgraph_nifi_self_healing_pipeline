@@ -30,9 +30,9 @@ with its thresholds in the flow inventory.
   doing its job. Fix the rate on one side or the other (see below), not the
   threshold.
 
-Back pressure travels upstream, so several queues in a row can be full. The
-one to act on is the last of them: the stage it feeds is the bottleneck, and
-the stages before it are back-pressured, not slow. Size the bottleneck's fix
+Back pressure travels upstream, so several queues in a row can be full. Act
+on the last full one in flow order: the stage it feeds is the bottleneck,
+and the stages before it are back-pressured, not slow. Size the bottleneck's fix
 by its ceiling (Concurrent Tasks / run schedule) against the intake, as the
 backlog playbook describes.
 
@@ -55,7 +55,8 @@ SplitText, DuplicateFlowFile and similar processors turn one FlowFile into
 many. If the processor after the fan-out is scheduled slowly, the queue
 between them fills and the splitter stalls. Speed up the consumer: a run
 schedule of 0 sec (run whenever there is work) or more Concurrent Tasks on a
-short schedule.
+short schedule. A consumer that takes in nothing at all is stopped or
+misconfigured, not slow: see the backlog playbook's diagnosis.
 
 Size it against what the fan-out sends, not what it takes in: 2 FlowFiles/s
 split 50 ways is 100/s. A consumer on 1 task every 20 ms has a ceiling of

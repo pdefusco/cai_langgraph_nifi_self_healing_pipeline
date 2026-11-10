@@ -139,6 +139,7 @@ them.
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | In progress | |
 | NFH-116 | Feature | An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts | In progress | |
 | NFH-117 | Fix | A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE | In progress | |
+| NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | |
 
 ## Open tickets
 
@@ -150,6 +151,10 @@ PE-5 first, against the file's own text, so it no longer fitted and was marked S
 - 2026-11-10: the overlay applies edits in the order they were approved (`overlay.order`: decided_at, then id),
   as the store and the replay now read them. Test: test_edits_apply_in_the_order_they_were_approved. PE-5 itself
   stays STALE in the live store; with NFH-116's redraft of a STALE draft it is drafted once more after a restart.
+- 2026-11-10: Revert follows the same order: reverting an edit asks for the edits of its section approved after
+  it first, by `overlay.order`, not by id. Test: test_revert_goes_in_the_order_the_edits_were_approved. PE-5 will not
+  be drafted again after all (NFH-116: an edit that went STALE after it was applied is left as it is), and the
+  tidied playbooks replace its section; the fix is seen live with the next draft written on an applied edit's text.
 
 ### NFH-116 · Feature · An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts
 Testing on the packs live takes a person at the Review Queue for every review, and on the Playbooks tab for every
@@ -184,6 +189,20 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   default) of its edits applied on a section; later drafts of it wait for a person, logged once. Not given up on:
   merging the patch (the edits become MERGED) or reverting one frees the section, and the next tick approves. The
   edits a section already has stay. System tab row and legend say the cap.
+- 2026-11-10: the user sent the patch of the applied edits (2 playbooks, 6 sections and one new one). Kept, rewritten
+  generally in `playbooks/`: size tasks for the backlog as well as the intake, with a worked example; a cheaper
+  FlowFile (a shorter timeout) still needs tasks sized from the intake; bursts sized against peak intake; a consumer
+  whose FlowFiles go to failure or are dropped is a routing problem, not capacity; a fan-out consumer taking in
+  nothing is stopped, not slow. Dropped: a paragraph sending the agent upstream of a full queue (it contradicts the
+  bottleneck rule), lines naming single scenarios' design fixes (dead-letter routing and retry policy in a failure
+  loop, FlowFile expiration), repeats of what the sections already said, a new section with its own sizing formula
+  and no actions line, and NFH-118's copied label. The backlog sizing has its own section under the new section's
+  heading ("Size concurrent tasks using intake and backlog", with an actions line), and back-pressure's Diagnosis
+  is reworded, so all six edits in the patch go STALE at the next index with no Revert needed (checked by rebuilding
+  each edit from the patch and applying it to the new files). Live, the Playbook edit dropdown showed the user no list
+  to pick an edit from; locally, in headless Chrome, it opens (49 edits, every view). Not explained yet. The reviewer no longer drafts again an edit that went STALE after it was applied: a person changed its
+  section (a new version of the file, or a revert), and drafting it again would undo that. Test:
+  test_an_applied_edit_a_new_playbook_made_stale_is_not_drafted_again.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
@@ -405,6 +424,14 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ## Closed tickets
+
+### NFH-118 · Fix · A playbook draft can copy the prompt's section label into the section's text
+Live, in the patch of the answer-key reviewer's applied edits (11-10): "Bursty arrivals: judge by peak and drain time"
+gained a line `[backlog-slow-consumer#bursty-arrivals-judge-by-peak-and-drain-time] Bursty arrivals: judge by peak
+and drain time` under its heading. The drafter's prompt shows each section as `[id] heading`, and the LLM copied it;
+no check refused it.
+- 2026-11-10: `drafter.check` refuses a text with a line starting `[playbook#section]`: "the text copies the section
+  label …; give only the section's body". A bracketed footnote is still fine. Test: in test_check_refuses_what_the_agent_must_not_read.
 
 ### NFH-112 · Fix · Which reviews are stale shows only on each one's panel
 Live on 11-09, to check NFH-110 the user had to find a stale review (diagnosed on a flow version the deployment no

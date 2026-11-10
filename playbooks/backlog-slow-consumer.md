@@ -38,6 +38,9 @@ run schedule of 0 sec puts no ceiling on it.
   help.
 - The consumer takes in nothing at all: it is stopped, failing or
   misconfigured. That is not a capacity problem.
+- Its FlowFiles go to failure or are dropped rather than queuing: that is
+  its routing or configuration, not its capacity. See the failure-loop and
+  data-loss playbooks before adding tasks.
 - The deployment's CPU is high: the node cannot run more threads. See the
   sizing playbook.
 
@@ -57,7 +60,8 @@ rate / current tasks, and needed tasks = intake / rate per task, rounded up,
 plus one for headroom. For example, 2 tasks on 0 sec taking in 6/s do 3/s
 each; an intake of 15/s needs 5, so set 6. Stay within the catalog bound of
 8, and do not go higher on a small node: every task is a thread from the
-shared pool.
+shared pool. Then add what it takes to drain the backlog: see "Size
+concurrent tasks using intake and backlog".
 
 More tasks also raise the ceiling of a consumer that waits between runs, but
 count it. 1 task every 125 ms gives 8/s, so 2 tasks give 16/s: against a
@@ -72,6 +76,19 @@ Do not raise concurrency when the deployment's CPU is already saturated.
 The extra threads compete for the same cores and throughput can drop. See
 the sizing playbook.
 
+## Size concurrent tasks using intake and backlog
+<!-- actions: SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE -->
+
+A ceiling just above the intake stops the backlog growing but barely
+drains it: what is already queued drains only at the capacity above the
+intake. Against an intake of 15/s, 6 tasks at 3/s each (18/s) leave 3/s
+spare, so 3,000 queued take about 17 minutes; 7 tasks (6/s spare) take
+about 8. Size the fix for both, within the catalog bound of 8.
+
+When the fix also makes each FlowFile cheaper, a shorter timeout on a slow
+call for instance, still size the tasks from the intake: the cheaper
+FlowFile alone rarely clears a backlog.
+
 ## Shorten the run schedule of a consumer that waits between runs
 <!-- actions: SET_RUN_SCHEDULE -->
 
@@ -80,7 +97,8 @@ task. Even 8 tasks on that schedule give 0.8/s, so a source producing 1/s
 still wins. Shorten the run schedule until Concurrent Tasks / run schedule is
 above the intake: 1 sec on those tasks gives 8/s, and 0 sec (run whenever
 there is work) removes the ceiling when the processor is cheap. Prefer the
-smallest change that brings the ceiling above the intake.
+smallest change that brings the ceiling above the intake, with enough to
+spare to drain the backlog already waiting.
 
 For a busy consumer at its ceiling on a short schedule, a shorter schedule
 and more tasks both raise the ceiling: 1 task at 1 sec against an intake of
@@ -95,7 +113,8 @@ Some sources arrive in bursts, and the queue follows a sawtooth: it climbs
 during a burst and drains between them. A peak above the threshold is a
 real problem only if the queue does not drain before the next burst, or the
 peaks get higher each time. Then add drain capacity (Concurrent Tasks on the
-consumer) so each burst clears faster. A sawtooth that returns to near zero
+consumer), sized against the peak intake and the backlog a burst leaves, so
+each burst clears before the next. A sawtooth that returns to near zero
 every cycle and stays under the threshold needs no action.
 
 ## What does not fix a backlog
