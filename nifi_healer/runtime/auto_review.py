@@ -122,7 +122,9 @@ def verdict(steps: list, scenario) -> tuple:
     if any(_components(mine) & _components(design) for design in designs):
         return REJECT, LEVER
 
-    if not any(_families(mine) & _families(design) for design in designs):
+    # Against the design fix alone: S20's is a resize, but one acceptable fix is a property change, so another
+    # processor's edit read "the wrong component, trace the symptom back", away from sizing (NFH-116).
+    if not _families(mine) & _families(scenario.expected):
         return REJECT, KIND
 
     return REJECT, COMPONENT

@@ -47,6 +47,15 @@ def test_each_proposal_gets_the_scorecards_verdict():
     assert ar.verdict([], S["S01"]) == (ar.REJECT, ar.KIND)                          # nothing is NO_ACTION
 
 
+def test_the_kind_is_the_design_fixs_not_an_acceptable_ones():
+    # S20's design fix is a resize; one acceptable fix is a property change on S20 Compress. Another processor's
+    # edit is the wrong kind of fix, not "the wrong component, trace it back" (live, rounds 2 and 3).
+    assert ar.verdict([{"action": "SET_CONCURRENT_TASKS", "target": "S20 Hash", "value": 4}], S["S20"]) == \
+        (ar.REJECT, ar.KIND)
+    assert ar.verdict([{"action": "SET_CONCURRENT_TASKS", "target": "S20 Compress", "value": 8}], S["S20"]) == \
+        (ar.REJECT, ar.LEVER)
+
+
 def test_no_reason_gives_the_design_fix_away():
     # The reason is what memory and the playbook drafter read: no component, action or value of any design.
     reasons = (ar.NOTHING, ar.PART, ar.SHORT, ar.LEVER, ar.KIND, ar.COMPONENT)

@@ -94,6 +94,20 @@ def test_inventory_flags_unhandled_and_masks_secrets(definitions):
                                   "value": "********", "sensitive": True}]
 
 
+def test_the_agent_never_sees_the_knobs_that_plant_a_fault(definitions):
+    # Live, S14, S52 and S100 each spent a try editing DebugFlow's iterations; a customer flow has none.
+    group = edits.find_group(definitions["p4-dataloss-latency"], "S14 Auto-terminated Failures")
+    raw = next(p for p in group["processors"] if p["name"] == "S14 Validator")
+    assert "FlowFile Failure Iterations" in raw["properties"]
+
+    inv = inventory(definitions["p4-dataloss-latency"], "S14 Auto-terminated Failures")
+    text = render(inv)
+    [validator] = [p for p in inv["processors"] if p["name"] == "S14 Validator"]
+
+    assert validator["properties"] == {} and "Iterations" not in text
+    assert "- S14 Validator (DebugFlow, ENABLED)" in text
+
+
 @pytest.mark.parametrize("step, fragment", [
     ({"action": "SET_CONCURRENT_TASKS", "target": "P", "value": 0}, "1 to 8"),
     ({"action": "SET_CONCURRENT_TASKS", "target": "P", "value": "3"}, None),

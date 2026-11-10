@@ -11,7 +11,10 @@ rather than a silent default. `build_all.py --check` lists every
 unverified key; provision/01 --canary confirms them.
 
 `editable` is the allow-list for SET_PROCESSOR_PROPERTY: the agent may
-change these keys and no others.
+change these keys and no others. `hidden` keys the agent never sees: the
+test harness's own knobs, which plant a fault and which a customer flow
+would not have (DebugFlow's iterations; S14, S52 and S100 each spent a
+try on them live).
 
 Only standard NARs are used, so nothing needs a custom NAR upload.
 """
@@ -30,6 +33,7 @@ class Spec:
     input_required: bool = True
     verified: bool = False
     editable: tuple = field(default_factory=tuple)
+    hidden: tuple = field(default_factory=tuple)
 
 
 STANDARD = "nifi-standard-nar"
@@ -86,6 +90,8 @@ PROCESSORS = {
             "FlowFile Exception Iterations": False,
         },
         input_required=False,
+        hidden=("FlowFile Success Iterations", "FlowFile Failure Iterations", "FlowFile Rollback Iterations",
+                "FlowFile Exception Iterations"),
     ),
     "InvokeHTTP": Spec(
         name="InvokeHTTP",

@@ -139,9 +139,20 @@ them.
 | NFH-115 | Fix | The agent repeats a proposal the checks sent back, word for word | In progress | |
 | NFH-116 | Feature | An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts | In progress | |
 | NFH-117 | Fix | A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE | In progress | |
-| NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | |
+| NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | 59c06db |
+| NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | In progress | |
 
 ## Open tickets
+
+### NFH-119 · Fix · The agent sees, and spends tries on, the test harness's knobs that plant a fault
+Live, with the answer-key reviewer (11-10): S14, S52 and S100 each spent a try on SET_PROCESSOR_PROPERTY of a
+DebugFlow's "FlowFile Failure Iterations" or "FlowFile Exception Iterations", the settings that plant the fault. They
+are in the inventory's properties line but not editable, so the checks sent the try back; S14 then closed its
+incident with no action. A customer flow has no such knobs, and a fix that turned them down would only hide the fault.
+- 2026-11-10: `Spec.hidden` (flows/builder/processors.py) lists the keys the agent never sees, DebugFlow's four
+  iterations; `inventory()` leaves them out of a processor's properties, so neither the prompt's inventory nor the
+  Review Queue's form shows them. The sim and the README still read them. Not a new PROMPT_VERSION (the inventory
+  is not hashed). Test: test_the_agent_never_sees_the_knobs_that_plant_a_fault. Next: seen live, no try spent on them.
 
 ### NFH-117 · Fix · A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE
 Live, with the answer-key reviewer (11-10): PE-5 (S20's rejection) was drafted again on the text PE-13 had made of
@@ -200,9 +211,18 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   heading ("Size concurrent tasks using intake and backlog", with an actions line), and back-pressure's Diagnosis
   is reworded, so all six edits in the patch go STALE at the next index with no Revert needed (checked by rebuilding
   each edit from the patch and applying it to the new files). Live, the Playbook edit dropdown showed the user no list
-  to pick an edit from; locally, in headless Chrome, it opens (49 edits, every view). Not explained yet. The reviewer no longer drafts again an edit that went STALE after it was applied: a person changed its
-  section (a new version of the file, or a revert), and drafting it again would undo that. Test:
+  to pick an edit from; locally, in headless Chrome, it opens (49 edits, every view). Not explained yet. The
+  reviewer no longer drafts again an edit that went STALE after it was applied: a person changed its section (a new
+  version of the file, or a revert), and drafting it again would undo that. Test:
   test_an_applied_edit_a_new_playbook_made_stale_is_not_drafted_again.
+- 2026-11-10: the wrong kind of fix is now judged against the design fix alone. S20's design fix is a
+  resize and one acceptable fix a property change on S20 Compress, so an edit of another processor shared a kind
+  with the acceptable fix and read "the wrong component … trace the symptom back to the stage it starts at": away
+  from sizing, in rounds 2 and 3. It now reads "the wrong kind of fix". Of the 50 `wrong` traps in the packs, 4
+  change reason, all from the wrong component to the wrong kind (S32 ×2, S34, S39: a parameter or sizing design with
+  an acceptable flow edit). Test: test_the_kind_is_the_design_fixs_not_an_acceptable_ones. The dry-run rounds end
+  with the current one on p22–p25 (the user: stop the app after it): approved dry runs reopen without end while
+  disarmed, and the next test is armed.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8

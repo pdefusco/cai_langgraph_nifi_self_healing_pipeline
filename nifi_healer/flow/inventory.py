@@ -8,7 +8,8 @@ A flow definition as the LLM sees it: one process group, compact.
 The LLM never sees or writes flow JSON. It sees the processors and
 connections of the incident's process group by name, with the settings
 the action catalog can change, and names targets from this list.
-Sensitive parameter values are masked.
+Sensitive parameter values are masked, and the test harness's knobs that
+plant a fault (DebugFlow's iterations) are left out.
 
 A group of more than SCOPE_PROCESSORS processors is shown only around
 the fault (NFH-97): the flows its KPIs read, and a line saying what else
@@ -86,6 +87,14 @@ def editable_properties(processor: dict) -> list:
         keys += [k for k in processor.get("properties") or {} if k not in spec.properties]
 
     return keys
+
+
+def hidden(processor: dict) -> tuple:
+    """The keys the agent never sees: the test harness's knobs, which plant a fault (Spec.hidden)."""
+
+    spec = PROCESSORS.get(kind_of(processor))
+
+    return spec.hidden if spec else ()
 
 
 def connection_label(connection: dict) -> str:
@@ -178,7 +187,7 @@ def _processors(group: dict, path: str) -> list:
             "relationships": list(relationships(kind, raw.get("properties"))),
             "routed": routed,
             "auto_terminated": list(raw.get("autoTerminatedRelationships") or []),
-            "properties": dict(raw.get("properties") or {}),
+            "properties": {k: v for k, v in (raw.get("properties") or {}).items() if k not in hidden(raw)},
             "editable_properties": editable_properties(raw),
         })
 
