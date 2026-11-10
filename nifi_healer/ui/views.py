@@ -1592,7 +1592,8 @@ def _auto_review_state() -> str:
              else "approves only while writes are disarmed")
 
     return (f"**on**: decides every review on a scenario pack as the Scorecard grades it, and approves playbook "
-            f"drafts that pass their checks; {armed}")
+            f"drafts that pass their checks, at most {config.AUTO_REVIEW_EDITS_PER_SECTION} applied on a section "
+            f"(SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION); {armed}")
 
 
 def _autonomy_state(store) -> str:

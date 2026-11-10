@@ -23,13 +23,16 @@ Each review waiting for a person, oldest first:
 
 A playbook edit drafted from a rejection that passes the drafter's checks
 is approved, so the agent reads it from its next diagnosis; one that
-fails them waits for a person. None is approved while a draft is being
-written: a draft takes over the open ones of its section, so a section's
-drafts become one before the section changes. A draft whose section an
-approval changed first (STALE), or whose drafting failed, is drafted
-again, once, as Draft again does, so its reason is not lost; only one
-drafted from this reviewer's rejection, so a person's old draft is left
-as it is.
+fails them waits for a person, as does one of a section that already has
+SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION of this reviewer's edits applied
+(2 by default; merging the patch, or reverting one, frees the section),
+so no section keeps growing unread. None is approved while a draft is
+being written: a draft takes over the open ones of its section, so a
+section's drafts become one before the section changes. A draft whose
+section an approval changed first (STALE), or whose drafting failed, is
+drafted again, once, as Draft again does, so its reason is not lost;
+only one drafted from this reviewer's rejection, so a person's old draft
+is left as it is.
 
 Every decision goes through the Review Queue's own paths (views.decide,
 views.diagnose, views.approve_playbook_edit) as REVIEWER, and is logged.
@@ -176,6 +179,13 @@ def _ours(store, row: dict) -> bool:
                for s in drafter.sources_of(row) for r in store.reviews(s["incident_id"]))
 
 
+def _approved_on(store, row: dict) -> int:
+    """This reviewer's edits applied on the row's section."""
+
+    return sum(1 for e in store.applied_playbook_edits()
+               if e.get("reviewer") == REVIEWER and drafter.same_target(e, row))
+
+
 def _edits(store) -> bool:
     """Approve the proposed playbook edits that pass the checks; True while a draft is being written."""
 
@@ -201,12 +211,19 @@ def _edits(store) -> bool:
         if row["status"] != "PROPOSED" or key in _tried_edits:
             continue
 
-        _tried_edits.add(key)
-
         if row.get("problems"):
+            _tried_edits.add(key)
             log(f"PE-{row['id']}: fails the drafter's checks, left for a person: {'; '.join(row['problems'])}")
             continue
 
+        # Not marked tried: merging the patch or reverting one of the edits frees the section.
+        if _approved_on(store, row) >= config.AUTO_REVIEW_EDITS_PER_SECTION:
+            _once(("edit", row["id"], "cap"),
+                  f"PE-{row['id']}: {drafter.target_id(row)} already has {config.AUTO_REVIEW_EDITS_PER_SECTION} "
+                  "of this reviewer's edits applied; left for a person (SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION)")
+            continue
+
+        _tried_edits.add(key)
         log(f"PE-{row['id']}: {views.approve_playbook_edit(row['id'], reviewer=REVIEWER)}")
 
     return drafting

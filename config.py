@@ -169,8 +169,12 @@ AUTONOMY_VETO_SECONDS = max(0, _int("SELFHEAL_AUTONOMY_VETO", 600))
 # Scorecard grades it, and playbook drafts that pass their checks are
 # approved. Its approvals count as a person's towards autonomy's trust.
 # While writes are armed it approves only with AUTO_REVIEW_ARMED as well.
+# It keeps at most AUTO_REVIEW_EDITS_PER_SECTION of its approved edits
+# applied on one playbook section; past that, a section's drafts wait for
+# a person (merging the patch, or reverting one, frees the section).
 AUTO_REVIEW = _bool("SELFHEAL_AUTO_REVIEW", False)
 AUTO_REVIEW_ARMED = _bool("SELFHEAL_AUTO_REVIEW_ARMED", False)
+AUTO_REVIEW_EDITS_PER_SECTION = max(0, _int("SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION", 2))
 
 # The chaos injector (chaos.py): once a scenario's fault has cleared and
 # rested CHAOS_REST, it is planted again, one plant per tick across the

@@ -201,3 +201,33 @@ def test_a_persons_stale_draft_is_left_alone(drafting, monkeypatch):
 
     ar.tick(client, store)
     assert store.playbook_edit(edit["id"])["status"] == "STALE" and not drafter._waiting
+
+
+def test_a_section_takes_only_so_many_of_its_edits(drafting, monkeypatch, capsys):
+    # Live, round 3: one section took nine drafts from faults of other kinds, near its size cap.
+    _, client, store, incidents, install = drafting("p1-throughput")
+    monkeypatch.setattr(config, "ARMED", False)
+    monkeypatch.setattr(config, "AUTO_REVIEW_EDITS_PER_SECTION", 1)
+    s01, s02 = incidents["S01"]["id"], incidents["S02"]["id"]
+    install(ScriptedLLM(proposal([WRONG], diagnosis="S02 Drain yields too long", cite=[SECTION]), edit_reply(CPU),
+                        proposal([OTHER], diagnosis="S01 Consumer yields too long", cite=[SECTION]),
+                        edit_reply(SECOND)))
+    graph.start(s02)
+    ar.tick(client, store)
+    settle()
+    ar.tick(client, store)
+    [first] = store.playbook_edits(("APPLIED",))
+
+    graph.start(s01)
+    ar.tick(client, store)
+    settle()
+    [second] = store.playbook_edits(("PROPOSED",))
+    ar.tick(client, store)
+    ar.tick(client, store)
+    assert store.playbook_edit(second["id"])["status"] == "PROPOSED"
+    assert capsys.readouterr().out.count(f"PE-{second['id']}: {SECTION} already has 1 of this reviewer's edits") == 1
+
+    # Not given up on: once the section has room (here, a higher cap), it is approved.
+    monkeypatch.setattr(config, "AUTO_REVIEW_EDITS_PER_SECTION", 2)
+    ar.tick(client, store)
+    assert {e["id"] for e in store.playbook_edits(("APPLIED",))} == {first["id"], second["id"]}

@@ -178,6 +178,12 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   over the open drafts of its section and carries their reasons, so a section's drafts become one before it changes.
   Also seen: groups approved as dry runs keep their faults while disarmed, so they reopen after the cooldown and are
   diagnosed again, round after round; "done" holds only until then.
+- 2026-11-10: live round 3 (30 minutes): "backlog-slow-consumer#diagnosis-confirm-it-is-the-consumer" took nine
+  drafts, most from faults that are not a slow consumer, and is near the drafter's 4,000-character cap; S12 and S13
+  regressed after edits landed there. The reviewer now keeps at most `SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION` (2 by
+  default) of its edits applied on a section; later drafts of it wait for a person, logged once. Not given up on:
+  merging the patch (the edits become MERGED) or reverting one frees the section, and the next tick approves. The
+  edits a section already has stay. System tab row and legend say the cap.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
