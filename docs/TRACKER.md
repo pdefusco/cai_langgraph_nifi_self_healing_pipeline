@@ -140,19 +140,10 @@ them.
 | NFH-116 | Feature | An answer-key reviewer in the app decides every review on the packs, and approves passing playbook drafts | In progress | |
 | NFH-117 | Fix | A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE | In progress | |
 | NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | 59c06db |
-| NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | In progress | |
+| NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | Done | d3ff6d0 |
+| NFH-120 | Fix | A playbook draft can tag its section with a symptom no incident has | Done | |
 
 ## Open tickets
-
-### NFH-119 · Fix · The agent sees, and spends tries on, the test harness's knobs that plant a fault
-Live, with the answer-key reviewer (11-10): S14, S52 and S100 each spent a try on SET_PROCESSOR_PROPERTY of a
-DebugFlow's "FlowFile Failure Iterations" or "FlowFile Exception Iterations", the settings that plant the fault. They
-are in the inventory's properties line but not editable, so the checks sent the try back; S14 then closed its
-incident with no action. A customer flow has no such knobs, and a fix that turned them down would only hide the fault.
-- 2026-11-10: `Spec.hidden` (flows/builder/processors.py) lists the keys the agent never sees, DebugFlow's four
-  iterations; `inventory()` leaves them out of a processor's properties, so neither the prompt's inventory nor the
-  Review Queue's form shows them. The sim and the README still read them. Not a new PROMPT_VERSION (the inventory
-  is not hashed). Test: test_the_agent_never_sees_the_knobs_that_plant_a_fault. Next: seen live, no try spent on them.
 
 ### NFH-117 · Fix · A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE
 Live, with the answer-key reviewer (11-10): PE-5 (S20's rejection) was drafted again on the text PE-13 had made of
@@ -223,6 +214,27 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   an acceptable flow edit). Test: test_the_kind_is_the_design_fixs_not_an_acceptable_ones. The dry-run rounds end
   with the current one on p22–p25 (the user: stop the app after it): approved dry runs reopen without end while
   disarmed, and the next test is armed.
+- 2026-11-10: d3ff6d0, live overnight, about 04:20–11:55 UTC (the user away; harmless, writes disarmed), then
+  stopped. About 490 incidents decided, 47 rejected: about 90% approved, the oracle's figure. No control of the 47
+  opened an incident; S06 never opens (NFH-64). S20's rejections read the wrong kind of fix (10 of 12). Every round
+  approved for S01–S05, S08, S09, S14–S18, S21, S49, S50, S52, S53 and S98–S100 (S04 for the first time); S07 and
+  S51 missed once each. Weak: S13 5 of 17 (its last 7 all rejected), S20 6 of 18 (acceptable fixes only, never the
+  resize), S12 9 of 17, S10 11 of 19, S11 14 of 19. Memory went from 50 to 96 cases, all rejections: it indexes
+  rejections and fixes really applied, so a dry run teaches only what not to do, and S13's late slide may be that.
+  Armed, applied fixes and their measured results join it. Applied playbook edits this run: PE-45, 51, 52, 53, 57,
+  60, 93; many later drafts waited at the section cap, and PE-38, 41, 43, 48, 59, 64, 69, 79, 80, 81, 83, 87 failed
+  the drafter's checks (whole-section rewrites: empty symptoms or actions lines, 2–16% of the words kept).
+- 2026-11-10: the user sent the patch (2 playbooks, 5 sections and 3 new ones). Kept, rewritten generally: at the
+  last full queue compare both sides, a runaway producer or a slow consumer; penalty and yield do not set a drain
+  rate; size a fan-out sink and a run schedule for the backlog over the time to clear it, with examples; a consumer
+  held by a full queue after it is not the limit; a throttled source's ceiling must end below the consumer's rate,
+  in whole ms or seconds (S07 and S08 had "0.5 ms" and "0.5 sec" refused); FlowFile Expiration named among a
+  consumer's ways to drop data. The three new sections keep their headings, so their edits go STALE: tracing the
+  symptom back, both ways, without the drafter's "lower an upstream stage's penalty"; the unreachable endpoint's
+  three parts, pointing at the failure-loops section instead of its own 100 ms timeout; a sped-up consumer behind an
+  expiring connection still loses data. Dropped: a heading repeated as a line, and a symptoms line naming the
+  playbook's title, which took the section's backlog tag away (NFH-120). All eight changed sections checked against
+  HEAD.
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
@@ -444,6 +456,28 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ## Closed tickets
+
+### NFH-120 · Fix · A playbook draft can tag its section with a symptom no incident has
+Live, in the patch of the answer-key reviewer's applied edits (11-10): "Diagnosis: confirm it is the consumer" gained
+`<!-- symptoms: Backlog behind a slow consumer -->`, the playbook's title. A section's symptoms line replaces the
+playbook's, and retrieval ranks a section up by the symptoms it shares with the incident's, so the section lost its
+`backlog` tag. The drafter checks an actions line against the catalog, but nothing checked a symptoms line.
+- 2026-11-10: `drafter.check` refuses a symptom no playbook's front matter declares, and lists those that are. The
+  live line is gone from the folded playbook. Test: in test_check_refuses_what_the_agent_must_not_read.
+
+### NFH-119 · Fix · The agent sees, and spends tries on, the test harness's knobs that plant a fault
+Live, with the answer-key reviewer (11-10): S14, S52 and S100 each spent a try on SET_PROCESSOR_PROPERTY of a
+DebugFlow's "FlowFile Failure Iterations" or "FlowFile Exception Iterations", the settings that plant the fault. They
+are in the inventory's properties line but not editable, so the checks sent the try back; S14 then closed its
+incident with no action. A customer flow has no such knobs, and a fix that turned them down would only hide the fault.
+- 2026-11-10: `Spec.hidden` (flows/builder/processors.py) lists the keys the agent never sees, DebugFlow's four
+  iterations; `inventory()` leaves them out of a processor's properties, so neither the prompt's inventory nor the
+  Review Queue's form shows them. The sim and the README still read them. Not a new PROMPT_VERSION (the inventory
+  is not hashed). Test: test_the_agent_never_sees_the_knobs_that_plant_a_fault. Next: seen live, no try spent on them.
+- 2026-11-10: d3ff6d0, seen live overnight: no try touched the iterations. 6 of about 55 S14, S52 and S100 incidents
+  instead spent their first try on a DebugFlow property that does not exist ("Failure Rate" ×3, "Probability",
+  "Success Percentage", "Percentage to Route to Success"); the checks answered "is not editable; editable: none" and
+  the next try was the design fix every time. Left as it is: the check does its job, and a try costs seconds. Closed.
 
 ### NFH-118 · Fix · A playbook draft can copy the prompt's section label into the section's text
 Live, in the patch of the answer-key reviewer's applied edits (11-10): "Bursty arrivals: judge by peak and drain time"

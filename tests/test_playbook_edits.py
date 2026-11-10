@@ -151,6 +151,10 @@ def test_check_refuses_what_the_agent_must_not_read():
     assert "no playbook 'nope.md'" in problems(ok, playbook="nope.md")
     assert "has no section" in problems(ok, section_id="backlog-slow-consumer#nope")
     assert "catalog does not have" in problems(ok + "\n<!-- actions: MAKE_IT_FAST -->")
+    # Live (NFH-120): the playbook's title as a symptom; it matches no incident.
+    assert "a symptom is one of backlog, backpressure" in problems(
+        "<!-- symptoms: Backlog behind a slow consumer -->\n" + ok)
+    assert problems("<!-- symptoms: backlog, data_loss -->\n" + ok) == ""
     assert "STOP_AND_EMPTY_QUEUES".lower() in problems(ok + " Then change the version with STOP_AND_EMPTY_QUEUES.")
     assert "restart the deployment" in problems(ok + " If that fails, restart the deployment.")
     assert "heading line" in problems(ok + "\n\n## Another heading")

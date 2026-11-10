@@ -364,12 +364,20 @@ def check(edit: dict, raws: dict, found: dict | None = None) -> list:
     if section_id and old and text == old:
         problems.append("the text is the section as it already reads: nothing would change")
 
-    for name, values in ingest._TAG.findall(text):
-        unknown = [v for v in ingest._split_list(values) if v not in catalog.CATALOG] \
-            if name.lower() == "actions" else []
+    # A symptom no playbook declares matches no incident, and the section loses the ranking its tags gave it:
+    # live, "Backlog behind a slow consumer" replaced the diagnosis section's backlog (NFH-120).
+    symptoms = {s for raw in raws.values() for s in ingest.front_matter(raw).get("symptoms") or []}
 
-        if unknown:
+    for name, values in ingest._TAG.findall(text):
+        known = catalog.CATALOG if name.lower() == "actions" else symptoms
+        unknown = [v for v in ingest._split_list(values) if v not in known]
+
+        if unknown and name.lower() == "actions":
             problems.append(f"the actions line names {', '.join(unknown)}, which the catalog does not have")
+
+        elif unknown:
+            problems.append(f"the symptoms line names {', '.join(unknown)}; a symptom is one of "
+                            + ", ".join(sorted(symptoms)))
 
         if not ingest._split_list(values):
             problems.append(f"the {name.lower()} line is empty; name what it lists, or leave the line out")

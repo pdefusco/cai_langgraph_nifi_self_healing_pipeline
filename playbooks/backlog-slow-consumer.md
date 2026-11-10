@@ -35,11 +35,12 @@ run schedule of 0 sec puts no ceiling on it.
   Shorten the run schedule or add tasks.
 - The rate is below the ceiling and a backlog waits in front: each FlowFile
   takes time to process and the tasks are busy all the time. Only more tasks
-  help.
+  help, sized from the rate per task (below).
 - The consumer takes in nothing at all: it is stopped, failing or
   misconfigured. That is not a capacity problem.
-- Its FlowFiles go to failure or are dropped rather than queuing: that is
-  its routing or configuration, not its capacity. See the failure-loop and
+- Its FlowFiles go to failure or are dropped rather than queuing, by a
+  FlowFile Expiration on its input connection for one: that is its routing
+  or configuration, not only its capacity. See the failure-loop and
   data-loss playbooks before adding tasks.
 - The deployment's CPU is high: the node cannot run more threads. See the
   sizing playbook.
@@ -50,6 +51,24 @@ minute adds 10/s). A queue held at its back-pressure threshold cannot grow,
 and its source is throttled to what the bottleneck takes, so use the
 source's earlier peak rate instead. No fix works unless the new capacity is
 above the intake.
+
+## Trace the symptom back to the originating stage
+<!-- actions: SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE, SET_FLOWFILE_EXPIRATION -->
+
+When the stage the alert names keeps up with what it is sent, the cause is
+elsewhere in the group. Walk the flow from the alert both ways, comparing
+each stage's rate in with its rate out and with what arrives:
+
+- Downstream, the last full queue in flow order marks the bottleneck: the
+  stage it feeds is the one to change, and every stage before it is only
+  back-pressured.
+- Upstream, a source emitting far above its intended rate (a 0 sec
+  schedule) floods everything after it: throttle it, as the back-pressure
+  playbook's runaway producer section describes.
+- Where the counts stop adding up and no queue grows to hold the
+  difference, data is dropped there: see the data-loss playbook.
+
+Change the stage where the readings change, not the one where they show.
 
 ## Raise Concurrent Tasks on the bottleneck processor
 <!-- actions: SET_CONCURRENT_TASKS -->
@@ -98,7 +117,9 @@ still wins. Shorten the run schedule until Concurrent Tasks / run schedule is
 above the intake: 1 sec on those tasks gives 8/s, and 0 sec (run whenever
 there is work) removes the ceiling when the processor is cheap. Prefer the
 smallest change that brings the ceiling above the intake, with enough to
-spare to drain the backlog already waiting.
+spare to drain the backlog already waiting: the intake plus the backlog over
+the time to clear it. An intake of 3/s with 1,200 queued, cleared in 10
+minutes, needs 5/s: 1 task at 200 ms.
 
 For a busy consumer at its ceiling on a short schedule, a shorter schedule
 and more tasks both raise the ceiling: 1 task at 1 sec against an intake of
@@ -116,6 +137,30 @@ peaks get higher each time. Then add drain capacity (Concurrent Tasks on the
 consumer), sized against the peak intake and the backlog a burst leaves, so
 each burst clears before the next. A sawtooth that returns to near zero
 every cycle and stays under the threshold needs no action.
+
+## Unreachable endpoint slow consumer: route failures, lower timeout, increase capacity
+<!-- actions: ROUTE_RELATIONSHIP_TO_DLQ, SET_PROCESSOR_PROPERTY, SET_CONCURRENT_TASKS -->
+
+A consumer that calls a remote endpoint that does not answer (InvokeHTTP and
+similar) is slow because each call waits out its connect timeout, not
+because it has too few tasks. The fix has three parts, together: route its
+failure relationships to the group's DLQ, lower the connect timeout, and
+size Concurrent Tasks from the intake as above. The failure-loops
+playbook's "Unreachable endpoint" section has the property names and
+values. A lower timeout alone leaves the backlog; more tasks alone keep
+every task waiting.
+
+## Also consider connection expiration when consumer speed is increased
+<!-- actions: SET_FLOWFILE_EXPIRATION, SET_CONCURRENT_TASKS -->
+
+A consumer sped up behind a connection with a FlowFile Expiration still
+loses whatever waits longer than the expiration while the backlog drains.
+Check the input connection's expiration in the flow inventory: a non-zero
+value on a queue behind a slow consumer drops data silently. Fix both
+parts, as the data-loss playbook describes: no expiration, and capacity on
+the consumer. Do not throttle a source that runs at its intended rate, or
+change its batch size, to suit the consumer: that changes what the flow
+takes in.
 
 ## What does not fix a backlog
 <!-- actions: NO_ACTION -->

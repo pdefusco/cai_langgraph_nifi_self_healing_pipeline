@@ -32,9 +32,12 @@ with its thresholds in the flow inventory.
 
 Back pressure travels upstream, so several queues in a row can be full. Act
 on the last full one in flow order: the stage it feeds is the bottleneck,
-and the stages before it are back-pressured, not slow. Size the bottleneck's fix
-by its ceiling (Concurrent Tasks / run schedule) against the intake, as the
-backlog playbook describes.
+and the stages before it are back-pressured, not slow. Then compare rates on
+both sides of that queue: a producer emitting far above its intended rate is
+the side to fix (see "Runaway producer" below); a consumer that cannot keep
+up is, sized by its ceiling (Concurrent Tasks / run schedule) against the
+intake, as the backlog playbook describes. Penalty and yield durations do not
+set how fast a queue drains: changing them does not fix a full queue.
 
 ## Raise a threshold that is too low for normal traffic
 <!-- actions: SET_BACKPRESSURE -->
@@ -61,7 +64,12 @@ misconfigured, not slow: see the backlog playbook's diagnosis.
 Size it against what the fan-out sends, not what it takes in: 2 FlowFiles/s
 split 50 ways is 100/s. A consumer on 1 task every 20 ms has a ceiling of
 50/s, and 2 tasks reach only 100/s, with no headroom; 4 tasks (200/s) or
-0 sec clear it.
+0 sec clear it. To drain what already waits as well, size for the intake
+plus the backlog over the time to clear it: 100/s with 6,000 queued, cleared
+in 2 minutes, needs 150/s.
+
+If the consumer is itself held by a full queue after it, it is not the
+limit: speed up the stage further downstream that is, the same way.
 
 The fan-out factor (line count, Number of Copies) is business logic. Do
 not reduce it to make the queue smaller, because that changes what the flow
@@ -74,7 +82,11 @@ A source such as GenerateFlowFile on a run schedule of 0 sec produces as
 fast as the thread allows, thousands per second, which no realistic
 consumer matches. The queue pins at its threshold and Percent Full stays at
 100%. Throttle the producer to its intended rate with a run schedule such
-as 1 sec. Adding consumer threads cannot match an unbounded source.
+as 1 sec. For the queue to drain, the source's ceiling (Concurrent Tasks /
+run schedule) must end up below what the consumer sustains; the gap is how
+fast the backlog drains. Give the schedule in whole milliseconds or seconds
+("300 ms", "2 sec"), not "0.5 sec". Adding consumer threads cannot match an
+unbounded source.
 
 ## Verifying the fix
 
