@@ -111,6 +111,54 @@ def test_flow_edit_armed_deploys_a_new_version(tenant):
     assert again["status"] == "REFUSED" and "cooldown" in again["error"]
 
 
+def _lagging(monkeypatch, client, incident, reads: int, **stuck):
+    """flow_facts that still reads the old version for `reads` reads after the swap, as CDF does."""
+
+    real = client.flow_facts
+    old = real(incident["deployment_crn"], incident["deployed_flow_crn"])
+    left = {"reads": reads}
+
+    def flow_facts(deployment, flow=""):
+        facts = real(deployment, flow)
+
+        if facts["flow_version_crn"] != old["flow_version_crn"] and left["reads"]:
+            left["reads"] -= 1
+            return dict(facts, flow_version_crn=old["flow_version_crn"], flow_version=old["flow_version"],
+                        **stuck)
+
+        return facts
+
+    monkeypatch.setattr(client, "flow_facts", flow_facts)
+    monkeypatch.setattr(client, "sleep", lambda seconds: None)
+
+
+def test_a_swap_that_reads_the_old_version_for_a_while_is_applied(tenant, monkeypatch):
+    # NFH-121: 22 armed writes landed but were recorded FAILED on one read after wait().
+    world, client, store = tenant("p1-throughput")
+    incident = incident_for(client, store, "S01")
+    proposal = proposal_for(store, incident, packs.SCENARIOS["S01"].expected)
+    _lagging(monkeypatch, client, incident, reads=3)
+
+    action = executor.execute(client, store, incident, proposal, dry_run=False,
+                              wait=lambda: world.settle(incident["deployment_crn"]))
+
+    assert action["status"] == "APPLIED", action["error"]
+    assert store.incident(incident["id"])["status"] == "VERIFYING"
+
+
+def test_a_swap_cdf_fails_is_failed(tenant, monkeypatch):
+    world, client, store = tenant("p1-throughput")
+    incident = incident_for(client, store, "S01")
+    proposal = proposal_for(store, incident, packs.SCENARIOS["S01"].expected)
+    _lagging(monkeypatch, client, incident, reads=99, detailed_state="FAILED_TO_CHANGE_FLOW_VERSION")
+
+    action = executor.execute(client, store, incident, proposal, dry_run=False,
+                              wait=lambda: world.settle(incident["deployment_crn"]))
+
+    assert action["status"] == "FAILED"
+    assert "not the new" in action["error"] and "FAILED_TO_CHANGE_FLOW_VERSION" in action["error"]
+
+
 def test_drifted_version_is_refused(tenant):
     world, client, store = tenant("p1-throughput")
     incident = incident_for(client, store, "S01")

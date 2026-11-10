@@ -577,10 +577,10 @@ def _execute(client: Client, store, incident: dict, steps: list, proposal: dict,
             return ""
 
         wait()
-        facts = client.flow_facts(deployment, flow)
+        facts = _swapped(client, deployment, flow, back)
 
         if facts.get("flow_version_crn") != back:
-            raise Failed(f"the deployment runs {facts.get('flow_version_crn')} ({facts.get('state')}), "
+            raise Failed(f"the deployment runs {facts.get('flow_version_crn')} ({_state(facts)}), "
                          f"not {back}")
 
         return back
@@ -629,10 +629,26 @@ def _execute(client: Client, store, incident: dict, steps: list, proposal: dict,
         raise Failed(f"v{version.get('version')} was imported but not deployed: {exc}") from None
 
     wait()
-    facts = client.flow_facts(deployment, flow)
+    facts = _swapped(client, deployment, flow, new_crn)
 
     if facts.get("flow_version_crn") != new_crn:
-        raise Failed(f"the deployment runs {facts.get('flow_version_crn')} ({facts.get('state')}), "
+        raise Failed(f"the deployment runs {facts.get('flow_version_crn')} ({_state(facts)}), "
                      f"not the new {new_crn}")
 
     return new_crn
+
+
+def _swapped(client: Client, deployment: str, flow: str, target: str) -> dict:
+    """
+    The deployed flow's facts once it runs `target`, CDF fails the swap or
+    the deadline passes. The flow reads steady before CDF starts a swap, so
+    one read after wait() still finds the old version (NFH-121).
+    """
+
+    from nifi_healer import provisioning
+
+    return provisioning._wait_for_version(client, deployment, flow, target)
+
+
+def _state(facts: dict) -> str:
+    return " ".join(str(facts.get(k)) for k in ("state", "detailed_state") if facts.get(k))
