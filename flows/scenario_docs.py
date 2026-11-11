@@ -334,6 +334,12 @@ def grading(s) -> str:
     if any(at_least(a, s) != gerund(a) for a in s.expected + s.acceptable) and s.kind != "control":
         out.append("The right fix at less than that is graded as the right lever with the value short.")
 
+    texts = [a for a in s.expected + s.acceptable
+             if any(a.get(f) is not None and scorecard.amount(a[f]) is None for f in scorecard._VALUED.get(a["action"], ()))]
+
+    if texts and s.kind != "control":
+        out.append("The same setting at another value is graded as the right lever with the value short.")
+
     return " ".join(out)
 
 
@@ -350,6 +356,15 @@ def at_least(a: dict, s) -> str:
 
     if kind == "SCALE_DEPLOYMENT":
         return f"{gerund(a)} or {'larger' if way > 0 else 'smaller'}"
+
+    if kind in ("SET_PROCESSOR_PROPERTY", "UPDATE_PARAMETER") and way and scorecard.amount(a.get("value")) is not None:
+        if catalog.is_duration(a.get("value")):
+            return f"{gerund(a)} or {'longer' if way > 0 else 'shorter'}"
+
+        return f"{gerund(a)} or {'higher' if way > 0 else 'lower'}"
+
+    if kind == "SET_RETRY_POLICY" and a.get("max_backoff") and scorecard.direction(a, s, "max_backoff") < 0:
+        return f"{gerund(a)} or shorter"
 
     return gerund(a)
 

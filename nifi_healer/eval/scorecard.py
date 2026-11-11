@@ -8,12 +8,15 @@ Each case answers, for one incident:
   match      did its proposal pick the scenario's known-correct fix?
              (`expected`, else `acceptable`; the design label the agent
              never sees). The value counts where it decides whether the
-             fix can work: concurrent tasks, a run schedule and a resize
-             must go at least as far from what is deployed as the
-             label's (more tasks, a shorter schedule, a larger
-             deployment, or the other way where the label goes that
-             way). Further is tuning; less far is `short`, the right
-             lever at a value that can't clear the problem.
+             fix can work: concurrent tasks, a run schedule, a resize and
+             an amount in a property, parameter or retry setting must go
+             at least as far from what is deployed as the label's (more
+             tasks, a shorter schedule, a larger deployment, a lower
+             Compression Level, or the other way where the label goes
+             that way); a text value (a JSON path, a URL) must be the
+             label's. Further is tuning; less far, or other text, is
+             `short`, the right lever at a value that can't clear the
+             problem.
   review     what the reviewer did: approved it as proposed, approved an
              edit of it, rejected it, or has yet to decide; or no person
              did and a trusted fix approved itself (auto-approved).
@@ -111,6 +114,13 @@ def step_key(step: dict) -> tuple:
 _DEPLOYED = {"SET_CONCURRENT_TASKS": "concurrentlySchedulableTaskCount", "SET_RUN_SCHEDULE": "schedulingPeriod"}
 # The usual way, when the deployed value isn't known: more tasks, a shorter schedule.
 _USUAL = {"SET_CONCURRENT_TASKS": 1, "SET_RUN_SCHEDULE": -1, "SCALE_DEPLOYMENT": 1}
+# Steps whose values the label sets are judged field by field (NFH-125): S11's orderId set back to the fault's
+# own $.orderId graded the design fix on its identity, and was approved and applied.
+_VALUED = {"SET_PROCESSOR_PROPERTY": ("value",), "UPDATE_PARAMETER": ("value",),
+           "SET_RETRY_POLICY": ("backoff", "max_backoff", "retry_count")}
+_RETRY = {"max_backoff": "maxBackoffPeriod", "retry_count": "retryCount"}
+# A property the deployed flow leaves unset is no limit (S15's Max Bin Age); the label's amount lies below it.
+_UNSET = float("inf")
 
 
 @functools.lru_cache(maxsize=None)
@@ -140,11 +150,55 @@ def _pack_size(scenario) -> tuple:
     return _size({"cluster_size": pack.cluster_size, "nodes": pack.nodes}, (0, 1)) if pack else (0, 1)
 
 
-def direction(ref: dict, scenario=None) -> int:
+def amount(value):
+    """A number, also written as a string ("5000"), a duration or a size as a float; text None."""
+
+    found = catalog.magnitude(value)
+
+    if found is None and isinstance(value, str):
+        try:
+            found = float(value.strip())
+        except ValueError:
+            return None
+
+    return found
+
+
+def _deployed(ref: dict, scenario, field: str = "value"):
+    """
+    What the tenant has for the setting a label changes, as an amount: the
+    processor's tasks or schedule, its property (_UNSET when the flow leaves
+    it out), the parameter's value. None when it isn't known.
+    """
+
+    kind = ref["action"]
+
+    if kind == "UPDATE_PARAMETER":
+        return amount((getattr(scenario, "parameters", None) or {}).get(ref.get("parameter")))
+
+    processor = _processors(getattr(scenario, "id", "")).get(_name(ref.get("target")))
+
+    if processor is None:
+        return None
+
+    if kind in _DEPLOYED:
+        return amount(processor.get(_DEPLOYED[kind]))
+
+    if kind == "SET_PROCESSOR_PROPERTY":
+        value = processor.get("properties", {}).get(ref.get("property"))
+
+        return _UNSET if value is None else amount(value)
+
+    return amount(processor.get(_RETRY.get(field) if kind == "SET_RETRY_POLICY" else None))
+
+
+def direction(ref: dict, scenario=None, field: str = "value") -> int:
     """
     Which way the label's value moves from what is deployed: +1 more tasks,
-    a longer schedule or a larger deployment; -1 the other way. S08 slows a
-    runaway source, S21 shrinks an oversized deployment.
+    a longer schedule, a larger deployment or a higher amount; -1 the other
+    way. S08 slows a runaway source, S21 shrinks an oversized deployment,
+    S20 lowers a Compression Level. 0 when it can't be told, and the
+    action has no usual way: then only the label's own amount reaches it.
     """
 
     ref = catalog.normalize(ref)
@@ -155,22 +209,46 @@ def direction(ref: dict, scenario=None) -> int:
 
         return -1 if wanted[0] < now[0] or wanted[1] < now[1] else 1
 
-    processor = _processors(getattr(scenario, "id", "")).get(_name(ref.get("target")), {})
-    now, wanted = catalog.magnitude(processor.get(_DEPLOYED.get(kind))), catalog.magnitude(ref.get("value"))
+    now, wanted = _deployed(ref, scenario, field), amount(ref.get(field))
 
     if now is None or wanted is None or now == wanted:
-        return _USUAL.get(kind, 1)
+        return _USUAL.get(kind, 0)
 
     return 1 if wanted > now else -1
+
+
+def _reaches_value(mine, wanted, way: int) -> bool:
+    """A field of a valued step: an amount at least as far as the label's, the way it goes; text the same."""
+
+    if wanted is None:
+        return True
+
+    if amount(wanted) is None:
+        return mine is not None and str(mine).strip() == str(wanted).strip()
+
+    mine, wanted = amount(mine), amount(wanted)
+
+    return mine is not None and (mine == wanted or (mine - wanted) * way > 0)
+
+
+def short_of(step: dict, ref: dict, scenario=None) -> list:
+    """The fields of a property, parameter or retry step that don't reach the reference's values."""
+
+    step, ref = catalog.normalize(step), catalog.normalize(ref)
+
+    return [f for f in _VALUED.get(ref["action"], ())
+            if not _reaches_value(step.get(f), ref.get(f), direction(ref, scenario, f))]
 
 
 def reaches(step: dict, ref: dict, scenario=None) -> bool:
     """
     Whether a step is the reference's fix at a value that goes at least as
     far from what is deployed (direction): as many tasks or more, a run
-    schedule as short or shorter, a resize as far or further. A route to a
-    DLQ must reach the reference's DLQ. Other actions are judged by their
-    identity alone.
+    schedule as short or shorter, a resize as far or further. A property,
+    parameter or retry setting the reference gives must reach it too: an
+    amount as far or further, text (a JSON path, a URL, a backoff) the same
+    (NFH-125). A route to a DLQ must reach the reference's DLQ. Other
+    actions are judged by their identity alone.
     """
 
     if step_key(step) != step_key(ref):
@@ -189,6 +267,9 @@ def reaches(step: dict, ref: dict, scenario=None) -> bool:
         mine, wanted = catalog.magnitude(step.get("value")), catalog.magnitude(ref.get("value"))
 
         return wanted is None or (mine is not None and (mine - wanted) * way >= 0)
+
+    if kind in _VALUED:
+        return not short_of(step, ref, scenario)
 
     if kind == "ROUTE_RELATIONSHIP_TO_DLQ":
         # The right relationships to another stage's DLQ save the data where nobody looks for it.

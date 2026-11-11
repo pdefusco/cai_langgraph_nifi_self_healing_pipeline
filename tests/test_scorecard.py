@@ -74,6 +74,62 @@ def test_match_counts_the_lever_and_whether_its_value_goes_far_enough():
     assert sc.match([{"action": "NO_ACTION"}], None) == sc.UNKNOWN
 
 
+def test_a_setting_counts_by_its_value():
+    # NFH-125, live: S11's orderId set back to the fault's $.orderId graded expected and was applied.
+    s11, s12, s15 = packs.SCENARIOS["S11"], packs.SCENARIOS["S12"], packs.SCENARIOS["S15"]
+
+    def prop(target, name, value):
+        return [{"action": "SET_PROCESSOR_PROPERTY", "target": target, "property": name, "value": value}]
+
+    def param(context, name, value):
+        return [{"action": "UPDATE_PARAMETER", "target": context, "parameter": name, "value": value}]
+
+    assert sc.match(prop("S11 Extract Order", "orderId", " $.order_id "), s11) == sc.EXPECTED
+    assert sc.match(prop("S11 Extract Order", "orderId", "$.orderId"), s11) == sc.SHORT
+    assert sc.match(prop("S11 Extract Order", "orderId", "$.orderID"), s11) == sc.SHORT
+
+    # Compression Level 9 is the fault: lower goes further, as far as the label or past it.
+    s20, s29 = packs.SCENARIOS["S20"], packs.SCENARIOS["S29"]
+    assert sc.match(prop("S20 Compress", "Compression Level", "1"), s20) == sc.ACCEPTABLE
+    assert sc.match(prop("S20 Compress", "Compression Level", "0"), s20) == sc.ACCEPTABLE
+    assert sc.match(prop("S20 Compress", "Compression Level", "5"), s20) == sc.SHORT
+    assert sc.match(prop("S29 Compress Statement", "Compression Level", "1"), s29) == sc.EXPECTED
+    assert sc.match(prop("S29 Compress Statement", "Compression Level", "2"), s29) == sc.ACCEPTABLE
+    assert sc.match(prop("S29 Compress Statement", "Compression Level", "6"), s29) == sc.SHORT
+
+    # A parameter measures from the scenario's own value: copies down to 1, the rate up to 50.
+    s17, s18, s32 = packs.SCENARIOS["S17"], packs.SCENARIOS["S18"], packs.SCENARIOS["S32"]
+    assert sc.match(param("nfh-p5-parameters", "s18.copies", "1"), s18) == sc.EXPECTED
+    assert sc.match(param("nfh-p5-parameters", "s18.copies", "10"), s18) == sc.SHORT
+    assert sc.match(param("nfh-p5-parameters", "s17.target.url", "http://localhost:9876/ingest"), s17) == \
+        sc.EXPECTED
+    assert sc.match(param("nfh-p5-parameters", "s17.target.url", "http://ingest.internal:9876/ingest"), s17) == \
+        sc.SHORT
+    assert sc.match(param("nfh-p13-billing", "s32.max.rate", "100"), s32) == sc.EXPECTED
+    assert sc.match(param("nfh-p13-billing", "s32.max.rate", "20"), s32) == sc.SHORT
+
+    # Only the fields the label sets: S12's names the backoff, so its max backoff is free.
+    retry = {"action": "SET_RETRY_POLICY", "target": "S12 Transient Service"}
+    assert sc.match([dict(retry, backoff="PENALIZE_FLOWFILE")], s12) == sc.EXPECTED
+    assert sc.match([dict(retry, backoff="PENALIZE_FLOWFILE", max_backoff="10 min")], s12) == sc.EXPECTED
+    assert sc.match([dict(retry, backoff="YIELD_PROCESSOR")], s12) == sc.SHORT
+
+    # S15's Max Bin Age is unset, so unbounded: shorter than the label's 5 min is far enough, longer is not.
+    assert sc.match(prop("S15 Batcher", "Max Bin Age", "2 min"), s15) == sc.ACCEPTABLE
+    assert sc.match(prop("S15 Batcher", "Max Bin Age", "30 sec"), s15) == sc.EXPECTED
+    assert sc.match(prop("S15 Batcher", "Max Bin Age", "30 min"), s15) == sc.SHORT
+
+
+def test_every_amount_a_label_sets_has_a_way_to_go():
+    # One with no deployed value to measure from would fall back to the label's value alone.
+    for scenario in packs.SCENARIOS.values():
+        for fix in (*scenario.expected, *scenario.acceptable):
+            for field in sc._VALUED.get(fix["action"], ()):
+                if sc.amount(fix.get(field)) is not None:
+                    assert sc._deployed(fix, scenario, field) is not None, (scenario.id, fix, field)
+                    assert sc.direction(fix, scenario, field), (scenario.id, fix, field)
+
+
 def test_match_takes_a_nested_target_however_it_is_named():
     # Edits take all three since NFH-105; the replay graded the spaced ones "other" (S98, NFH-106).
     s98, s99 = packs.SCENARIOS["S98"], packs.SCENARIOS["S99"]

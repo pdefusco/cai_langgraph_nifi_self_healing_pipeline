@@ -526,7 +526,7 @@ flowchart LR
     linkStyle 1 stroke:#c2410c,stroke-width:3px
 ```
 
-**How it's graded.** The alert fires when the queue `s10-requests` holds more than 100 FlowFiles for a minute. We also chart the size of the queue `s10-retry-loop`. Whether a fix worked is decided by the size of the queue `s10-requests`. The fix we grade as correct is routing Failure, No Retry and Retry from S10 Partner Call to S10 DLQ, setting Connection Timeout on S10 Partner Call to `5 secs` and setting the concurrent tasks on S10 Partner Call to 4 or more, all in one proposal. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s10-requests` holds more than 100 FlowFiles for a minute. We also chart the size of the queue `s10-retry-loop`. Whether a fix worked is decided by the size of the queue `s10-requests`. The fix we grade as correct is routing Failure, No Retry and Retry from S10 Partner Call to S10 DLQ, setting Connection Timeout on S10 Partner Call to `5 secs` or shorter and setting the concurrent tasks on S10 Partner Call to 4 or more, all in one proposal. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 3 processors, 2 connections</summary>
@@ -569,7 +569,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s11-unmatched` holds more than 100 FlowFiles for a minute. We also chart FlowFiles into S11 Publish. Whether a fix worked is decided by the size of the queue `s11-unmatched` and FlowFiles into S11 Publish. The fix we grade as correct is setting orderId on S11 Extract Order to `$.order_id`.
+**How it's graded.** The alert fires when the queue `s11-unmatched` holds more than 100 FlowFiles for a minute. We also chart FlowFiles into S11 Publish. Whether a fix worked is decided by the size of the queue `s11-unmatched` and FlowFiles into S11 Publish. The fix we grade as correct is setting orderId on S11 Extract Order to `$.order_id`. The same setting at another value is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 4 processors, 3 connections</summary>
@@ -612,7 +612,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s12-requests` holds more than 200 FlowFiles for a minute. We also chart FlowFiles into S12 Transient Service. Whether a fix worked is decided by the size of the queue `s12-requests`. The fix we grade as correct is switching the retry backoff on S12 Transient Service to PENALIZE_FLOWFILE. We also accept switching the retry backoff on S12 Transient Service to PENALIZE_FLOWFILE with a maximum backoff of 1 min.
+**How it's graded.** The alert fires when the queue `s12-requests` holds more than 200 FlowFiles for a minute. We also chart FlowFiles into S12 Transient Service. Whether a fix worked is decided by the size of the queue `s12-requests`. The fix we grade as correct is switching the retry backoff on S12 Transient Service to PENALIZE_FLOWFILE. We also accept switching the retry backoff on S12 Transient Service to PENALIZE_FLOWFILE with a maximum backoff of 1 min or shorter. The right fix at less than that is graded as the right lever with the value short. The same setting at another value is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 3 processors, 2 connections</summary>
@@ -745,7 +745,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when S15 Batcher sends nothing out for 15 minutes. We also chart FlowFiles into S15 Batcher. Whether a fix worked is decided by FlowFiles out of S15 Batcher. The fix we grade as correct is setting Max Bin Age on S15 Batcher to `60 sec`. We also accept setting Max Bin Age on S15 Batcher to `5 min`.
+**How it's graded.** The alert fires when S15 Batcher sends nothing out for 15 minutes. We also chart FlowFiles into S15 Batcher. Whether a fix worked is decided by FlowFiles out of S15 Batcher. The fix we grade as correct is setting Max Bin Age on S15 Batcher to `60 sec` or shorter. We also accept setting Max Bin Age on S15 Batcher to `5 min` or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 3 processors, 2 connections</summary>
@@ -834,7 +834,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s17-requests` holds more than 50 FlowFiles for a minute or when S17 Partner Stub sends nothing out for 10 minutes. Whether a fix worked is decided by the size of the queue `s17-requests`. The fix we grade as correct is changing the parameter `s17.target.url` to `http://localhost:9876/ingest`.
+**How it's graded.** The alert fires when the queue `s17-requests` holds more than 50 FlowFiles for a minute or when S17 Partner Stub sends nothing out for 10 minutes. Whether a fix worked is decided by the size of the queue `s17-requests`. The fix we grade as correct is changing the parameter `s17.target.url` to `http://localhost:9876/ingest`. The same setting at another value is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 5 processors, 3 connections</summary>
@@ -878,7 +878,7 @@ flowchart LR
     class p1 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s18-copies` holds more than 1,000 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s18-copies`. The fix we grade as correct is changing the parameter `s18.copies` to `1`.
+**How it's graded.** The alert fires when the queue `s18-copies` holds more than 1,000 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s18-copies`. The fix we grade as correct is changing the parameter `s18.copies` to `1` or lower. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 3 processors, 2 connections</summary>
@@ -964,7 +964,7 @@ flowchart LR
     classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
 ```
 
-**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes or when the queue `s20-to-compress` holds more than 50 FlowFiles for a minute. Whether a fix worked is decided by node CPU. The fix we grade as correct is scaling the deployment to SMALL with 2 nodes or larger. We also accept scaling the deployment to EXTRA_SMALL with 2 nodes or larger or setting Compression Level on S20 Compress to `1`. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes or when the queue `s20-to-compress` holds more than 50 FlowFiles for a minute. Whether a fix worked is decided by node CPU. The fix we grade as correct is scaling the deployment to SMALL with 2 nodes or larger. We also accept scaling the deployment to EXTRA_SMALL with 2 nodes or larger or setting Compression Level on S20 Compress to `1` or lower. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 4 processors, 3 connections</summary>
@@ -1072,7 +1072,7 @@ flowchart TD
     class p5 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s22-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s22-normalized`, the size of the queue `s22-to-batch` and FlowFiles out of S22 Batch Orders. Whether a fix worked is decided by the size of the queue `s22-ingest`. The fix we grade as correct is setting Minimum Number of Entries on S22 Batch Orders to `5000`. We also accept setting the back pressure on `s22-to-batch` to 30,000 objects or setting Max Bin Age on S22 Batch Orders to `1 min`.
+**How it's graded.** The alert fires when the queue `s22-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s22-normalized`, the size of the queue `s22-to-batch` and FlowFiles out of S22 Batch Orders. Whether a fix worked is decided by the size of the queue `s22-ingest`. The fix we grade as correct is setting Minimum Number of Entries on S22 Batch Orders to `5000` or lower. We also accept setting the back pressure on `s22-to-batch` to 30,000 objects or setting Max Bin Age on S22 Batch Orders to `1 min` or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 10 connections</summary>
@@ -1147,7 +1147,7 @@ flowchart TD
     class p4 fix
 ```
 
-**How it's graded.** The alert fires when S23 Ship Confirmations takes in fewer than 20 FlowFiles a second for a minute or when the queue `s23-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s23-to-throttle`. Whether a fix worked is decided by FlowFiles into S23 Ship Confirmations. The fix we grade as correct is setting Maximum Rate on S23 Carrier Throttle to `3000`. We also accept setting Time Duration on S23 Carrier Throttle to `10 sec`.
+**How it's graded.** The alert fires when S23 Ship Confirmations takes in fewer than 20 FlowFiles a second for a minute or when the queue `s23-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s23-to-throttle`. Whether a fix worked is decided by FlowFiles into S23 Ship Confirmations. The fix we grade as correct is setting Maximum Rate on S23 Carrier Throttle to `3000` or higher. We also accept setting Time Duration on S23 Carrier Throttle to `10 sec` or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>
@@ -1635,7 +1635,7 @@ flowchart TD
     class p4 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s29-ingest` holds more than 4,000 FlowFiles for a minute. We also chart the size of the queue `s29-to-compress`, FlowFiles out of S29 Compress Statement and node CPU. Whether a fix worked is decided by the size of the queue `s29-ingest`. The fix we grade as correct is setting Compression Level on S29 Compress Statement to `1`. We also accept setting Compression Level on S29 Compress Statement to `3`.
+**How it's graded.** The alert fires when the queue `s29-ingest` holds more than 4,000 FlowFiles for a minute. We also chart the size of the queue `s29-to-compress`, FlowFiles out of S29 Compress Statement and node CPU. Whether a fix worked is decided by the size of the queue `s29-ingest`. The fix we grade as correct is setting Compression Level on S29 Compress Statement to `1` or lower. We also accept setting Compression Level on S29 Compress Statement to `3` or lower. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>
@@ -1882,7 +1882,7 @@ flowchart TD
     class p4,p6 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s32-to-throttle` holds more than 1,500 FlowFiles for a minute or when the queue `s32-to-post` holds more than 1,500 FlowFiles for a minute. We also chart FlowFiles into S32 Ledger Entries. Whether a fix worked is decided by the size of the queue `s32-to-throttle` and the size of the queue `s32-to-post`. Its KPIs only clear once both fixes are in, changing the parameter `s32.max.rate` to `50` and setting the run schedule of S32 Post Invoice to 0 sec. For the first proposal we grade changing the parameter `s32.max.rate` to `50` as the design fix. We also accept setting the run schedule of S32 Post Invoice to 0 sec or setting the concurrent tasks on S32 Post Invoice to 8 or more. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when the queue `s32-to-throttle` holds more than 1,500 FlowFiles for a minute or when the queue `s32-to-post` holds more than 1,500 FlowFiles for a minute. We also chart FlowFiles into S32 Ledger Entries. Whether a fix worked is decided by the size of the queue `s32-to-throttle` and the size of the queue `s32-to-post`. Its KPIs only clear once both fixes are in, changing the parameter `s32.max.rate` to `50` and setting the run schedule of S32 Post Invoice to 0 sec. For the first proposal we grade changing the parameter `s32.max.rate` to `50` or higher as the design fix. We also accept setting the run schedule of S32 Post Invoice to 0 sec or setting the concurrent tasks on S32 Post Invoice to 8 or more. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 11 processors, 10 connections</summary>
@@ -1960,7 +1960,7 @@ flowchart TD
     class p1,p3 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s33-to-gate` holds more than 1,500 FlowFiles for a minute or when the queue `s33-copies` holds more than 1,500 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s33-to-gate`. Its KPIs only clear once both fixes are in, enabling S33 Meter Gate and changing the parameter `s33.copies` to `1`. For the first proposal we grade enabling S33 Meter Gate as the design fix. We also accept changing the parameter `s33.copies` to `1`.
+**How it's graded.** The alert fires when the queue `s33-to-gate` holds more than 1,500 FlowFiles for a minute or when the queue `s33-copies` holds more than 1,500 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s33-to-gate`. Its KPIs only clear once both fixes are in, enabling S33 Meter Gate and changing the parameter `s33.copies` to `1`. For the first proposal we grade enabling S33 Meter Gate as the design fix. We also accept changing the parameter `s33.copies` to `1` or lower. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>
@@ -2043,7 +2043,7 @@ flowchart TD
     class p9 fix
 ```
 
-**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes or when the queue `s34-to-compress` holds more than 50 FlowFiles for a minute or when the queue `s34-to-send` holds more than 1,500 FlowFiles for a minute. Whether a fix worked is decided by node CPU and the size of the queue `s34-to-send`. Its KPIs only clear once both fixes are in, scaling the deployment to SMALL with 1 node and setting the run schedule of S34 Send Notice to 0 sec. For the first proposal we grade scaling the deployment to SMALL with 1 node or larger as the design fix. We also accept setting the run schedule of S34 Send Notice to 0 sec, scaling the deployment to MEDIUM with 1 node or larger, setting Compression Level on S34 Compress Archive to `1` or setting the concurrent tasks on S34 Send Notice to 8 or more. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes or when the queue `s34-to-compress` holds more than 50 FlowFiles for a minute or when the queue `s34-to-send` holds more than 1,500 FlowFiles for a minute. Whether a fix worked is decided by node CPU and the size of the queue `s34-to-send`. Its KPIs only clear once both fixes are in, scaling the deployment to SMALL with 1 node and setting the run schedule of S34 Send Notice to 0 sec. For the first proposal we grade scaling the deployment to SMALL with 1 node or larger as the design fix. We also accept setting the run schedule of S34 Send Notice to 0 sec, scaling the deployment to MEDIUM with 1 node or larger, setting Compression Level on S34 Compress Archive to `1` or lower or setting the concurrent tasks on S34 Send Notice to 8 or more. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 11 processors, 9 connections</summary>
@@ -2433,7 +2433,7 @@ flowchart TD
     classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
 ```
 
-**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes. We also chart the size of the queue `s39-to-compress` and FlowFiles into S39 Index Audit. Whether a fix worked is decided by node CPU. The fix we grade as correct is scaling the deployment to SMALL with 1 node or larger. We also accept scaling the deployment to MEDIUM with 1 node or larger or setting Compression Level on S39 Compress Export to `1`. The right fix at less than that is graded as the right lever with the value short.
+**How it's graded.** The alert fires when node CPU is above 85% for 5 minutes. We also chart the size of the queue `s39-to-compress` and FlowFiles into S39 Index Audit. Whether a fix worked is decided by node CPU. The fix we grade as correct is scaling the deployment to SMALL with 1 node or larger. We also accept scaling the deployment to MEDIUM with 1 node or larger or setting Compression Level on S39 Compress Export to `1` or lower. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 8 connections</summary>
@@ -3171,7 +3171,7 @@ flowchart TD
     class p5 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s49-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s49-normalized`, the size of the queue `s49-to-batch`, FlowFiles out of S49 Batch Orders and the size of the queue `s49-exports-2`. Whether a fix worked is decided by the size of the queue `s49-ingest`. The fix we grade as correct is setting Minimum Number of Entries on S49 Batch Orders to `5000`. We also accept setting the back pressure on `s49-to-batch` to 30,000 objects or setting Max Bin Age on S49 Batch Orders to `1 min`.
+**How it's graded.** The alert fires when the queue `s49-ingest` holds more than 8,000 FlowFiles for a minute. We also chart the size of the queue `s49-normalized`, the size of the queue `s49-to-batch`, FlowFiles out of S49 Batch Orders and the size of the queue `s49-exports-2`. Whether a fix worked is decided by the size of the queue `s49-ingest`. The fix we grade as correct is setting Minimum Number of Entries on S49 Batch Orders to `5000` or lower. We also accept setting the back pressure on `s49-to-batch` to 30,000 objects or setting Max Bin Age on S49 Batch Orders to `1 min` or shorter. The right fix at less than that is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 10 connections</summary>
@@ -6205,7 +6205,7 @@ flowchart TD
     class p3 fix
 ```
 
-**How it's graded.** The alert fires when the queue `s107-to-verify` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S107 Verify Identity. Whether a fix worked is decided by the size of the queue `s107-to-verify`. The fix we grade as correct is switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE. We also accept switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE with a maximum backoff of 30 sec.
+**How it's graded.** The alert fires when the queue `s107-to-verify` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S107 Verify Identity. Whether a fix worked is decided by the size of the queue `s107-to-verify`. The fix we grade as correct is switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE. We also accept switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE with a maximum backoff of 30 sec or shorter. The right fix at less than that is graded as the right lever with the value short. The same setting at another value is graded as the right lever with the value short.
 
 <details>
 <summary>Settings: 10 processors, 9 connections</summary>

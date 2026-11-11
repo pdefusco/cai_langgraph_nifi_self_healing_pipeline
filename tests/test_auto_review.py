@@ -57,9 +57,20 @@ def test_the_kind_is_the_design_fixs_not_an_acceptable_ones():
         (ar.REJECT, ar.LEVER)
 
 
+def test_a_wrong_text_value_is_not_told_to_size_it():
+    # NFH-125: "size it from the intake and backlog" is no help for a JSON path.
+    prop = lambda target, name, value: {"action": "SET_PROCESSOR_PROPERTY", "target": target,  # noqa: E731
+                                        "property": name, "value": value}
+
+    assert ar.verdict([prop("S11 Extract Order", "orderId", "$.orderId")], S["S11"]) == (ar.REJECT, ar.VALUE)
+    assert ar.verdict([prop("S20 Compress", "Compression Level", "5")], S["S20"]) == (ar.REJECT, ar.SHORT)
+    assert ar.verdict([{"action": "SET_RETRY_POLICY", "target": "S12 Transient Service",
+                        "backoff": "YIELD_PROCESSOR"}], S["S12"]) == (ar.REJECT, ar.VALUE)
+
+
 def test_no_reason_gives_the_design_fix_away():
     # The reason is what memory and the playbook drafter read: no component, action or value of any design.
-    reasons = (ar.NOTHING, ar.PART, ar.SHORT, ar.LEVER, ar.KIND, ar.COMPONENT)
+    reasons = (ar.NOTHING, ar.PART, ar.SHORT, ar.VALUE, ar.LEVER, ar.KIND, ar.COMPONENT)
     designs = [f for s in S.values() for f in (*s.expected, *s.acceptable)]
 
     for reason in reasons:

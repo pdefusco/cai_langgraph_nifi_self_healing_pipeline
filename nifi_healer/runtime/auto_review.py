@@ -68,7 +68,10 @@ NOTHING = "Nothing in this group needs a change: its readings are within what it
 PART = "Part of the fix, not all of it: what holds this group back takes more than this change."
 SHORT = ("The right change on the right component, but not far enough to clear the problem: size it from the "
          "measured intake and backlog.")
-LEVER = ("The right component, the wrong change: this setting is not what limits it. Look again at what the "
+# Short on text, a JSON path or a URL, where sizing is no help (NFH-125).
+VALUE = ("The right setting on the right component, at the wrong value: check what the readings and the "
+         "component's configuration say it should be.")
+LEVER =("The right component, the wrong change: this setting is not what limits it. Look again at what the "
          "readings say causes the symptom.")
 KIND = "The wrong kind of fix: the evidence points to a different kind of change than this one."
 COMPONENT = ("The wrong component: the cause is elsewhere in this group. Trace the symptom back to the stage it "
@@ -110,6 +113,26 @@ def _families(steps: list) -> set:
     return {catalog.CATALOG[s["action"]].family for s in steps if s.get("action") in catalog.CATALOG}
 
 
+def _short_on_text(mine: list, designs: list, scenario) -> bool:
+    """Whether a picked design falls short only on text values: a step it names that mine has, at other text."""
+
+    def text(fix) -> bool:
+        wrong = {f for s in mine if sc.step_key(s) == sc.step_key(fix) for f in sc.short_of(s, fix, scenario)}
+
+        return bool(wrong) and all(sc.amount(fix.get(f)) is None for f in wrong)
+
+    for design in designs:
+        if not _keys(design) <= _keys(mine):
+            continue
+
+        unreached = [f for f in design if not any(sc.reaches(s, f, scenario) for s in mine)]
+
+        if unreached and all(map(text, unreached)):
+            return True
+
+    return False
+
+
 def verdict(steps: list, scenario) -> tuple:
     """(APPROVE or REJECT, the reason), as the Scorecard grades the steps against the scenario's design label."""
 
@@ -118,12 +141,12 @@ def verdict(steps: list, scenario) -> tuple:
     if graded in (sc.EXPECTED, sc.ACCEPTABLE):
         return APPROVE, f"the {graded} fix"
 
-    if graded == sc.SHORT:
-        return REJECT, SHORT
-
     mine = catalog.merge_routes([catalog.normalize(s) for s in steps if isinstance(s, dict)])
     mine = mine or [{"action": "NO_ACTION"}]
     designs = [list(scenario.expected)] + [[f] for f in scenario.acceptable]
+
+    if graded == sc.SHORT:
+        return REJECT, VALUE if _short_on_text(mine, designs, scenario) else SHORT
 
     if all(f.get("action") == "NO_ACTION" for f in scenario.expected):
         return REJECT, NOTHING
