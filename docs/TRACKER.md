@@ -146,8 +146,29 @@ them.
 | NFH-122 | Fix | A new playbook section folded into another one is added again at every start | Done | |
 | NFH-123 | Pack | p26-holdout-a and p27-holdout-b: S103–S110, faults nothing was tuned on | Built | 0d070d9 |
 | NFH-124 | Fix | The answer-key reviewer rejects every fix of a group whose design the tenant already has, and drafts from it | In progress | 1b071f8 |
+| NFH-125 | Fix | The answer key grades a property, parameter or retry step as the fix at any value | Built | d1432ed |
 
 ## Open tickets
+
+### NFH-125 · Fix · The answer key grades a property, parameter or retry step as the fix at any value
+Live, armed run #2 (11-10): S11's `orderId` set to `$.orderId`, the fault itself, graded "expected", the answer-key
+reviewer approved it and it was APPLIED (NO_CHANGE at 15 and 60 min). `scorecard.reaches` checked only tasks,
+schedules, resizes and the DLQ by value; every other step passed on its action, component and property or parameter
+alone, so a wrong S17 URL, s18.copies=10, Compression Level 8 or S12's YIELD_PROCESSOR backoff graded as the design
+fix too, and the Scorecard, memory, priors, soak, replay and the scenario README all counted them. p3 most likely has
+`$.orderId` back: the re-baseline of p3, p5, p6 and p7 before the next armed run (NFH-124) clears it.
+- 2026-11-11: a property, parameter or retry step counts by every value field its label sets (`value`; `backoff`,
+  `max_backoff`, `retry_count`; one the label leaves out is free). An amount (a number, a duration, a size) goes at
+  least as far from the deployed value as the label's, as tasks do: Compression Level 9 → 1 takes 0–1, s32.max.rate
+  5 → 50 takes 50 or more; a property the deployed flow leaves unset is unbounded (S15's Max Bin Age: 5 min takes
+  anything shorter). Text (a JSON path, a URL, a backoff mechanism) must be the label's. `scorecard.short_of` names
+  the fields that fall short; the reviewer rejects one short only on text with a new reason (`VALUE`: "at the wrong
+  value, check what the readings and the component's configuration say"), not "size it from the intake". Expiration,
+  penalty/yield and scheduled state stay graded by identity. The scenario README says "or lower/longer" for amounts
+  and that another value is the right lever, short. Tests: test_a_setting_counts_by_its_value,
+  test_every_amount_a_label_sets_has_a_way_to_go, test_a_wrong_text_value_is_not_told_to_size_it. 830 pass. Oracle
+  replay on p3, p4, p5, p6, p8, p11, p13, p14 and p17 (19 scenarios): valid, design and lever 100%, worked 95%, S32
+  0% as before (two faults, one fix).
 
 ### NFH-124 · Fix · The answer-key reviewer rejects every fix of a group whose design the tenant already has, and drafts from it
 Live, armed run #2 (11-10): run #1's writes stay on the tenant, so S10's DLQ route, S18's s18.copies=1 and S21's
@@ -172,8 +193,8 @@ asked for). A re-baseline of p3, p5, p6 and p7 before the next armed run needs t
   test_an_acceptable_fix_the_deployment_already_has_is_left_for_a_person. S11 was approved and APPLIED again
   (NO_CHANGE at 15 and 60 min): its unmatched queue falls ~13/min with nothing new coming in, so it looks fixed
   since run #1 and draining a backlog at Quarantine's rate; the agent's value must differ from the deployed one, or
-  the plan would have said "already". The answer key also takes any value of a property step as the design fix
-  (`scorecard.reaches`, identity alone: `orderId` = `$.orderId`, the fault itself, grades "expected").
+  the plan would have said "already". The answer key also took any value of a property step as the design fix:
+  NFH-125.
 
 ### NFH-123 · Pack · p26-holdout-a and p27-holdout-b: S103–S110, faults nothing was tuned on
 Before autonomy runs with the answer-key reviewer off, a measure of the agent on faults no prompt, playbook or replay
