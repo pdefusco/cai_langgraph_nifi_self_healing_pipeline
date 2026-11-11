@@ -89,6 +89,8 @@ feature, fix and pack as a ticket (`NFH-<n>`).
 | **System** | Configuration and health of the app itself: client, writes, LLM, poller, guardrails, autonomy, chaos, App health |
 
 Every tab opens with a **How to read this page** key (`nifi_healer/ui/legend.py`).
+**[docs/DEMO.md](docs/DEMO.md)** walks through each tab for a demo, with a Scorecard example to read out and the
+System tab row by row.
 
 ---
 
