@@ -169,6 +169,8 @@ fix too, and the Scorecard, memory, priors, soak, replay and the scenario README
   test_every_amount_a_label_sets_has_a_way_to_go, test_a_wrong_text_value_is_not_told_to_size_it. 830 pass. Oracle
   replay on p3, p4, p5, p6, p8, p11, p13, p14 and p17 (19 scenarios): valid, design and lever 100%, worked 95%, S32
   0% as before (two faults, one fix).
+- 2026-11-11: d1432ed and 807d440 pushed; live after the 10:29 PST pull_and_restart. Parked for a demo: the live
+  check (the `[auto-review]` lines since the restart, a `VALUE` reject on S11) is not done yet.
 
 ### NFH-124 · Fix · The answer-key reviewer rejects every fix of a group whose design the tenant already has, and drafts from it
 Live, armed run #2 (11-10): run #1's writes stay on the tenant, so S10's DLQ route, S18's s18.copies=1 and S21's

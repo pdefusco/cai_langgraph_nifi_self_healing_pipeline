@@ -6,8 +6,9 @@ where each piece runs, and what it keeps. The work that changes it is ticketed i
 
 ## The parts
 
-One CAI Application process runs everything: the UI, the poller, the agent and the chaos injector. It reaches the
-DataFlow tenant only through the `cdp` CLI, and the LLM and embedding endpoint over HTTPS.
+One CAI Application process runs everything: the UI, the poller, the agent, the chaos injector and, when testing on
+the packs, the answer-key reviewer. It reaches the DataFlow tenant only through the `cdp` CLI, and the LLM and
+embedding endpoint over HTTPS.
 
 ```mermaid
 flowchart LR
@@ -23,6 +24,7 @@ flowchart LR
         exec["executor<br/>catalog steps to a flow edit<br/>and cdp commands"]
         auto["autonomy<br/>veto windows"]
         chaos["chaos injector"]
+        review["answer-key reviewer<br/>behind SELFHEAL_AUTO_REVIEW"]
         drafter["playbook drafter"]
         ui["Gradio UI<br/>views.py"]
     end
@@ -49,6 +51,7 @@ flowchart LR
     ui --> store
     poller -- "every KPI poll" --> auto -- "approve after the window" --> agent
     chaos --> guard
+    poller -- "every tick" --> review -- "decide reviews, approve drafts" --> agent
     agent -- "a rejection" --> drafter --> llm
     drafter -- "approved edits" --> chroma
 ```
@@ -245,3 +248,4 @@ Append only: one entry per change to the architecture, newest last, named by its
 | 2026-11-05 | NFH-94 | Every node but human_review and the record_* nodes is timed (`nodes.timed`): telemetry `agent.<node>`, and the run's `timings` on the validation report with the proposal's prompt size |
 | 2026-11-06 | NFH-97 | gather_context shows a group of more than 60 processors only around the fault: the flows the incident's KPIs read (`inventory.scope`), a line on what it leaves out, and those flows' readings; validation still plans on the whole flow |
 | 2026-11-07 | NFH-96 | Nested process groups and ports: the inventory holds the incident group's subtree by path, scope follows ports, an edit finds a target below the group by name or "Sub/Name" and keeps a DLQ route in its source's group, and the sim runs ports as pass-throughs |
+| 2026-11-09 | NFH-116 | The answer-key reviewer (`runtime/auto_review.py`), behind `SELFHEAL_AUTO_REVIEW`: on the poller's tick it decides each paused review as the Scorecard grades it, through the Review Queue's paths, and approves playbook drafts that pass its checks; NFH-124 and NFH-125 refine what it grades against |

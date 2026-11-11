@@ -3,29 +3,67 @@
 A LangGraph agent, running as a Cloudera AI (CAI) Workbench Application, that:
 
 - watches the KPIs of NiFi 2.6.0 flows deployed in CDF DataFlow (Public Cloud, AWS);
-- diagnoses breaches using internal playbooks retrieved from Chroma;
-- proposes a remediation from a fixed action catalog;
-- waits for a human to approve, edit or reject the proposal;
-- redeploys the change; and
-- measures whether the KPI actually improved.
+- diagnoses a breach from the flow, its KPI readings, internal playbooks and similar past cases;
+- proposes a remediation from a fixed action catalog, checked deterministically before anyone sees it;
+- waits for a person to approve, edit or reject it (or, for a fix with a track record, a veto window);
+- applies the change through the guardrails; and
+- measures whether the KPI actually improved, 15 minutes, 1 hour and 12 hours later.
+
+What it learns feeds back in: each decided case becomes a past case the next diagnosis is shown, and a rejection
+drafts an edit to the playbook the agent relied on, which a person approves on the Playbooks tab.
 
 Every read and write goes through the `cdp df` / `cdp dfworkload` CLI (cdpcli 0.9.164). The NiFi REST API cannot be
 used on CDF Public Cloud, because it rejects CDP workload tokens.
 
+### Reference architecture
+
+```mermaid
+flowchart LR
+    subgraph tenant["CDF DataFlow (AWS)"]
+        dep["nfh- deployments<br/>NiFi 2.6 flows, KPIs, alerts"]
+    end
+    subgraph app["CAI Application: one process"]
+        poller["poller + detectors<br/>health, KPI charts, events"]
+        subgraph agent["LangGraph agent, one thread per incident"]
+            ctx["gather_context<br/>flow inventory, readings"]
+            rag["retrieve_playbooks<br/>playbooks, past cases"]
+            llm_node["diagnose_and_propose"]
+            val["validate_proposal<br/>catalog, bounds, capacity"]
+            review["human_review<br/>paused, survives restarts"]
+            apply["apply_remediation"]
+        end
+        exec["executor + guardrails<br/>nfh- prefix, cooldown, drift"]
+        verify["outcomes<br/>15 min, 1 h, 12 h"]
+        drafter["playbook drafter"]
+        ui["Gradio UI<br/>Fleet, Review Queue, History, Playbooks,<br/>Monitor, Scorecard, Soak, System"]
+    end
+    subgraph data["Project filesystem"]
+        store[("SQLite store")]
+        ckpt[("checkpoints")]
+        chroma[("Chroma")]
+    end
+    llm["CAI Inference<br/>LLM + embeddings"]
+
+    dep -- "cdp CLI reads" --> poller -- "incident" --> ctx --> rag --> llm_node --> val
+    val -- "invalid: retry" --> llm_node
+    val --> review
+    review -- "approve" --> apply --> exec -- "cdp CLI writes" --> dep
+    review -- "reject + reason" --> drafter
+    ui -- "approve, edit, reject" --> review
+    apply --> verify --> store
+    rag <--> chroma
+    llm_node <--> llm
+    drafter <--> llm
+    drafter -- "approved edits" --> chroma
+    review <--> ckpt
+    store --> ui
 ```
-poller (tier A health ~10s, tier B KPI charts ~30s)
-  └─ detectors → incident ─┐
-                           ▼
-gather_context → retrieve_playbooks → diagnose_and_propose (LLM) → validate_proposal
-                                          ▲  invalid, retries left  │
-                                          └─────────────────────────┤
-                                     NO_ACTION → record_no_action   │
-                                                                    ▼
-                                    human_review  [interrupt, survives restarts]
-                         approve → apply_remediation → VERIFYING → outcome (IMPROVED / NO_CHANGE / WORSENED)
-                         edit    → validate_proposal → human_review
-                         reject  → record_feedback (reason required)
-```
+
+Off by default, each behind a setting: a second LLM reading of each fix (`SELFHEAL_CRITIC`), read-only tools the
+agent may call before it proposes (`SELFHEAL_TOOLS`), trusted fixes approving themselves after a veto window
+(`SELFHEAL_AUTONOMY`), a chaos injector that plants faults again (`SELFHEAL_CHAOS`), and, for testing on the packs,
+an answer-key reviewer that decides reviews from the scenarios' design fixes (`SELFHEAL_AUTO_REVIEW`). A fix measured
+worse gets a rollback proposal, which goes through review like any other.
 
 **The LLM never writes flow JSON.** It chooses actions from a catalog, such as `SET_CONCURRENT_TASKS` with
 target `S01 Consumer` and value 4, and deterministic code turns that choice into:
@@ -33,12 +71,24 @@ target `S01 Consumer` and value 4, and deterministic code turns that choice into
 - a flow diff, the edit, a validation result, and
 - the exact `cdp` commands the reviewer sees before approving.
 
-**Phases.** Phase 1 is this repo: the MVP plus outcome capture from day one. Phase 2 is a dashboard that reads the
-same store. Phase 3 learns from the recorded outcomes. Both later phases need the ground-truth outcomes that Phase 1
-already writes to the `outcomes` table.
+**Following along.** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full parts diagram, the agent's graph
+(generated from the code), each node, the threads and what is kept. [docs/TRACKER.md](docs/TRACKER.md) logs every
+feature, fix and pack as a ticket (`NFH-<n>`).
 
-**Following along.** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) shows the parts and the agent's graph, drawn from
-the code. [docs/TRACKER.md](docs/TRACKER.md) logs every feature, fix and pack as a ticket (`NFH-<n>`).
+### The app's tabs
+
+| Tab | What it is for |
+|---|---|
+| **Fleet** | Every deployment, process group and KPI as the poller last read them, and which are breaching |
+| **Review Queue** | Each incident's evidence, the agent's diagnosis and fix, the diff and exact `cdp` commands; approve, edit, reject or diagnose again |
+| **History** | Every incident, what was done and what each verify window measured; label a fix, re-check a window, propose a rollback |
+| **Playbooks** | Playbook edits drafted from rejections, with their reason and diff, waiting for a person |
+| **Monitor** | KPIs over time with every change marked, and a before/after ledger per change |
+| **Scorecard** | How often the agent's proposals are valid, pick the design fix, are approved and work, by agent version, scenario, fix or reviewer; live or replay |
+| **Soak** | Chaos-planted faults followed from detection to cleared, over days |
+| **System** | Configuration and health of the app itself: client, writes, LLM, poller, guardrails, autonomy, chaos, App health |
+
+Every tab opens with a **How to read this page** key (`nifi_healer/ui/legend.py`).
 
 ---
 
@@ -52,9 +102,12 @@ nifi_healer/
   kpi/                     chart parsing, detectors, outcome evaluator
   flow/                    flow → compact inventory for the LLM; whitelisted edit ops + validation
   actions/                 action catalog (bounds, API surface) and the guarded executor
-  agent/                   LangGraph state, prompts, nodes, graph (SqliteSaver checkpoints)
-  rag/                     playbook ingest and retrieval (Chroma)
-  runtime/poller.py        tiered polling thread, incidents, outcome evaluation
+  agent/                   LangGraph state, prompts, nodes, graph (SqliteSaver checkpoints), tools, autonomy
+  rag/                     playbook ingest and retrieval (Chroma), past cases (memory), fix track records
+                           (priors), the playbook drafter and its overlay
+  runtime/                 poller.py (tiered polling, incidents, outcome evaluation), auto_review.py, telemetry.py
+  eval/                    scorecard (grading), replay (offline runs), soak (chaos episodes)
+  chaos.py                 the chaos injector
   sim/                     the mock tenant (world model, bootstrap)
   store/                   SQLite store (incidents, proposals, reviews, actions, outcomes)
   ui/                      views.py (plain data) + gradio_app.py (layout)
@@ -67,8 +120,8 @@ tests/
 
 ## Test scenarios
 
-There are 45 scenarios in 20 packs. Each pack is one deployment, named `nfh-<pack>`, and each scenario is one process
-group inside it. **[flows/scenarios/README.md](flows/scenarios/README.md)** walks through each one, with a diagram
+There are 110 scenarios in 27 packs. Each pack is one deployment, named `nfh-<pack>`, and each scenario is one
+process group inside it. **[flows/scenarios/README.md](flows/scenarios/README.md)** walks through each one, with a diagram
 of its flow, how it's graded and its full settings. The walkthroughs are written by hand in
 `flows/scenario_walkthroughs.py`, and `python flows/scenario_docs.py` generates the rest. Every scenario declares:
 
@@ -86,6 +139,20 @@ of its flow, how it's graded and its full settings. The walkthroughs are written
 | `p5-parameters` | XS ×1 | S17 Wrong Endpoint Parameter → parameter update · S18 Load-test Parameter Left On → parameter update · **S19 Healthy Control → no incident / NO_ACTION** |
 | `p6-sizing-cpu` | XS ×1 | S20 CPU Saturated → scale up |
 | `p7-sizing-overprov` | M ×2 | S21 Over-provisioned → scale down (cost) |
+
+The packs after p7 build on these faults, each XS ×1:
+
+| Packs | What they test | Scenarios |
+|---|---|---|
+| `p8-orders`, `p9-clickstream`, `p10-iot`, `p11-payments` | cascades: the alert fires stages away from the cause, in realistic pipelines | S22–S29 |
+| `p12-warehouse`, `p13-billing`, `p14-capacity` | compound faults: two causes, so one fix is not enough | S30–S34 |
+| `p15-bursts`, `p16-slow-burn`, `p17-nightly-batch` | faults on a schedule, slow burns, and a nightly batch that outgrows its sizing | S35–S39 |
+| `p18-noisy-bursts`, `p19-daily-cycle`, `p20-big-healthy` | **controls**: bursts within capacity, expected rejects, load that follows the clock, a large busy flow; no incident is the right answer | S40–S45 |
+| `p21-wide-100`, `p22-wide-250` | wide groups of 100 and 250 processors, p22 with decoys | S46–S50 |
+| `p23-siblings` | faults among 24 sibling groups | S51–S77 |
+| `p24-healthy-500` | **control**: 500 healthy processors | S78–S97 |
+| `p25-nested` | faults in nested groups, below ports | S98–S102 |
+| `p26-holdout-a`, `p27-holdout-b` | **holdout**: billing, parcels, pharmacy, identity, onboarding and auctions faults nothing was tuned on | S103–S110 |
 
 **The action catalog:**
 
@@ -139,7 +206,7 @@ Each action family uses one API path:
 
 ## Runbook 1: offline (mock tenant)
 
-No CDP access is needed. The mock tenant simulates all 7 deployments:
+No CDP access is needed. The mock tenant simulates every pack's deployment:
 
 - it runs 20× faster than wall time;
 - its KPI charts react to applied fixes; and
@@ -170,7 +237,8 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
 
 **What to try:**
 
-- **Fleet:** about 20 KPIs breach within seconds, and an incident opens for every scenario except S19.
+- **Fleet:** KPIs breach within seconds, and an incident opens for every faulty scenario; the controls (S19,
+  p18–p20, p24) stay quiet.
 - **Review Queue:**
   - Each incident shows its evidence, the diagnosis with playbook citations, the diff and the exact commands.
   - **Approve** applies the change to the mock. With writes armed it runs in the background: a flow edit imports
@@ -240,6 +308,13 @@ row asks the endpoint whether it accepts the token, and an incident whose run st
   agent version gains `/playbooks:<fingerprint>`, and the replay reads them too (`--no-playbook-edits` for the
   files alone). **Make the applied edits permanent** gives them as a patch to commit. The platform rules are never
   edited. `SELFHEAL_DRAFT_PLAYBOOK_EDITS=false` turns drafting off.
+- **Answer-key reviewer.** For long test runs on the packs, `SELFHEAL_AUTO_REVIEW=true` decides each review as the
+  Scorecard grades it (`nifi_healer/runtime/auto_review.py`): it approves the scenario's design fix or an acceptable
+  one, and rejects anything else with a generic reason that never gives the design away, through the Review Queue's
+  own paths, as reviewer "answer key (auto-review)". It approves a playbook draft that passes its checks, at most
+  `SELFHEAL_AUTO_REVIEW_EDITS_PER_SECTION` on one section. A review it cannot grade, or whose design fix the
+  deployment already has, is left for a person. While writes are armed it approves only with
+  `SELFHEAL_AUTO_REVIEW_ARMED=true` too. Its decisions are logged as `[auto-review]` lines.
 
 The mock tenant persists in `var/data/mock_world.json`. To start over, run
 `.venv/bin/python -m nifi_healer.sim.bootstrap --reset` instead of deleting files.
@@ -299,7 +374,7 @@ python provision/05_register_fleet.py --pack p1-throughput          # fleet file
    deleted one at a time; the flow is deleted as a whole.
 
 If `03` reports a metric id the tenant does not offer, correct it in `provision/out/metric_overrides.json` and re-run
-`03`, rather than editing 21 scenarios.
+`03`, rather than editing every scenario.
 
 ## CAI Application settings
 
@@ -358,6 +433,8 @@ up again, and so does an app restart.
 | `SELFHEAL_INCIDENT_COOLDOWN` | 900 | seconds before a process group can reopen an incident |
 | `SELFHEAL_VERIFY_SETTLE` / `_WINDOW` | 300 / 900 | outcome measurement after a change |
 | `SELFHEAL_VERIFY_LATER_WINDOWS` | 3600,43200 | later verdicts on each fix, in seconds |
+| `SELFHEAL_PROPOSE_ROLLBACKS` / `SELFHEAL_ROLLBACK_WITHIN` | true / 3600 | propose a rollback of a fix measured WORSENED; seconds to keep trying while its group is busy |
+| `SELFHEAL_WATCH_ALL` | false | a watch-only KPI on every connection and processor of a group the scenario doesn't chart (added at the 04 KPI step) |
 | `SELFHEAL_COOLDOWN`, `SELFHEAL_MAX_ACTIONS_PER_WINDOW`, `SELFHEAL_ACTION_WINDOW` | 1800, 3, 86400 | write rate limits per deployment |
 | `SELFHEAL_AGENT_WORKERS` | 2 | concurrent agent runs |
 | `SELFHEAL_AUTO_DIAGNOSE` | `true` | diagnose new incidents automatically (else use the Diagnose button), and ask again after 5, 15, then every 30 minutes when the LLM didn't answer |
@@ -375,6 +452,10 @@ up again, and so does an app restart.
 | `SELFHEAL_SAMPLES` | 1 | first proposals drawn at once; the valid fix most of them agree on goes on |
 | `SELFHEAL_TOOLS` | false | the agent may check a fix and read a KPI's history before it proposes, up to `SELFHEAL_TOOL_CALLS` (3) calls a proposal |
 | `SELFHEAL_AUTONOMY` / `SELFHEAL_AUTONOMY_AFTER` / `SELFHEAL_AUTONOMY_VETO` | mock only / 3 / 600 | trusted fixes approve themselves; wins a person approved to earn trust; veto window in seconds |
+| `SELFHEAL_DRAFT_PLAYBOOK_EDITS` | true | draft a playbook edit from each rejection or wrong-fix label |
+| `SELFHEAL_CHAOS` | false | plant fixed scenarios' faults again |
+| `SELFHEAL_CHAOS_TICK` / `_REST` / `_PER_DAY` / `_SPACING` | 30 for mock, 600 for live / 14400 / 3 / 7200 | wall seconds between chaos ticks; tenant seconds a scenario rests first; plants a day; tenant seconds between plants on one deployment |
+| `SELFHEAL_AUTO_REVIEW` / `_ARMED` / `_EDITS_PER_SECTION` | false / false / 2 | the answer-key reviewer; whether it approves while writes are armed; its applied edits per playbook section |
 | `SELFHEAL_DATA_DIR`, `SELFHEAL_CHROMA_DIR` | `/home/cdsw/...` on CAI, `./var/...` elsewhere | where state lives |
 | `SELFHEAL_APP_HOST`, `CDSW_APP_PORT` / `SELFHEAL_APP_PORT` | `127.0.0.1`, 8100 | UI bind address |
 
@@ -392,5 +473,7 @@ The suite runs fully offline. It covers:
 - the executor and its guardrail refusals;
 - RAG ingest and retrieval;
 - the whole LangGraph flow on the mock tenant with a scripted LLM: incident → interrupt → approve, edit or reject →
-  applied → outcome IMPROVED, plus a pending review surviving a restart; and
+  applied → outcome IMPROVED, plus a pending review surviving a restart;
+- the Scorecard's grading, memory, priors, autonomy, rollbacks, chaos, the playbook drafter and the answer-key
+  reviewer; and
 - the UI views.
