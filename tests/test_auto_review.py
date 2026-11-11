@@ -285,7 +285,7 @@ def test_a_design_fix_the_deployment_already_has_is_left_for_a_person(agent, mon
     assert store.incident(incident["id"])["status"] == "PENDING_REVIEW" and graph.pending(incident["id"])
     assert store.reviews(incident["id"]) == [] and store.playbook_edits() == []
     out = capsys.readouterr().out
-    assert out.count("its design fix is already on the deployment (UPDATE_PARAMETER s18.copies 1 on "
+    assert out.count("a whole fix of its design is already on the deployment (UPDATE_PARAMETER s18.copies 1 on "
                      "nfh-p5-parameters) and it still alerts: left for a person") == 1
     assert "[auto-review] done:" in out
 
@@ -314,3 +314,28 @@ def test_what_the_deployment_already_has_is_left_out_of_the_design(agent, monkey
     assert f"{incident['id']} (S10, the deployment already has ROUTE_RELATIONSHIP_TO_DLQ" in capsys.readouterr().out
 
     assert ar.verdict([timeout, tasks], S["S10"]) == (ar.REJECT, ar.PART)        # against the whole design
+
+
+def test_an_acceptable_fix_the_deployment_already_has_is_left_for_a_person(agent, monkeypatch, capsys):
+    # Live, after NFH-124: S20's Compression Level 1 stayed from an earlier run and changed nothing; graded against
+    # the resize alone, every proposal was "the wrong kind of fix", and three of the drafts were approved.
+    _, client, store, incidents, install = agent("p6-sizing-cpu")
+    monkeypatch.setattr(config, "ARMED", False)
+    level = next(f for f in S["S20"].acceptable if f["action"] == "SET_PROCESSOR_PROPERTY")
+    incident = incidents["S20"]
+    install(ScriptedLLM(proposal([{"action": "SET_CONCURRENT_TASKS", "target": "S20 Hash", "value": 4}])))
+    graph.start(incident["id"])
+    plan = executor.plan
+
+    def compressed(client, incident, steps, store=None):
+        if list(steps) == [level]:
+            return {"ok": False, "problems": ["S20 Compress: Compression Level is already '1'"]}
+
+        return plan(client, incident, steps, store)
+
+    monkeypatch.setattr(executor, "plan", compressed)
+    ar.tick(client, store)
+
+    assert store.incident(incident["id"])["status"] == "PENDING_REVIEW" and store.reviews(incident["id"]) == []
+    assert "a whole fix of its design is already on the deployment (SET_PROCESSOR_PROPERTY Compression Level 1 " \
+           "on S20 Compress)" in capsys.readouterr().out

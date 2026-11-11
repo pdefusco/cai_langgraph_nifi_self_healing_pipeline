@@ -165,6 +165,15 @@ asked for). A re-baseline of p3, p5, p6 and p7 before the next armed run needs t
   test_a_design_fix_the_deployment_already_has_is_left_for_a_person (S18, copies already 1),
   test_what_the_deployment_already_has_is_left_out_of_the_design (S10's route: timeout and tasks are approved, not
   "part of the fix"). A group not running as designed (S11, S20) is not caught by this.
+- 2026-11-10: live after the restart: S18 was left for a person, logged once, nothing drafted. S20 was not: its
+  acceptable Compression Level 1 is on the deployment, so every proposal was graded against the resize alone,
+  rejected "the wrong kind of fix" every ~16 min, and PE-213, 215 and 217 were approved from those reasons. A whole
+  fix, the design fix or any one acceptable fix, already there now leaves the incident for a person. Test:
+  test_an_acceptable_fix_the_deployment_already_has_is_left_for_a_person. S11 was approved and APPLIED again
+  (NO_CHANGE at 15 and 60 min): its unmatched queue falls ~13/min with nothing new coming in, so it looks fixed
+  since run #1 and draining a backlog at Quarantine's rate; the agent's value must differ from the deployed one, or
+  the plan would have said "already". The answer key also takes any value of a property step as the design fix
+  (`scorecard.reaches`, identity alone: `orderId` = `$.orderId`, the fault itself, grades "expected").
 
 ### NFH-123 · Pack · p26-holdout-a and p27-holdout-b: S103–S110, faults nothing was tuned on
 Before autonomy runs with the answer-key reviewer off, a measure of the agent on faults no prompt, playbook or replay

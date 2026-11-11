@@ -13,9 +13,11 @@ Each review waiting for a person, oldest first:
   - graded against what is left of the design: an earlier armed run's
     change stays on the deployment, so a step of the design fix, or an
     acceptable fix, the deployment already has (its plan is refused,
-    "already") is left out (NFH-124). One whose design fix is all there,
-    and still alerts, is left for a person, and nothing is drafted from it:
-    no proposal could pass, and each rejection's reason would be wrong;
+    "already") is left out (NFH-124). One with a whole fix already there,
+    the design fix or an acceptable one, still alerts though the design
+    says that clears it: it is left for a person, and nothing is drafted
+    from it, as no proposal could pass and each rejection's reason would be
+    wrong;
   - not valid after every try: rejected, with its first problem;
   - the scenario's design fix, or an acceptable one, at a value that can
     clear the problem (scorecard.match EXPECTED or ACCEPTABLE): approved,
@@ -193,8 +195,10 @@ def _review(client, store, incident: dict) -> None:
 
     there = on_deployment(client, store, incident, scenario)
 
-    if there and all(f in there for f in scenario.expected):
-        _once((iid, "there"), f"{iid} ({scenario.id}): its design fix is already on the deployment "
+    # S20, live: Compression Level 1 stayed from an earlier run and changed nothing, so every proposal was graded
+    # against the resize alone and rejected, each reason drafting a playbook edit.
+    if any(all(f in there for f in fix) for fix in (scenario.expected, *((f,) for f in scenario.acceptable))):
+        _once((iid, "there"), f"{iid} ({scenario.id}): a whole fix of its design is already on the deployment "
                               f"({'; '.join(map(_shown, there))}) and it still alerts: left for a person")
 
         return
