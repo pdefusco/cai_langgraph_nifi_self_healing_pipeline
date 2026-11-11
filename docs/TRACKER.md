@@ -142,25 +142,45 @@ them.
 | NFH-118 | Fix | A playbook draft can copy the prompt's section label into the section's text | Done | 59c06db |
 | NFH-119 | Fix | The agent sees, and spends tries on, the test harness's knobs that plant a fault | Done | d3ff6d0 |
 | NFH-120 | Fix | A playbook draft can tag its section with a symptom no incident has | Done | 7427084 |
-| NFH-121 | Fix | An armed flow edit that lands is recorded FAILED, read before CDF starts the swap | In progress | b5053a5 |
+| NFH-121 | Fix | An armed flow edit that lands is recorded FAILED, read before CDF starts the swap | Done | b5053a5 |
 | NFH-122 | Fix | A new playbook section folded into another one is added again at every start | Done | |
+| NFH-123 | Pack | p26-holdout-a and p27-holdout-b: S103–S110, faults nothing was tuned on | Built | 0d070d9 |
+| NFH-124 | Fix | The answer-key reviewer rejects every fix of a group whose design the tenant already has, and drafts from it | In progress | 1b071f8 |
 
 ## Open tickets
 
-### NFH-121 · Fix · An armed flow edit that lands is recorded FAILED, read before CDF starts the swap
-Live, the first armed run with the answer-key reviewer (11-10, 17:25–21:31): 22 of 25 approved writes ended FAILED
-with "the deployment runs …/v.N (CONCERNING_HEALTH or GOOD_HEALTH), not the new …/v.N+1", every one a flow edit; the
-three APPLIED (S17, S18, S21) were a parameter update and a resize. The writes had landed: each deployment's next
-incident read the new version ("someone changed it, so diagnose again"), and S16, S98, S53, S07, S49, S100, S05, S01,
-S02, S51, S52, S15, S14, S09 and S08 never opened again. `executor._execute` read the deployed flow once after
-`wait()`, `provisioning._wait_for_flow`, which returns as soon as the flow is steady, and the flow is steady before
-CDF starts a swap. So nothing was verified or learned from, and the FAILED rows still counted for the cooldown and
-the 3-a-day cap (p1 and p3 hit it at about 19:17; the reviewer approved their stuck reviews every minute after).
-- 2026-11-10: a flow edit and a rollback wait with `provisioning._wait_for_version`, as the provisioning reset does:
-  until the flow runs the new version and is steady, CDF fails the swap, or the 45 min deadline. The error names
-  the detailed state. FAILED rows still count for the guards: a failed swap can still have touched the deployment.
-  Tests: test_a_swap_that_reads_the_old_version_for_a_while_is_applied, test_a_swap_cdf_fails_is_failed. Next: an
-  armed run with flow edits APPLIED and verified.
+### NFH-124 · Fix · The answer-key reviewer rejects every fix of a group whose design the tenant already has, and drafts from it
+Live, armed run #2 (11-10): run #1's writes stay on the tenant, so S10's DLQ route, S18's s18.copies=1 and S21's
+smallest size are already there. The reviewer grades against `scenario.expected`, ignoring what is deployed, so no
+proposal can pass: S10 gets "Part of the fix" for the route it has, S18's queue stays at 10,000 with copies already
+1, S21 reopens every ~16 min at the minimum size. Each reject drafts a playbook edit from a wrong reason, and some
+were approved (PE-197, PE-203: "shorten" turned into "increase concurrent tasks"). S11 and S20 got their design or
+acceptable fix APPLIED and NO_CHANGE at 60 min: the groups are not behaving as designed either (checks on the canvas
+asked for). A re-baseline of p3, p5, p6 and p7 before the next armed run needs the go-ahead.
+- 2026-11-10: the reviewer plans each step of the design fix, and each acceptable fix, alone on the incident's
+  deployment (`auto_review.on_deployment`, once an incident and flow version); one the executor refuses with
+  "already" (`executor.already`) is on the deployment, and is left out of the design it grades against. An incident
+  whose design fix is all there, and still alerts, is left for a person, logged once, and nothing is drafted from
+  it. The rejection reasons stay as they were; only the log names what the deployment has. Tests:
+  test_a_design_fix_the_deployment_already_has_is_left_for_a_person (S18, copies already 1),
+  test_what_the_deployment_already_has_is_left_out_of_the_design (S10's route: timeout and tasks are approved, not
+  "part of the fix"). A group not running as designed (S11, S20) is not caught by this.
+
+### NFH-123 · Pack · p26-holdout-a and p27-holdout-b: S103–S110, faults nothing was tuned on
+Before autonomy runs with the answer-key reviewer off, a measure of the agent on faults no prompt, playbook or replay
+was tuned against: every pack so far has fed playbook edits, so its scores no longer say how the agent does on a new
+fault. Eight scenarios in new domains (carrier billing, parcels, pharmacy; identity, onboarding, ad auctions), of kinds
+the catalog fixes: a slow rater (S103), a slow schedule more tasks cannot fix (S104), a slow burn (S105), processor
+backoff on transient failures (S107), a failure self-loop (S108, the one medium-risk fix), bursts every third hour
+(S109), and two controls, an hourly backfill that drains (S106) and a 20x fan-out (S110).
+- 2026-11-10: `Pack.holdout`: the default replay leaves a holdout pack out, and `drafter.queue` drafts no playbook
+  edit from its incidents, so they stay unseen. Wave 4, so provisioning needs the pack named. Sim: every fault shows
+  within its detect_within and clears with its design and acceptable fixes, every wrong fix leaves it, both controls
+  stay quiet. Tests: test_new_packs covers them as it does wave 2; in test_what_is_not_drafted. Not provisioned.
+  Autonomy trust is per pack, group and fix, so a holdout fix starts with none and goes to a person until it has 3
+  wins.
+- 2026-11-10: oracle replay of both packs: 6 of 6 faults detected, both controls quiet, design fix 100% and worked
+  100%. Full suite 824 passed.
 
 ### NFH-117 · Fix · A playbook edit drafted again and approved after a newer edit of its section is dropped as STALE
 Live, with the answer-key reviewer (11-10): PE-5 (S20's rejection) was drafted again on the text PE-13 had made of
@@ -260,6 +280,16 @@ draft a rejection makes: hours for a pass over the fleet. For testing only, the 
   0 sec before adding tasks" (it helps only a consumer at its ceiling), "penalty yield" as a fix. Dropped as already
   there: expiration before tuning, measure rates both ways, and PE-164's new section repeating "Trace the symptom
   back", marked `folded:` so it is not added again (NFH-122). A heading repeated as a line dropped again.
+- 2026-11-10: armed run #2's patch (PE-193, 197, 201, 203 and the edits still applied). Kept, rewritten generally:
+  a queue upstream of the alert is full only because back pressure holds the stage that feeds it; a fan-out sending
+  more copies than intended floods everything after it, so set the count back (pointing at
+  parameter-misconfiguration, not naming s18.copies); a consumer already on 0 sec has no schedule to shorten;
+  back-pressure's diagnosis: a producer that sends nothing is not held by a threshold. Dropped as wrong: "shorten"
+  turned into "increase concurrent tasks" in the schedule section (PE-197, PE-203), the first full queue's feeder as
+  the bottleneck, a decreasing input or draining queue meaning look up- or downstream, shorten before adding tasks.
+  Dropped as already there or vague: expiration first, measure rates, "if stalled, add tasks", a heading repeated as
+  a line. PE-201's new section and the S18-only fan-out paragraph leak a scenario's names: `folded:` for the first,
+  dropped for the second. Most of these drafts came from rejects of fixes the tenant already had (NFH-124).
 
 ### NFH-115 · Fix · The agent repeats a proposal the checks sent back, word for word
 Live on S10 (11-09): the first try proposed 8 tasks on S10 Partner Call, and the capacity check sent it back ("8
@@ -481,6 +511,23 @@ what it proposed and why, attempt by attempt, against the design fix, before cha
   S24, S25 and S27 have each been right in one run and wrong in another: what is left is mostly variance.
 
 ## Closed tickets
+
+### NFH-121 · Fix · An armed flow edit that lands is recorded FAILED, read before CDF starts the swap
+Live, the first armed run with the answer-key reviewer (11-10, 17:25–21:31): 22 of 25 approved writes ended FAILED
+with "the deployment runs …/v.N (CONCERNING_HEALTH or GOOD_HEALTH), not the new …/v.N+1", every one a flow edit; the
+three APPLIED (S17, S18, S21) were a parameter update and a resize. The writes had landed: each deployment's next
+incident read the new version ("someone changed it, so diagnose again"), and S16, S98, S53, S07, S49, S100, S05, S01,
+S02, S51, S52, S15, S14, S09 and S08 never opened again. `executor._execute` read the deployed flow once after
+`wait()`, `provisioning._wait_for_flow`, which returns as soon as the flow is steady, and the flow is steady before
+CDF starts a swap. So nothing was verified or learned from, and the FAILED rows still counted for the cooldown and
+the 3-a-day cap (p1 and p3 hit it at about 19:17; the reviewer approved their stuck reviews every minute after).
+- 2026-11-10: a flow edit and a rollback wait with `provisioning._wait_for_version`, as the provisioning reset does:
+  until the flow runs the new version and is steady, CDF fails the swap, or the 45 min deadline. The error names
+  the detailed state. FAILED rows still count for the guards: a failed swap can still have touched the deployment.
+  Tests: test_a_swap_that_reads_the_old_version_for_a_while_is_applied, test_a_swap_cdf_fails_is_failed. Next: an
+  armed run with flow edits APPLIED and verified.
+- 2026-11-10: verified live in armed run #2: every approved flow edit ended APPLIED and got its 15 and 60 min
+  verdicts (S13 tasks and expiration, S04 and S03 IMPROVED; S20 and S11's property edits NO_CHANGE, NFH-124).
 
 ### NFH-122 · Fix · A new playbook section folded into another one is added again at every start
 Live, in the armed run's patch (11-10): PE-164 added "Always trace symptom back to the originating stage", which
