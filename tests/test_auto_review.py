@@ -11,6 +11,7 @@ import pytest
 
 import config
 from flows import packs
+from nifi_healer.actions import executor
 from nifi_healer.agent import graph
 from nifi_healer.rag import drafter
 from nifi_healer.runtime import auto_review as ar
@@ -261,3 +262,55 @@ def test_a_section_takes_only_so_many_of_its_edits(drafting, monkeypatch, capsys
     monkeypatch.setattr(config, "AUTO_REVIEW_EDITS_PER_SECTION", 2)
     ar.tick(client, store)
     assert {e["id"] for e in store.playbook_edits(("APPLIED",))} == {first["id"], second["id"]}
+
+
+def test_a_design_fix_the_deployment_already_has_is_left_for_a_person(agent, monkeypatch, capsys):
+    # Live, armed run #2: run #1's s18.copies=1 stayed on the tenant, the queue stayed full, and every proposal was
+    # rejected against the design, each reason drafting a wrong playbook edit (NFH-124).
+    world, client, store, incidents, install = agent("p5-parameters")
+    monkeypatch.setattr(config, "ARMED", False)
+    incident = incidents["S18"]
+    install(ScriptedLLM(proposal([{"action": "SET_CONCURRENT_TASKS", "target": "S18 Sink", "value": 4}])))
+    graph.start(incident["id"])
+
+    crn, flow = incident["deployment_crn"], incident["deployed_flow_crn"]
+    version = client.flow_configuration(crn, flow)["configurationVersion"]
+    world.update_flow_configuration(crn, flow, version, parameter_groups=[
+        {"name": "nfh-p5-parameters", "parameters": [{"name": "s18.copies", "value": "1"}]}])
+    world.settle(crn)
+
+    ar.tick(client, store)
+    ar.tick(client, store)
+
+    assert store.incident(incident["id"])["status"] == "PENDING_REVIEW" and graph.pending(incident["id"])
+    assert store.reviews(incident["id"]) == [] and store.playbook_edits() == []
+    out = capsys.readouterr().out
+    assert out.count("its design fix is already on the deployment (UPDATE_PARAMETER s18.copies 1 on "
+                     "nfh-p5-parameters) and it still alerts: left for a person") == 1
+    assert "[auto-review] done:" in out
+
+
+def test_what_the_deployment_already_has_is_left_out_of_the_design(agent, monkeypatch, capsys):
+    # S10's route to the DLQ stayed from an earlier run: the timeout and the tasks are what is left of the fix, not
+    # "part of the fix".
+    _, client, store, incidents, install = agent("p3-errors")
+    monkeypatch.setattr(config, "ARMED", False)
+    route, timeout, tasks = S["S10"].expected
+    incident = incidents["S10"]
+    install(ScriptedLLM(proposal([timeout, tasks])))
+    graph.start(incident["id"])
+    plan = executor.plan
+
+    def routed(client, incident, steps, store=None):
+        if list(steps) == [route]:
+            return {"ok": False, "problems": ["S10 Partner Call: Failure, No Retry, Retry already go(es) to S10 DLQ"]}
+
+        return plan(client, incident, steps, store)
+
+    monkeypatch.setattr(executor, "plan", routed)
+    ar.tick(client, store)
+
+    assert store.incident(incident["id"])["status"] == "DRY_RUN"
+    assert f"{incident['id']} (S10, the deployment already has ROUTE_RELATIONSHIP_TO_DLQ" in capsys.readouterr().out
+
+    assert ar.verdict([timeout, tasks], S["S10"]) == (ar.REJECT, ar.PART)        # against the whole design

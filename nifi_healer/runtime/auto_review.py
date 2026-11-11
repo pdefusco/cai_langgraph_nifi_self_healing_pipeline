@@ -10,6 +10,12 @@ Each review waiting for a person, oldest first:
     the button does;
   - on a scenario with no design label (a pack this build doesn't know):
     left for a person;
+  - graded against what is left of the design: an earlier armed run's
+    change stays on the deployment, so a step of the design fix, or an
+    acceptable fix, the deployment already has (its plan is refused,
+    "already") is left out (NFH-124). One whose design fix is all there,
+    and still alerts, is left for a person, and nothing is drafted from it:
+    no proposal could pass, and each rejection's reason would be wrong;
   - not valid after every try: rejected, with its first problem;
   - the scenario's design fix, or an acceptable one, at a value that can
     clear the problem (scorecard.match EXPECTED or ACCEPTABLE): approved,
@@ -42,9 +48,11 @@ When nothing waits, no diagnosis is queued or running and no draft is
 open, it logs once that it is done.
 """
 
+from dataclasses import replace
+
 import config
 from flows import packs
-from nifi_healer.actions import catalog
+from nifi_healer.actions import catalog, executor
 from nifi_healer.agent import graph
 from nifi_healer.eval import scorecard as sc
 from nifi_healer.rag import drafter
@@ -67,6 +75,7 @@ INVALID = "It did not pass the checks: {problem}"
 
 _said = set()          # what was logged once: (incident id, why), ("edit", id), "done"
 _tried_edits = set()   # playbook edits this process tried to approve, or drafted again
+_there = {}            # (incident id, flow version): the design's fixes its deployment already has
 
 
 def log(message: str) -> None:
@@ -78,6 +87,7 @@ def reset() -> None:
 
     _said.clear()
     _tried_edits.clear()
+    _there.clear()
 
 
 def _once(key, message: str) -> None:
@@ -130,7 +140,34 @@ def verdict(steps: list, scenario) -> tuple:
     return REJECT, COMPONENT
 
 
-def _review(store, incident: dict) -> None:
+def on_deployment(client, store, incident: dict, scenario) -> list:
+    """
+    The design fix's steps, and the acceptable fixes, the incident's
+    deployment already has: each planned alone on it, which the executor
+    refuses with "already". Read once an incident and flow version.
+    """
+
+    key = (incident["id"], incident.get("expected_flow_version_crn") or "")
+
+    if key not in _there:
+        try:
+            current = executor.rebased(client, store, incident)
+            _there[key] = [f for f in (*scenario.expected, *scenario.acceptable)
+                           if any(map(executor.already, executor.plan(client, current, [f], store)["problems"]))]
+
+        except Exception as exc:  # graded against the whole design, as before
+            log(f"{incident['id']}: could not read what its deployment already has: {type(exc).__name__}: {exc}")
+            _there[key] = []
+
+    return _there[key]
+
+
+def _shown(step: dict) -> str:
+    return " ".join(str(v) for k, v in step.items() if k != "target" and v not in ("", None)) + \
+        (f" on {step['target']}" if step.get("target") else "")
+
+
+def _review(client, store, incident: dict) -> None:
     iid = incident["id"]
 
     if graph.run_state(iid):
@@ -154,6 +191,18 @@ def _review(store, incident: dict) -> None:
 
         return
 
+    there = on_deployment(client, store, incident, scenario)
+
+    if there and all(f in there for f in scenario.expected):
+        _once((iid, "there"), f"{iid} ({scenario.id}): its design fix is already on the deployment "
+                              f"({'; '.join(map(_shown, there))}) and it still alerts: left for a person")
+
+        return
+
+    if there:
+        scenario = replace(scenario, expected=tuple(f for f in scenario.expected if f not in there),
+                           acceptable=tuple(f for f in scenario.acceptable if f not in there))
+
     plan = waiting.get("plan") or {}
     steps = plan.get("steps") or (waiting.get("proposal") or {}).get("steps") or []
 
@@ -163,6 +212,9 @@ def _review(store, incident: dict) -> None:
     else:
         decision, reason = verdict(steps, scenario)
 
+    # Only the log says so: the reason is what memory and the drafter read.
+    who = f"{scenario.id}, the deployment already has {'; '.join(map(_shown, there))}" if there else scenario.id
+
     if decision == APPROVE:
         if config.ARMED and not config.AUTO_REVIEW_ARMED:
             _once((iid, "armed"), f"{iid}: {reason}, but writes are armed: left for a person "
@@ -170,10 +222,10 @@ def _review(store, incident: dict) -> None:
 
             return
 
-        log(f"{iid} ({scenario.id}): approve, {reason}: {views.decide(iid, APPROVE, REVIEWER)}")
+        log(f"{iid} ({who}): approve, {reason}: {views.decide(iid, APPROVE, REVIEWER)}")
 
     else:
-        log(f"{iid} ({scenario.id}): reject, {reason} {views.decide(iid, REJECT, REVIEWER, reason)}")
+        log(f"{iid} ({who}): reject, {reason} {views.decide(iid, REJECT, REVIEWER, reason)}")
 
 
 def _ours(store, row: dict) -> bool:
@@ -242,14 +294,14 @@ def _edits(store) -> bool:
 def tick(client, store) -> None:
     for incident in sorted(store.incidents(("PENDING_REVIEW",), limit=1000), key=lambda i: i["opened_at"]):
         try:
-            _review(store, incident)
+            _review(client, store, incident)
 
         except Exception as exc:  # one review's failure never stops the others
             log(f"{incident['id']}: failed: {type(exc).__name__}: {exc}")
 
     drafting = _edits(store)
     left = [i["id"] for i in store.incidents(("PENDING_REVIEW",), limit=1000)
-            if (i["id"], "unknown") not in _said and (i["id"], "armed") not in _said]
+            if not any((i["id"], why) in _said for why in ("unknown", "armed", "there"))]
 
     if drafting or left or any(graph.backlog().values()):
         _said.discard("done")

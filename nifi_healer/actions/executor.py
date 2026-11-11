@@ -61,6 +61,12 @@ class Refused(Exception):
     """A guard said no; nothing was written."""
 
 
+def already(problem: str) -> bool:
+    """Whether a plan's problem is that the deployment already has the step: every such refusal says so."""
+
+    return " already " in f" {problem} "
+
+
 class Failed(Exception):
     """A write was attempted and did not land."""
 
