@@ -29,6 +29,8 @@ with its thresholds in the flow inventory.
   producer emits far more than the consumer can take: the threshold is
   doing its job. Fix the rate on one side or the other (see below), not the
   threshold.
+- The producer sends nothing at all: no threshold is holding it back. Read
+  its own properties and state instead.
 
 Back pressure travels upstream, so several queues in a row can be full. Act
 on the last full one in flow order: the stage it feeds is the bottleneck,

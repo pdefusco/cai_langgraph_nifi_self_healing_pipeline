@@ -3,7 +3,7 @@ title: Backlog behind a slow consumer
 collection: nifi_playbooks
 symptoms: [backlog]
 actions: [SET_CONCURRENT_TASKS, SET_RUN_SCHEDULE, NO_ACTION]
-folded: [always-trace-symptom-back-to-the-originating-stage]
+folded: [always-trace-symptom-back-to-the-originating-stage, correct-excessive-duplication-from-a-fan-out-processor]
 ---
 
 # Backlog behind a slow consumer
@@ -19,9 +19,9 @@ shows, and in a long pipeline it may be several stages before the bottleneck.
 
 Find the bottleneck first. Follow the group's queues in flow order: the
 bottleneck is the stage whose input queue is full or growing and whose output
-queue is not. A queue further upstream may be the one that alerted, but it is
-full only because back pressure stops the stage that feeds it, and speeding
-that stage up passes no more.
+queue is not. A queue further upstream may have alerted, but it is full only
+because back pressure stops the stage that feeds it; speeding that stage up
+passes no more. A queue that falls bucket after bucket is draining.
 
 Then compare the bottleneck's measured rate in with its ceiling, from the
 flow inventory:
@@ -66,6 +66,10 @@ each stage's rate in with its rate out and with what arrives:
 - Upstream, a source emitting far above its intended rate (a 0 sec
   schedule) floods everything after it: throttle it, as the back-pressure
   playbook's runaway producer section describes.
+- Upstream, a fan-out that sends more copies of each FlowFile than the flow
+  intends floods everything after it: set the copy count back, as the
+  parameter-misconfiguration playbook describes, rather than speed up what
+  it feeds.
 - Where the counts stop adding up and no queue grows to hold the
   difference, data is dropped there: see the data-loss playbook.
 
@@ -126,7 +130,8 @@ For a busy consumer at its ceiling on a short schedule, a shorter schedule
 and more tasks both raise the ceiling: 1 task at 1 sec against an intake of
 3/s clears with 4 tasks or with 250 ms (4/s either way). Shortening the
 schedule of a consumer that is below its ceiling does nothing, because it is
-not waiting between runs.
+not waiting between runs. A consumer already on 0 sec has no schedule to
+shorten: only more tasks raise it.
 
 ## Bursty arrivals: judge by peak and drain time
 <!-- actions: SET_CONCURRENT_TASKS, NO_ACTION -->
