@@ -13,9 +13,9 @@ they always match what gets deployed.
 
 ## How the scenarios are built
 
-The scenarios are grouped into 25 packs. Each pack is one NiFi flow definition and one CDF DataFlow
+The scenarios are grouped into 27 packs. Each pack is one NiFi flow definition and one CDF DataFlow
 deployment, named `nfh-<pack>`, running NiFi 2.6.0 on a single EXTRA_SMALL node unless the pack is about sizing.
-Inside the flow, each of the 102 scenarios gets its own process group, named after the scenario (for
+Inside the flow, each of the 110 scenarios gets its own process group, named after the scenario (for
 example `S22 Order Merge Deadlock`). The agent works on one process group at a time, so incidents, fixes and grading
 are all per scenario.
 
@@ -130,6 +130,8 @@ scenarios, and possibly their fixes, would change.
 | p23-siblings | `nfh-p23-siblings` | EXTRA_SMALL × 1 | [S51 Slow Run Schedule Among Siblings](#s51-slow-run-schedule-among-siblings), [S52 Auto-terminated Failures Among Siblings](#s52-auto-terminated-failures-among-siblings), [S53 Stopped Lane Among Siblings](#s53-stopped-lane-among-siblings), [S54 Healthy Invoices Group](#s54-healthy-invoices-group), [S55 Healthy Refunds Group](#s55-healthy-refunds-group), [S56 Healthy Customers Group](#s56-healthy-customers-group), [S57 Healthy Carts Group](#s57-healthy-carts-group), [S58 Healthy Contracts Group](#s58-healthy-contracts-group), [S59 Healthy Campaigns Group](#s59-healthy-campaigns-group), [S60 Healthy Assets Group](#s60-healthy-assets-group), [S61 Healthy Policies Group](#s61-healthy-policies-group), [S62 Healthy Stores Group](#s62-healthy-stores-group), [S63 Healthy Budgets Group](#s63-healthy-budgets-group), [S64 Healthy Devices Group](#s64-healthy-devices-group), [S65 Healthy Routes Group](#s65-healthy-routes-group), [S66 Healthy Bookings Group](#s66-healthy-bookings-group), [S67 Healthy Recipes Group](#s67-healthy-recipes-group), [S68 Healthy Returns Group](#s68-healthy-returns-group), [S69 Healthy Prices Group](#s69-healthy-prices-group), [S70 Healthy Coupons Group](#s70-healthy-coupons-group), [S71 Healthy Suppliers Group](#s71-healthy-suppliers-group), [S72 Healthy Leads Group](#s72-healthy-leads-group), [S73 Healthy Timesheets Group](#s73-healthy-timesheets-group), [S74 Healthy Claims Group](#s74-healthy-claims-group), [S75 Healthy Vendors Group](#s75-healthy-vendors-group), [S76 Healthy Ledger Group](#s76-healthy-ledger-group), [S77 Healthy Alerts Group](#s77-healthy-alerts-group) |
 | p24-healthy-500 | `nfh-p24-healthy-500` | EXTRA_SMALL × 1 | [S78 Healthy Invoices Group](#s78-healthy-invoices-group), [S79 Healthy Returns Group](#s79-healthy-returns-group), [S80 Healthy Inventory Group](#s80-healthy-inventory-group), [S81 Healthy Customers Group](#s81-healthy-customers-group), [S82 Healthy Coupons Group](#s82-healthy-coupons-group), [S83 Healthy Wishlists Group](#s83-healthy-wishlists-group), [S84 Healthy Contracts Group](#s84-healthy-contracts-group), [S85 Healthy Leads Group](#s85-healthy-leads-group), [S86 Healthy Payroll Group](#s86-healthy-payroll-group), [S87 Healthy Assets Group](#s87-healthy-assets-group), [S88 Healthy Claims Group](#s88-healthy-claims-group), [S89 Healthy Quotes Group](#s89-healthy-quotes-group), [S90 Healthy Stores Group](#s90-healthy-stores-group), [S91 Healthy Ledger Group](#s91-healthy-ledger-group), [S92 Healthy Audits Group](#s92-healthy-audits-group), [S93 Healthy Devices Group](#s93-healthy-devices-group), [S94 Healthy Meters Group](#s94-healthy-meters-group), [S95 Healthy Drivers Group](#s95-healthy-drivers-group), [S96 Healthy Bookings Group](#s96-healthy-bookings-group), [S97 Healthy Menus Group](#s97-healthy-menus-group) |
 | p25-nested | `nfh-p25-nested` | EXTRA_SMALL × 1 | [S98 Slow Consumer One Group Down](#s98-slow-consumer-one-group-down), [S99 Failure Self-Loop Two Groups Down](#s99-failure-self-loop-two-groups-down), [S100 Auto-terminated Failures Two Groups Down](#s100-auto-terminated-failures-two-groups-down), [S101 Healthy Groups One Down](#s101-healthy-groups-one-down), [S102 Healthy Groups Two Down](#s102-healthy-groups-two-down) |
+| p26-holdout-a | `nfh-p26-holdout-a` | EXTRA_SMALL × 1 | [S103 Call Rating Behind](#s103-call-rating-behind), [S104 Geofence Check On A Slow Schedule](#s104-geofence-check-on-a-slow-schedule), [S105 Dispense Writer Slightly Behind](#s105-dispense-writer-slightly-behind), [S106 Hourly Backfill That Drains](#s106-hourly-backfill-that-drains) |
+| p27-holdout-b | `nfh-p27-holdout-b` | EXTRA_SMALL × 1 | [S107 Identity Service Backoff Stalls](#s107-identity-service-backoff-stalls), [S108 Malformed Applications Loop Forever](#s108-malformed-applications-loop-forever), [S109 Auction Bursts Swamp The Recorder](#s109-auction-bursts-swamp-the-recorder), [S110 Alert Fan-out Within Capacity](#s110-alert-fan-out-within-capacity) |
 
 ## p1-throughput: Throughput
 
@@ -5867,3 +5869,587 @@ flowchart TD
 ```
 
 **How it's graded.** Nothing should fire. The alert would go off if the queue `s102-carts-1` holds more than 2,000 FlowFiles for a minute. The right answer is to leave it alone, and any change counts as a false positive.
+
+## p26-holdout-a: Holdout: billing, parcels and pharmacy
+
+Deployed as `nfh-p26-holdout-a` on EXTRA_SMALL × 1, in rollout wave 4.
+
+The first of two holdout packs: faults of kinds the catalog fixes and the playbooks cover, in domains, names and numbers that no prompt, playbook or replay was tuned on, here carrier billing, parcel tracking and pharmacy. The default replay leaves the holdouts out and reviews of their incidents draft no playbook edits, so they keep measuring what the agent does on a fault it hasn't seen. Every fault is fixed with a low-risk flow edit, and S106 is the control.
+
+### S103 Call Rating Behind
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 30 minutes of the last fix.*
+
+Call records come from the switches at five a second and from roaming partners at one more, and join at S103 Decode CDR. Every stage runs on a 0 sec schedule and keeps up except S103 Rate Call, which has one task every 250 ms and does four a second. `s103-to-rate` grows by two a second, 120 a minute, and passes 3,000 about 25 minutes in. The queues before it stay empty, so the alert is one stage from the cause.
+
+The fix is three tasks on the rater, twelve a second, or a 0 sec schedule. Two tasks would only just match the input and take over half an hour to drain a full queue. More tasks on S103 Lookup Subscriber, which feeds the queue, or a higher threshold on `s103-to-rate`, change nothing.
+
+```mermaid
+flowchart TD
+    p0["<b>S103 Switch CDR Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>5 × 1 KB per run"]
+    p1["<b>S103 Roaming CDR Feed</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>1 × 1 KB per run"]
+    p2["<b>S103 Map Roaming Partner</b><br/>UpdateAttribute"]
+    p3["<b>S103 Decode CDR</b><br/>UpdateAttribute"]
+    p4["<b>S103 Normalise Number</b><br/>UpdateAttribute"]
+    p5["<b>S103 Lookup Subscriber</b><br/>UpdateAttribute"]
+    p6["<b>S103 Rate Call</b><br/>UpdateAttribute<br/>1 task every 250 ms"]
+    p7["<b>S103 Apply Discount</b><br/>UpdateAttribute"]
+    p8["<b>S103 Tax Call</b><br/>UpdateAttribute"]
+    p9["<b>S103 Aggregate Usage</b><br/>UpdateAttribute"]
+    p10["<b>S103 Write Billing Record</b><br/>UpdateAttribute"]
+    p0 -->|"s103-switch"| p3
+    p1 -->|"s103-roaming"| p2
+    p2 -->|"s103-roaming-mapped"| p3
+    p3 -->|"s103-decoded"| p4
+    p4 -->|"s103-normalised"| p5
+    p5 -->|"s103-to-rate"| p6
+    p6 -->|"s103-rated"| p7
+    p7 -->|"s103-discounted"| p8
+    p8 -->|"s103-taxed"| p9
+    p9 -->|"s103-aggregated"| p10
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p6 fix
+```
+
+**How it's graded.** The alert fires when the queue `s103-to-rate` holds more than 3,000 FlowFiles for a minute. We also chart the size of the queue `s103-normalised` and FlowFiles into S103 Write Billing Record. Whether a fix worked is decided by the size of the queue `s103-to-rate`. The fix we grade as correct is setting the concurrent tasks on S103 Rate Call to 3 or more. We also accept setting the run schedule of S103 Rate Call to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 11 processors, 10 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S103 Switch CDR Feed | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `5`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"cdr": "c-80213", "msisdn": "+447700900123", "cell": "lac-221", "secs": 184, "type": "voice"}` |
+| S103 Roaming CDR Feed | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"cdr": "c-80213", "msisdn": "+447700900123", "cell": "lac-221", "secs": 184, "type": "voice"}` |
+| S103 Map Roaming Partner | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Decode CDR | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Normalise Number | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Lookup Subscriber | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Rate Call | UpdateAttribute | 250 ms | 1 | enabled |  |  |
+| S103 Apply Discount | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Tax Call | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Aggregate Usage | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S103 Write Billing Record | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s103-switch | S103 Switch CDR Feed | S103 Decode CDR | success | 10,000 / 1 GB |  |
+| s103-roaming | S103 Roaming CDR Feed | S103 Map Roaming Partner | success | 10,000 / 1 GB |  |
+| s103-roaming-mapped | S103 Map Roaming Partner | S103 Decode CDR | success | 10,000 / 1 GB |  |
+| s103-decoded | S103 Decode CDR | S103 Normalise Number | success | 10,000 / 1 GB |  |
+| s103-normalised | S103 Normalise Number | S103 Lookup Subscriber | success | 10,000 / 1 GB |  |
+| s103-to-rate | S103 Lookup Subscriber | S103 Rate Call | success | 10,000 / 1 GB |  |
+| s103-rated | S103 Rate Call | S103 Apply Discount | success | 10,000 / 1 GB |  |
+| s103-discounted | S103 Apply Discount | S103 Tax Call | success | 10,000 / 1 GB |  |
+| s103-taxed | S103 Tax Call | S103 Aggregate Usage | success | 10,000 / 1 GB |  |
+| s103-aggregated | S103 Aggregate Usage | S103 Write Billing Record | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S103 Lookup Subscriber to 4.
+- Setting the back pressure on `s103-to-rate` to 50,000 objects.
+
+</details>
+
+### S104 Geofence Check On A Slow Schedule
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+Parcel scans arrive three a second and pass through parsing, barcode validation and depot lookup to S104 Geofence Check, which has two tasks but runs only every five seconds: 0.4 a second. `s104-to-geofence` grows by 2.6 a second and passes 2,000 about 13 minutes in. A small heartbeat flow runs beside it.
+
+The schedule is the fault, so the fix is a 0 sec schedule, or 100 ms. Adding tasks looks like the answer but isn't: even eight, the catalog's maximum, do only 1.6 a second on a five second schedule. More tasks on S104 Resolve Depot, which feeds the queue, do nothing.
+
+```mermaid
+flowchart TD
+    p0["<b>S104 Parcel Scans</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p1["<b>S104 Parse Scan</b><br/>UpdateAttribute"]
+    p2["<b>S104 Validate Barcode</b><br/>UpdateAttribute"]
+    p3["<b>S104 Resolve Depot</b><br/>UpdateAttribute"]
+    p4["<b>S104 Geofence Check</b><br/>UpdateAttribute<br/>2 tasks every 5 sec"]
+    p5["<b>S104 Update ETA</b><br/>UpdateAttribute"]
+    p6["<b>S104 Notify Customer</b><br/>UpdateAttribute"]
+    p7["<b>S104 Archive Scan</b><br/>UpdateAttribute"]
+    p8["<b>S104 Publish Tracking</b><br/>UpdateAttribute"]
+    p9["<b>S104 Depot Heartbeat</b><br/>GenerateFlowFile<br/>1 task every 10 sec<br/>1 × 1 KB per run"]
+    p10["<b>S104 Log Heartbeat</b><br/>UpdateAttribute"]
+    p0 -->|"s104-scans"| p1
+    p1 -->|"s104-parsed"| p2
+    p2 -->|"s104-valid"| p3
+    p3 -->|"s104-to-geofence"| p4
+    p4 -->|"s104-geofenced"| p5
+    p5 -->|"s104-eta"| p6
+    p6 -->|"s104-notified"| p7
+    p7 -->|"s104-archived"| p8
+    p9 -->|"s104-heartbeats"| p10
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p4 fix
+```
+
+**How it's graded.** The alert fires when the queue `s104-to-geofence` holds more than 2,000 FlowFiles for a minute. We also chart FlowFiles out of S104 Geofence Check. Whether a fix worked is decided by the size of the queue `s104-to-geofence`. The fix we grade as correct is setting the run schedule of S104 Geofence Check to 0 sec. We also accept setting the run schedule of S104 Geofence Check to 100 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 11 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S104 Parcel Scans | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `3`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"parcel": "p-3301-77", "depot": "d-14", "event": "out-for-delivery", "lat": 51.5, "lon": -0.12}` |
+| S104 Parse Scan | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Validate Barcode | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Resolve Depot | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Geofence Check | UpdateAttribute | 5 sec | 2 | enabled |  |  |
+| S104 Update ETA | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Notify Customer | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Archive Scan | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S104 Publish Tracking | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S104 Depot Heartbeat | GenerateFlowFile | 10 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"parcel": "p-3301-77", "depot": "d-14", "event": "out-for-delivery", "lat": 51.5, "lon": -0.12}` |
+| S104 Log Heartbeat | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s104-scans | S104 Parcel Scans | S104 Parse Scan | success | 10,000 / 1 GB |  |
+| s104-parsed | S104 Parse Scan | S104 Validate Barcode | success | 10,000 / 1 GB |  |
+| s104-valid | S104 Validate Barcode | S104 Resolve Depot | success | 10,000 / 1 GB |  |
+| s104-to-geofence | S104 Resolve Depot | S104 Geofence Check | success | 10,000 / 1 GB |  |
+| s104-geofenced | S104 Geofence Check | S104 Update ETA | success | 10,000 / 1 GB |  |
+| s104-eta | S104 Update ETA | S104 Notify Customer | success | 10,000 / 1 GB |  |
+| s104-notified | S104 Notify Customer | S104 Archive Scan | success | 10,000 / 1 GB |  |
+| s104-archived | S104 Archive Scan | S104 Publish Tracking | success | 10,000 / 1 GB |  |
+| s104-heartbeats | S104 Depot Heartbeat | S104 Log Heartbeat | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S104 Geofence Check to 8.
+- Setting the concurrent tasks on S104 Resolve Depot to 4.
+
+</details>
+
+### S105 Dispense Writer Slightly Behind
+
+*A slow burn that takes hours to show, fixed with a flow edit. We expect it to be detected within 4 hours and its KPIs to be healthy within 15 minutes of the last fix.*
+
+Prescriptions arrive 41 every four seconds, 10.25 a second, and S105 Write Dispense Record, with two tasks every 200 ms, does ten. It is busy and nearly keeps up, so its output looks normal, but a quarter of a FlowFile a second stays behind, 15 a minute, and `s105-to-write` passes 2,500 nearly three hours in. Only the trend of the queue shows it early.
+
+The fix is a third task on the writer, or a 100 ms schedule. A higher threshold on `s105-to-write` moves the breach out by hours without stopping the growth, and more tasks on S105 Price Claim do nothing.
+
+```mermaid
+flowchart TD
+    p0["<b>S105 Prescription Intake</b><br/>GenerateFlowFile<br/>1 task every 4 sec<br/>41 × 1 KB per run"]
+    p1["<b>S105 Parse Prescription</b><br/>UpdateAttribute"]
+    p2["<b>S105 Verify Prescriber</b><br/>UpdateAttribute"]
+    p3["<b>S105 Check Interactions</b><br/>UpdateAttribute"]
+    p4["<b>S105 Check Formulary</b><br/>UpdateAttribute"]
+    p5["<b>S105 Price Claim</b><br/>UpdateAttribute"]
+    p6["<b>S105 Write Dispense Record</b><br/>UpdateAttribute<br/>2 tasks every 200 ms"]
+    p7["<b>S105 Print Label</b><br/>UpdateAttribute"]
+    p8["<b>S105 Notify Pharmacy</b><br/>UpdateAttribute"]
+    p9["<b>S105 Publish Fill</b><br/>UpdateAttribute"]
+    p0 -->|"s105-intake"| p1
+    p1 -->|"s105-parsed"| p2
+    p2 -->|"s105-verified"| p3
+    p3 -->|"s105-checked"| p4
+    p4 -->|"s105-covered"| p5
+    p5 -->|"s105-to-write"| p6
+    p6 -->|"s105-written"| p7
+    p7 -->|"s105-labelled"| p8
+    p8 -->|"s105-notified"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p6 fix
+```
+
+**How it's graded.** The alert fires when the queue `s105-to-write` holds more than 2,500 FlowFiles for a minute. We also chart FlowFiles out of S105 Write Dispense Record. Whether a fix worked is decided by the size of the queue `s105-to-write`. The fix we grade as correct is setting the concurrent tasks on S105 Write Dispense Record to 3 or more. We also accept setting the run schedule of S105 Write Dispense Record to 100 ms or shorter. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S105 Prescription Intake | GenerateFlowFile | 4 sec | 1 | enabled |  | Batch Size: `41`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"rx": "rx-50981", "patient": "pt-2214", "ndc": "0002-7510", "qty": 30, "prescriber": "dr-118"}` |
+| S105 Parse Prescription | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Verify Prescriber | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Check Interactions | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Check Formulary | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Price Claim | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Write Dispense Record | UpdateAttribute | 200 ms | 2 | enabled |  |  |
+| S105 Print Label | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Notify Pharmacy | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S105 Publish Fill | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s105-intake | S105 Prescription Intake | S105 Parse Prescription | success | 10,000 / 1 GB |  |
+| s105-parsed | S105 Parse Prescription | S105 Verify Prescriber | success | 10,000 / 1 GB |  |
+| s105-verified | S105 Verify Prescriber | S105 Check Interactions | success | 10,000 / 1 GB |  |
+| s105-checked | S105 Check Interactions | S105 Check Formulary | success | 10,000 / 1 GB |  |
+| s105-covered | S105 Check Formulary | S105 Price Claim | success | 10,000 / 1 GB |  |
+| s105-to-write | S105 Price Claim | S105 Write Dispense Record | success | 10,000 / 1 GB |  |
+| s105-written | S105 Write Dispense Record | S105 Print Label | success | 10,000 / 1 GB |  |
+| s105-labelled | S105 Print Label | S105 Notify Pharmacy | success | 10,000 / 1 GB |  |
+| s105-notified | S105 Notify Pharmacy | S105 Publish Fill | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the back pressure on `s105-to-write` to 20,000 objects.
+- Setting the concurrent tasks on S105 Price Claim to 4.
+
+</details>
+
+### S106 Hourly Backfill That Drains
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+Nothing is wrong here. Port manifests arrive two a second all day, and for minutes 15 to 19 of every hour a backfill adds 15 a second more. S106 Load Manifest, with one task every 100 ms, does ten, so for those five minutes `s106-to-load` grows by seven a second, to about 2,000 against an alert at 3,000, and then drains at eight a second in under five minutes.
+
+A queue that climbs every hour looks like a growing backlog, but each one is gone well before the next. More tasks on the loader would sit idle for 50 minutes of the hour, and the alert shouldn't fire.
+
+```mermaid
+flowchart TD
+    p0["<b>S106 Manifest Backfill</b><br/>GenerateFlowFile<br/>cron * 15-19 * * * ?<br/>15 × 1 KB per run"]
+    p1["<b>S106 Live Manifests</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p2["<b>S106 Parse Manifest</b><br/>UpdateAttribute"]
+    p3["<b>S106 Validate Containers</b><br/>UpdateAttribute"]
+    p4["<b>S106 Dedupe Manifest</b><br/>UpdateAttribute"]
+    p5["<b>S106 Assign Berth</b><br/>UpdateAttribute"]
+    p6["<b>S106 Load Manifest</b><br/>UpdateAttribute<br/>1 task every 100 ms"]
+    p7["<b>S106 Index Manifest</b><br/>UpdateAttribute"]
+    p8["<b>S106 Notify Customs</b><br/>UpdateAttribute"]
+    p9["<b>S106 Publish Arrivals</b><br/>UpdateAttribute"]
+    p0 -->|"s106-backfill"| p2
+    p1 -->|"s106-live"| p2
+    p2 -->|"s106-parsed"| p3
+    p3 -->|"s106-valid"| p4
+    p4 -->|"s106-unique"| p5
+    p5 -->|"s106-to-load"| p6
+    p6 -->|"s106-loaded"| p7
+    p7 -->|"s106-indexed"| p8
+    p8 -->|"s106-cleared"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s106-to-load` holds more than 3,000 FlowFiles for a minute. We also chart the size of the queue `s106-unique` and FlowFiles out of S106 Load Manifest. The right answer is to leave it alone, and any change counts as a false positive.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S106 Manifest Backfill | GenerateFlowFile | **cron `* 15-19 * * * ?`** | 1 | enabled |  | Batch Size: `15`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"manifest": "m-7710", "vessel": "v-ocean-4", "containers": 12, "port": "rtm"}` |
+| S106 Live Manifests | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `2`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"manifest": "m-7710", "vessel": "v-ocean-4", "containers": 12, "port": "rtm"}` |
+| S106 Parse Manifest | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Validate Containers | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Dedupe Manifest | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Assign Berth | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Load Manifest | UpdateAttribute | 100 ms | 1 | enabled |  |  |
+| S106 Index Manifest | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Notify Customs | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S106 Publish Arrivals | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s106-backfill | S106 Manifest Backfill | S106 Parse Manifest | success | 10,000 / 1 GB |  |
+| s106-live | S106 Live Manifests | S106 Parse Manifest | success | 10,000 / 1 GB |  |
+| s106-parsed | S106 Parse Manifest | S106 Validate Containers | success | 10,000 / 1 GB |  |
+| s106-valid | S106 Validate Containers | S106 Dedupe Manifest | success | 10,000 / 1 GB |  |
+| s106-unique | S106 Dedupe Manifest | S106 Assign Berth | success | 10,000 / 1 GB |  |
+| s106-to-load | S106 Assign Berth | S106 Load Manifest | success | 10,000 / 1 GB |  |
+| s106-loaded | S106 Load Manifest | S106 Index Manifest | success | 10,000 / 1 GB |  |
+| s106-indexed | S106 Index Manifest | S106 Notify Customs | success | 10,000 / 1 GB |  |
+| s106-cleared | S106 Notify Customs | S106 Publish Arrivals | success | 10,000 / 1 GB |  |
+
+</details>
+
+## p27-holdout-b: Holdout: identity, onboarding and auctions
+
+Deployed as `nfh-p27-holdout-b` on EXTRA_SMALL × 1, in rollout wave 4.
+
+The second holdout pack, in identity checks, onboarding and ad auctions, held out in the same way as p26-holdout-a. Three of its faults are fixed with low-risk flow edits; S108's fix is a DLQ route, which is medium risk and always goes to a person. S110 is the control.
+
+### S107 Identity Service Backoff Stalls
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+Identity checks arrive two a second and reach S107 Verify Identity, which calls a service that fails two requests in ten. The failures are transient and retried in place, but with YIELD_PROCESSOR, which backs off the whole processor rather than the one FlowFile: five seconds, doubling with each retry up to five minutes, and both tasks wait it out together. The verifier sits idle with work in front of it, and `s107-to-verify` passes 500 within ten minutes.
+
+The fix is PENALIZE_FLOWFILE, so only the failed FlowFile waits and the rest go on, optionally with a shorter maximum backoff of 30 seconds. More tasks on the verifier change nothing while it is yielded, and more tasks on S107 Resolve Country Rules, which feeds the queue, do nothing either.
+
+```mermaid
+flowchart TD
+    p0["<b>S107 Identity Checks</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S107 Parse Check</b><br/>UpdateAttribute"]
+    p2["<b>S107 Resolve Country Rules</b><br/>UpdateAttribute"]
+    p3["<b>S107 Verify Identity</b><br/>DebugFlow<br/>2 tasks, 0 sec schedule<br/>8 succeed, then 2 fail<br/>retries failure with YIELD_PROCESSOR, up to 5 mins"]
+    p4["<b>S107 Score Liveness</b><br/>UpdateAttribute"]
+    p5["<b>S107 Decide Outcome</b><br/>UpdateAttribute"]
+    p6["<b>S107 Record Decision</b><br/>UpdateAttribute"]
+    p7["<b>S107 Notify Applicant</b><br/>UpdateAttribute"]
+    p8["<b>S107 Publish Verified</b><br/>UpdateAttribute"]
+    p9["<b>S107 Verification Errors</b><br/>LogAttribute"]
+    p0 -->|"s107-checks"| p1
+    p1 -->|"s107-parsed"| p2
+    p2 -->|"s107-to-verify"| p3
+    p3 -->|"s107-verified"| p4
+    p3 -->|"s107-failed<br/>failure"| p9
+    p4 -->|"s107-scored"| p5
+    p5 -->|"s107-decided"| p6
+    p6 -->|"s107-recorded"| p7
+    p7 -->|"s107-notified"| p8
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p3 fix
+```
+
+**How it's graded.** The alert fires when the queue `s107-to-verify` holds more than 500 FlowFiles for a minute. We also chart FlowFiles into S107 Verify Identity. Whether a fix worked is decided by the size of the queue `s107-to-verify`. The fix we grade as correct is switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE. We also accept switching the retry backoff on S107 Verify Identity to PENALIZE_FLOWFILE with a maximum backoff of 30 sec.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S107 Identity Checks | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `2`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"applicant": "ap-60412", "doc": "passport", "country": "NL", "selfie": true}` |
+| S107 Parse Check | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Resolve Country Rules | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Verify Identity | DebugFlow | 0 sec | 2 | enabled |  | FlowFile Success Iterations: `8`<br>FlowFile Failure Iterations: `2`<br>FlowFile Rollback Iterations: `0`<br>FlowFile Exception Iterations: `0`<br>**retry failure ×5, YIELD_PROCESSOR, max 5 mins**<br>**yield 5 sec** |
+| S107 Score Liveness | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Decide Outcome | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Record Decision | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Notify Applicant | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S107 Publish Verified | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S107 Verification Errors | LogAttribute | 0 sec | 1 | enabled | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s107-checks | S107 Identity Checks | S107 Parse Check | success | 10,000 / 1 GB |  |
+| s107-parsed | S107 Parse Check | S107 Resolve Country Rules | success | 10,000 / 1 GB |  |
+| s107-to-verify | S107 Resolve Country Rules | S107 Verify Identity | success | 10,000 / 1 GB |  |
+| s107-verified | S107 Verify Identity | S107 Score Liveness | success | 10,000 / 1 GB |  |
+| s107-failed | S107 Verify Identity | S107 Verification Errors | failure | 10,000 / 1 GB |  |
+| s107-scored | S107 Score Liveness | S107 Decide Outcome | success | 10,000 / 1 GB |  |
+| s107-decided | S107 Decide Outcome | S107 Record Decision | success | 10,000 / 1 GB |  |
+| s107-recorded | S107 Record Decision | S107 Notify Applicant | success | 10,000 / 1 GB |  |
+| s107-notified | S107 Notify Applicant | S107 Publish Verified | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S107 Verify Identity to 8.
+- Setting the concurrent tasks on S107 Resolve Country Rules to 4.
+
+</details>
+
+### S108 Malformed Applications Loop Forever
+
+*A cascade, where the alert shows up away from the cause, fixed with a flow edit. We expect it to be detected within 30 minutes and its KPIs to be healthy within 15 minutes of the last fix.*
+
+Onboarding applications arrive two a second, and one in 20 is malformed: its applicant has no value, so it isn't JSON. S108 Parse KYC Document fails it and sends it straight back to itself through `s108-failure-loop`, where it fails again on every run, for good. The parser keeps up with the good applications five times over, so the loop just grows, by one every ten seconds, and passes 100 about 17 minutes in.
+
+The fix is to route the parser's failures to S108 KYC Review DLQ, which is in the group, disabled and connected to nothing. That is a medium-risk change, so it always goes to a person. More tasks or a shorter schedule on the parser only retry the same applications faster; none of them will ever parse.
+
+```mermaid
+flowchart TD
+    p0["<b>S108 Onboarding Applications</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>2 × 1 KB per run"]
+    p1["<b>S108 Normalise Application</b><br/>UpdateAttribute"]
+    p2["<b>S108 Parse KYC Document</b><br/>EvaluateJsonPath<br/>1 task every 100 ms<br/>kyc.applicant: $.applicant"]
+    p3["<b>S108 Screen Sanctions</b><br/>UpdateAttribute"]
+    p4["<b>S108 Score Risk</b><br/>UpdateAttribute"]
+    p5["<b>S108 Check Address</b><br/>UpdateAttribute"]
+    p6["<b>S108 Open Account</b><br/>UpdateAttribute"]
+    p7["<b>S108 Notify Applicant</b><br/>UpdateAttribute"]
+    p8["<b>S108 Archive Application</b><br/>UpdateAttribute"]
+    p9["<b>S108 KYC Review DLQ</b><br/>LogAttribute<br/>DISABLED"]
+    p0 -->|"s108-applications"| p1
+    p1 -->|"s108-to-parse"| p2
+    p2 -->|"s108-failure-loop<br/>failure"| p2
+    p2 -->|"s108-parsed<br/>matched"| p3
+    p3 -->|"s108-screened"| p4
+    p4 -->|"s108-scored"| p5
+    p5 -->|"s108-checked"| p6
+    p6 -->|"s108-opened"| p7
+    p7 -->|"s108-notified"| p8
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p9 off
+    class p2 fix
+    linkStyle 2 stroke:#c2410c,stroke-width:3px
+```
+
+**How it's graded.** The alert fires when the queue `s108-failure-loop` holds more than 100 FlowFiles for a minute or when the queue `s108-to-parse` holds more than 500 FlowFiles for a minute. Whether a fix worked is decided by the size of the queue `s108-failure-loop`. The fix we grade as correct is routing failure from S108 Parse KYC Document to S108 KYC Review DLQ.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S108 Onboarding Applications | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `2`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"applicant": ${random():mod(20):equals(0):ifElse('','60412')}, "doc": "passport"}` |
+| S108 Normalise Application | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Parse KYC Document | EvaluateJsonPath | 100 ms | 1 | enabled | unmatched | Destination: `flowfile-attribute`<br>Return Type: `auto-detect`<br>kyc.applicant: `$.applicant` |
+| S108 Screen Sanctions | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Score Risk | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Check Address | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Open Account | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Notify Applicant | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S108 Archive Application | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+| S108 KYC Review DLQ | LogAttribute | 0 sec | 1 | **DISABLED** | success | Log Level: `warn` |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s108-applications | S108 Onboarding Applications | S108 Normalise Application | success | 10,000 / 1 GB |  |
+| s108-to-parse | S108 Normalise Application | S108 Parse KYC Document | success | 10,000 / 1 GB |  |
+| s108-failure-loop | S108 Parse KYC Document | itself | failure | 10,000 / 1 GB | **self-loop** |
+| s108-parsed | S108 Parse KYC Document | S108 Screen Sanctions | matched | 10,000 / 1 GB |  |
+| s108-screened | S108 Screen Sanctions | S108 Score Risk | success | 10,000 / 1 GB |  |
+| s108-scored | S108 Score Risk | S108 Check Address | success | 10,000 / 1 GB |  |
+| s108-checked | S108 Check Address | S108 Open Account | success | 10,000 / 1 GB |  |
+| s108-opened | S108 Open Account | S108 Notify Applicant | success | 10,000 / 1 GB |  |
+| s108-notified | S108 Notify Applicant | S108 Archive Application | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the concurrent tasks on S108 Parse KYC Document to 4.
+- Setting the run schedule of S108 Parse KYC Document to 0 sec.
+
+</details>
+
+### S109 Auction Bursts Swamp The Recorder
+
+*An intermittent fault that comes and goes on a schedule, fixed with a flow edit. We expect it to be detected within 3 hours and its KPIs to be healthy within 30 minutes of the last fix.*
+
+Bid requests arrive three a second all day, and for minutes 0 to 14 of every third hour an auction burst adds 15 a second more. S109 Record Impression, with two tasks every 250 ms, does eight, so during a burst `s109-to-record` grows by ten a second, passes 6,000 ten minutes in and reaches about 9,000. After it, the queue drains at five a second and is back under 6,000 ten minutes later, until the next burst.
+
+The fix is six tasks on the recorder, or a 0 sec schedule. Because the queue drains between bursts, an empty queue an hour later says nothing, and the fix is judged on the next burst. A higher threshold on `s109-to-record` or more tasks on S109 Enrich Segment change nothing.
+
+```mermaid
+flowchart TD
+    p0["<b>S109 Auction Burst</b><br/>GenerateFlowFile<br/>cron * 0-14 */3 * * ?<br/>15 × 1 KB per run"]
+    p1["<b>S109 Bid Requests</b><br/>GenerateFlowFile<br/>1 task every 1 sec<br/>3 × 1 KB per run"]
+    p2["<b>S109 Parse Bid</b><br/>UpdateAttribute"]
+    p3["<b>S109 Filter Bots</b><br/>UpdateAttribute"]
+    p4["<b>S109 Dedupe Bid</b><br/>UpdateAttribute"]
+    p5["<b>S109 Enrich Segment</b><br/>UpdateAttribute"]
+    p6["<b>S109 Price Bid</b><br/>UpdateAttribute"]
+    p7["<b>S109 Record Impression</b><br/>UpdateAttribute<br/>2 tasks every 250 ms"]
+    p8["<b>S109 Attribute Campaign</b><br/>UpdateAttribute"]
+    p9["<b>S109 Publish Spend</b><br/>UpdateAttribute"]
+    p0 -->|"s109-burst"| p2
+    p1 -->|"s109-bids"| p2
+    p2 -->|"s109-parsed"| p3
+    p3 -->|"s109-human"| p4
+    p4 -->|"s109-unique"| p5
+    p5 -->|"s109-segmented"| p6
+    p6 -->|"s109-to-record"| p7
+    p7 -->|"s109-recorded"| p8
+    p8 -->|"s109-attributed"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+    class p7 fix
+```
+
+**How it's graded.** The alert fires when the queue `s109-to-record` holds more than 6,000 FlowFiles for a minute. We also chart the size of the queue `s109-unique` and FlowFiles out of S109 Record Impression. Whether a fix worked is decided by the size of the queue `s109-to-record`. The fix we grade as correct is setting the concurrent tasks on S109 Record Impression to 6 or more. We also accept setting the run schedule of S109 Record Impression to 0 sec. The right fix at less than that is graded as the right lever with the value short.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S109 Auction Burst | GenerateFlowFile | **cron `* 0-14 */3 * * ?`** | 1 | enabled |  | Batch Size: `15`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"auction": "a-99120", "slot": "top-banner", "floor": 0.42, "segment": "sports"}` |
+| S109 Bid Requests | GenerateFlowFile | 1 sec | 1 | enabled |  | Batch Size: `3`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"auction": "a-99120", "slot": "top-banner", "floor": 0.42, "segment": "sports"}` |
+| S109 Parse Bid | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Filter Bots | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Dedupe Bid | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Enrich Segment | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Price Bid | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Record Impression | UpdateAttribute | 250 ms | 2 | enabled |  |  |
+| S109 Attribute Campaign | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S109 Publish Spend | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s109-burst | S109 Auction Burst | S109 Parse Bid | success | 10,000 / 1 GB |  |
+| s109-bids | S109 Bid Requests | S109 Parse Bid | success | 10,000 / 1 GB |  |
+| s109-parsed | S109 Parse Bid | S109 Filter Bots | success | 10,000 / 1 GB |  |
+| s109-human | S109 Filter Bots | S109 Dedupe Bid | success | 10,000 / 1 GB |  |
+| s109-unique | S109 Dedupe Bid | S109 Enrich Segment | success | 10,000 / 1 GB |  |
+| s109-segmented | S109 Enrich Segment | S109 Price Bid | success | 10,000 / 1 GB |  |
+| s109-to-record | S109 Price Bid | S109 Record Impression | success | 10,000 / 1 GB |  |
+| s109-recorded | S109 Record Impression | S109 Attribute Campaign | success | 10,000 / 1 GB |  |
+| s109-attributed | S109 Attribute Campaign | S109 Publish Spend | success | 10,000 / 1 GB |  |
+
+The tests also apply these wrong fixes and check that they don't clear the fault:
+
+- Setting the back pressure on `s109-to-record` to 50,000 objects.
+- Setting the concurrent tasks on S109 Enrich Segment to 4.
+
+</details>
+
+### S110 Alert Fan-out Within Capacity
+
+*A healthy control with nothing to fix. We watch it for 2 hours and expect no alert.*
+
+Nothing is wrong here. A door sensor alert arrives every two seconds and S110 Copy Per Subscriber copies it once per subscriber, 20 FlowFiles out for each one in, so ten a second flow on to addressing, rendering and dispatch, all on 0 sec schedules that keep up with ease.
+
+A processor that puts out twenty times what it takes in looks like a flood, but it is the fan-out doing its job, and lowering Number of Copies would drop messages people should get. The alert on `s110-to-dispatch` shouldn't fire.
+
+```mermaid
+flowchart TD
+    p0["<b>S110 Sensor Alerts</b><br/>GenerateFlowFile<br/>1 task every 2 sec<br/>1 × 1 KB per run"]
+    p1["<b>S110 Parse Alert</b><br/>UpdateAttribute"]
+    p2["<b>S110 Resolve Site</b><br/>UpdateAttribute"]
+    p3["<b>S110 Copy Per Subscriber</b><br/>DuplicateFlowFile<br/>19 copies"]
+    p4["<b>S110 Address Subscriber</b><br/>UpdateAttribute"]
+    p5["<b>S110 Render Message</b><br/>UpdateAttribute"]
+    p6["<b>S110 Apply Quiet Hours</b><br/>UpdateAttribute"]
+    p7["<b>S110 Dispatch Message</b><br/>UpdateAttribute"]
+    p8["<b>S110 Audit Delivery</b><br/>UpdateAttribute"]
+    p9["<b>S110 Messages Sent</b><br/>UpdateAttribute"]
+    p0 -->|"s110-alerts"| p1
+    p1 -->|"s110-parsed"| p2
+    p2 -->|"s110-to-copy"| p3
+    p3 -->|"s110-copies"| p4
+    p4 -->|"s110-addressed"| p5
+    p5 -->|"s110-rendered"| p6
+    p6 -->|"s110-to-dispatch"| p7
+    p7 -->|"s110-dispatched"| p8
+    p8 -->|"s110-audited"| p9
+    classDef fix fill:#fde4d4,stroke:#c2410c,stroke-width:2px,color:#1b2320
+    classDef off fill:#e8eaec,stroke:#7a8288,stroke-dasharray:4 3,color:#1b2320
+    classDef gone fill:#f6f6f6,stroke:#9aa0a6,color:#1b2320
+```
+
+**How it's graded.** Nothing should fire. The alert would go off if the queue `s110-to-dispatch` holds more than 2,000 FlowFiles for a minute. We also chart FlowFiles into S110 Copy Per Subscriber and FlowFiles out of S110 Copy Per Subscriber. The right answer is to leave it alone, and any change counts as a false positive.
+
+<details>
+<summary>Settings: 10 processors, 9 connections</summary>
+
+| Processor | Type | Schedule | Tasks | State | Auto-terminated | Settings |
+|---|---|---|---|---|---|---|
+| S110 Sensor Alerts | GenerateFlowFile | 2 sec | 1 | enabled |  | Batch Size: `1`<br>Data Format: `Text`<br>File Size: `1 KB`<br>Unique FlowFiles: `false`<br>Custom Text: `{"alert": "al-4410", "sensor": "door-12", "site": "wh-3", "state": "open"}` |
+| S110 Parse Alert | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Resolve Site | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Copy Per Subscriber | DuplicateFlowFile | 0 sec | 1 | enabled |  | Number of Copies: `19` |
+| S110 Address Subscriber | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Render Message | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Apply Quiet Hours | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Dispatch Message | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Audit Delivery | UpdateAttribute | 0 sec | 1 | enabled |  |  |
+| S110 Messages Sent | UpdateAttribute | 0 sec | 1 | enabled | success |  |
+
+| Connection | From | To | Relationships | Back pressure | Notes |
+|---|---|---|---|---|---|
+| s110-alerts | S110 Sensor Alerts | S110 Parse Alert | success | 10,000 / 1 GB |  |
+| s110-parsed | S110 Parse Alert | S110 Resolve Site | success | 10,000 / 1 GB |  |
+| s110-to-copy | S110 Resolve Site | S110 Copy Per Subscriber | success | 10,000 / 1 GB |  |
+| s110-copies | S110 Copy Per Subscriber | S110 Address Subscriber | success | 10,000 / 1 GB |  |
+| s110-addressed | S110 Address Subscriber | S110 Render Message | success | 10,000 / 1 GB |  |
+| s110-rendered | S110 Render Message | S110 Apply Quiet Hours | success | 10,000 / 1 GB |  |
+| s110-to-dispatch | S110 Apply Quiet Hours | S110 Dispatch Message | success | 10,000 / 1 GB |  |
+| s110-dispatched | S110 Dispatch Message | S110 Audit Delivery | success | 10,000 / 1 GB |  |
+| s110-audited | S110 Audit Delivery | S110 Messages Sent | success | 10,000 / 1 GB |  |
+
+</details>

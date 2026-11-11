@@ -29,7 +29,7 @@ from nifi_healer.sim.engine import Simulation
 START = 1_800_000_000.0
 SETTLE = 3600.0         # long enough for every steady second-wave fault to present
 AFTER_FIX = 1800.0      # the longest clear_within among them
-WAVE_2 = [name for name, pack in packs.PACKS.items() if pack.wave == 2]
+WAVE_2 = [name for name, pack in packs.PACKS.items() if pack.wave == 2 or pack.holdout]
 SCOPES = {"connection": "CONNECTION", "processor": "PROCESSOR", "system": "SYSTEM"}
 MASKED = {"S31", "S33"}   # the second fault shows only once the first is fixed
 STEADY = ("cascade", "compound")        # faulty from deploy on, and until fixed
@@ -51,6 +51,11 @@ NOISE = {
                                        < max(seen["S43:processor:S43 Post Ledger:flowfiles_out"])),
     "S44": lambda seen, warned, size: size == 30,
     "S45": lambda seen, warned, size: max(seen["S45:system::cpu"]) >= 70,
+    "S106": lambda seen, warned, size: (max(seen["S106:connection:s106-to-load:queued_count"]) > 0.5 * 3000
+                                        and "trend_to_breach" in warned),
+    "S110": lambda seen, warned, size: (max(seen["S110:processor:S110 Copy Per Subscriber:flowfiles_out"])
+                                        >= 15 * max(seen["S110:processor:S110 Copy Per Subscriber:flowfiles_in"])
+                                        > 0),
 }
 
 

@@ -277,7 +277,7 @@ def chosen(scenarios=(), pack_names=()) -> list:
     if wanted:
         return [s for s in every if s in wanted]
 
-    return [s.id for p in packs.PACKS.values() if p.wave < 3 for s in p.scenarios]
+    return [s.id for p in packs.PACKS.values() if p.wave < 3 and not p.holdout for s in p.scenarios]
 
 
 def window(ids: list, seconds: float = DETECT_SECONDS) -> float:

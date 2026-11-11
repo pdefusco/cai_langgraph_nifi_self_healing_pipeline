@@ -136,6 +136,18 @@ PACKS = {
         by their path, its edits find a processor wherever it is in them, and a route to a DLQ must stay inside
         the processor's own group, as NiFi requires. S101 and S102 are nested controls.
     """,
+    "p26-holdout-a": """
+        The first of two holdout packs: faults of kinds the catalog fixes and the playbooks cover, in domains,
+        names and numbers that no prompt, playbook or replay was tuned on, here carrier billing, parcel tracking
+        and pharmacy. The default replay leaves the holdouts out and reviews of their incidents draft no playbook
+        edits, so they keep measuring what the agent does on a fault it hasn't seen. Every fault is fixed with a
+        low-risk flow edit, and S106 is the control.
+    """,
+    "p27-holdout-b": """
+        The second holdout pack, in identity checks, onboarding and ad auctions, held out in the same way as
+        p26-holdout-a. Three of its faults are fixed with low-risk flow edits; S108's fix is a DLQ route, which is
+        medium risk and always goes to a person. S110 is the control.
+    """,
 }
 
 WALKTHROUGHS = {
@@ -817,6 +829,84 @@ WALKTHROUGHS = {
         validator and what comes out, three levels below the group the incident names.
 
         The fix is S14's: route the failures to S100 DLQ, which is beside the validator in S100 Site.
+    """,
+    "S103": """
+        Call records come from the switches at five a second and from roaming partners at one more, and join at
+        S103 Decode CDR. Every stage runs on a 0 sec schedule and keeps up except S103 Rate Call, which has one
+        task every 250 ms and does four a second. `s103-to-rate` grows by two a second, 120 a minute, and passes
+        3,000 about 25 minutes in. The queues before it stay empty, so the alert is one stage from the cause.
+
+        The fix is three tasks on the rater, twelve a second, or a 0 sec schedule. Two tasks would only just
+        match the input and take over half an hour to drain a full queue. More tasks on S103 Lookup Subscriber,
+        which feeds the queue, or a higher threshold on `s103-to-rate`, change nothing.
+    """,
+    "S104": """
+        Parcel scans arrive three a second and pass through parsing, barcode validation and depot lookup to S104
+        Geofence Check, which has two tasks but runs only every five seconds: 0.4 a second. `s104-to-geofence`
+        grows by 2.6 a second and passes 2,000 about 13 minutes in. A small heartbeat flow runs beside it.
+
+        The schedule is the fault, so the fix is a 0 sec schedule, or 100 ms. Adding tasks looks like the answer
+        but isn't: even eight, the catalog's maximum, do only 1.6 a second on a five second schedule. More tasks
+        on S104 Resolve Depot, which feeds the queue, do nothing.
+    """,
+    "S105": """
+        Prescriptions arrive 41 every four seconds, 10.25 a second, and S105 Write Dispense Record, with two tasks
+        every 200 ms, does ten. It is busy and nearly keeps up, so its output looks normal, but a quarter of a
+        FlowFile a second stays behind, 15 a minute, and `s105-to-write` passes 2,500 nearly three hours in. Only
+        the trend of the queue shows it early.
+
+        The fix is a third task on the writer, or a 100 ms schedule. A higher threshold on `s105-to-write` moves
+        the breach out by hours without stopping the growth, and more tasks on S105 Price Claim do nothing.
+    """,
+    "S106": """
+        Nothing is wrong here. Port manifests arrive two a second all day, and for minutes 15 to 19 of every hour
+        a backfill adds 15 a second more. S106 Load Manifest, with one task every 100 ms, does ten, so for those
+        five minutes `s106-to-load` grows by seven a second, to about 2,000 against an alert at 3,000, and then
+        drains at eight a second in under five minutes.
+
+        A queue that climbs every hour looks like a growing backlog, but each one is gone well before the next.
+        More tasks on the loader would sit idle for 50 minutes of the hour, and the alert shouldn't fire.
+    """,
+    "S107": """
+        Identity checks arrive two a second and reach S107 Verify Identity, which calls a service that fails two
+        requests in ten. The failures are transient and retried in place, but with YIELD_PROCESSOR, which backs
+        off the whole processor rather than the one FlowFile: five seconds, doubling with each retry up to five
+        minutes, and both tasks wait it out together. The verifier sits idle with work in front of it, and
+        `s107-to-verify` passes 500 within ten minutes.
+
+        The fix is PENALIZE_FLOWFILE, so only the failed FlowFile waits and the rest go on, optionally with a
+        shorter maximum backoff of 30 seconds. More tasks on the verifier change nothing while it is yielded, and
+        more tasks on S107 Resolve Country Rules, which feeds the queue, do nothing either.
+    """,
+    "S108": """
+        Onboarding applications arrive two a second, and one in 20 is malformed: its applicant has no value, so
+        it isn't JSON. S108 Parse KYC Document fails it and sends it straight back to itself through
+        `s108-failure-loop`, where it fails again on every run, for good. The parser keeps up with the good
+        applications five times over, so the loop just grows, by one every ten seconds, and passes 100 about 17
+        minutes in.
+
+        The fix is to route the parser's failures to S108 KYC Review DLQ, which is in the group, disabled and
+        connected to nothing. That is a medium-risk change, so it always goes to a person. More tasks or a
+        shorter schedule on the parser only retry the same applications faster; none of them will ever parse.
+    """,
+    "S109": """
+        Bid requests arrive three a second all day, and for minutes 0 to 14 of every third hour an auction burst
+        adds 15 a second more. S109 Record Impression, with two tasks every 250 ms, does eight, so during a burst
+        `s109-to-record` grows by ten a second, passes 6,000 ten minutes in and reaches about 9,000. After it, the
+        queue drains at five a second and is back under 6,000 ten minutes later, until the next burst.
+
+        The fix is six tasks on the recorder, or a 0 sec schedule. Because the queue drains between bursts, an
+        empty queue an hour later says nothing, and the fix is judged on the next burst. A higher threshold on
+        `s109-to-record` or more tasks on S109 Enrich Segment change nothing.
+    """,
+    "S110": """
+        Nothing is wrong here. A door sensor alert arrives every two seconds and S110 Copy Per Subscriber copies
+        it once per subscriber, 20 FlowFiles out for each one in, so ten a second flow on to addressing,
+        rendering and dispatch, all on 0 sec schedules that keep up with ease.
+
+        A processor that puts out twenty times what it takes in looks like a flood, but it is the fan-out doing
+        its job, and lowering Number of Copies would drop messages people should get. The alert on
+        `s110-to-dispatch` shouldn't fire.
     """,
 }
 

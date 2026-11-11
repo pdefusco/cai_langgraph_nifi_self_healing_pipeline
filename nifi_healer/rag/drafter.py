@@ -121,16 +121,18 @@ def queue(kind: str, incident_id: str, source_id: int):
     """
     Draft an edit from one review (reject) or action label (wrong_fix) in
     the background. Returns the Future, or None when drafting is off, the
-    incident is a rollback (nothing it did came from a playbook) or this
-    feedback was drafted already.
+    incident is a rollback (nothing it did came from a playbook) or on a
+    holdout pack (the playbooks must not learn its answers, NFH-123), or
+    this feedback was drafted already.
     """
 
     if not config.DRAFT_PLAYBOOK_EDITS or kind not in KINDS or not source_id:
         return None
 
     store = get_store()
+    incident = store.incident(incident_id)
 
-    if rollback.is_rollback(store.incident(incident_id)):
+    if rollback.is_rollback(incident) or _holdout(incident):
         return None
 
     edit_id = store.add_playbook_edit(kind, incident_id, int(source_id), _now(),
@@ -142,6 +144,14 @@ def queue(kind: str, incident_id: str, source_id: int):
     log(f"PE-{edit_id}: drafting from the {kind.replace('_', ' ')} of {incident_id}")
 
     return _submit(edit_id)
+
+
+def _holdout(incident: dict) -> bool:
+    from flows import packs
+
+    pack = packs.PACKS.get((incident or {}).get("pack") or "")
+
+    return bool(pack and pack.holdout)
 
 
 def redraftable(row: dict) -> bool:

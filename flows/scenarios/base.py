@@ -31,7 +31,10 @@ the control). It declares:
 A *pack* is one deployment: a root process group holding several
 scenarios, and its sizing. Its `wave` is the rollout batch it is
 provisioned in: a provision script given no --pack covers wave 1 only,
-so a later pack goes live only when it is named.
+so a later pack goes live only when it is named. A `holdout` pack
+measures how the agent does on faults nothing was tuned on: the default
+replay leaves it out, and reviews of its incidents draft no playbook
+edits.
 
 KPIs name their component; the metric is a logical name resolved to a
 DataFlow metricId by nifi_healer/kpi/metrics.py, so an unverified id can
@@ -215,6 +218,7 @@ class Pack:
     parameter_context: str | None = None
     has_listen_components: bool = False
     wave: int = 1
+    holdout: bool = False    # never tuned on: not in the default replay, and no playbook edits drafted from it
 
     def scenario(self, scenario_id: str) -> Scenario:
         for scenario in self.scenarios:

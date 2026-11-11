@@ -4,6 +4,7 @@ the files (rag/overlay.py), decided on the Playbooks tab (ui/views.py,
 ui/playbooks.py), and read by the agent and the replay.
 """
 
+import dataclasses
 import shutil
 import sqlite3
 import subprocess
@@ -506,6 +507,11 @@ def test_what_is_not_drafted(drafting, monkeypatch):
     assert drafter.queue("praise", incident_id, 1) is None and drafter.queue(drafter.REJECT, incident_id, 0) is None
     monkeypatch.setattr(rollback, "is_rollback", lambda incident: True)
     assert drafter.queue(drafter.REJECT, incident_id, 1) is None
+    monkeypatch.setattr(rollback, "is_rollback", lambda incident: False)
+    pack = packs.PACKS["p1-throughput"]
+    monkeypatch.setitem(packs.PACKS, pack.name, dataclasses.replace(pack, holdout=True))
+    assert drafter.queue(drafter.REJECT, incident_id, 1) is None   # NFH-123
+    monkeypatch.setitem(packs.PACKS, pack.name, pack)
     monkeypatch.setattr(config, "DRAFT_PLAYBOOK_EDITS", False)
     monkeypatch.setattr(rollback, "is_rollback", lambda incident: False)
     assert drafter.queue(drafter.REJECT, incident_id, 1) is None

@@ -17,7 +17,7 @@ from flows.scenarios import (p1_throughput, p2_backpressure, p3_errors, p4_datal
                              p10_iot, p11_payments, p12_warehouse, p13_billing, p14_capacity,
                              p15_bursts, p16_slow_burn, p17_nightly_batch, p18_noisy_bursts,
                              p19_daily_cycle, p20_big_healthy, p21_wide_100, p22_wide_250,
-                             p23_siblings, p24_healthy_500, p25_nested)
+                             p23_siblings, p24_healthy_500, p25_nested, p26_p27_holdout)
 
 PACKS = {
     pack.name: pack
@@ -47,6 +47,8 @@ PACKS = {
         p23_siblings.PACK,
         p24_healthy_500.PACK,
         p25_nested.PACK,
+        p26_p27_holdout.A,
+        p26_p27_holdout.B,
     )
 }
 
